@@ -1,5 +1,5 @@
-// First Light — Service Worker v3
-const CACHE_NAME = 'first-light-v3';
+// First Light — Service Worker v4
+const CACHE_NAME = 'first-light-v4';
 
 const PRECACHE_URLS = [
   './',
