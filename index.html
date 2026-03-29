@@ -4737,7 +4737,8 @@ function getSolunar(date, lat, lng) {
   // Moon transit time: shifts ~50 min later each day from solar noon at new moon
   // Each lunar day = 24h 50min = 1490 min, so transit moves 50 min/day
   var SHIFT_PER_DAY = 50; // minutes per day
-  var transitMin    = (12 * 60 + moon.age * SHIFT_PER_DAY) % (24 * 60);
+  var localNoon  = 12 * 60 - date.getTimezoneOffset();
+  var transitMin    = (localNoon + moon.age * SHIFT_PER_DAY) % (24 * 60);
   var underfootMin  = (transitMin + 12 * 60 + 25) % (24 * 60);
   // Major periods: ±60 min around transit and underfoot (2hr window each)
   // Minor periods: midpoints between majors (±30 min = 1hr window each)
