@@ -80,6 +80,21 @@ export function hasValue(v) {
 }
 
 /**
+ * Strip ephemeral / local-only URLs from text before PDF output. Browser
+ * `blob:` URLs (photo previews, object URLs) are invalid outside the session
+ * and show up as junk when users share exports (e.g. WhatsApp). Long `data:`
+ * image payloads in pasted notes are replaced so the PDF stays small and readable.
+ */
+export function pdfSafeText(v) {
+  if (v == null || v === '') return '';
+  let s = String(v);
+  s = s.replace(/blob:[^\s)\]]+/gi, '');
+  s = s.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=\s]+/gi, '[image data omitted]');
+  s = s.replace(/\s{2,}/g, ' ').trim();
+  return s;
+}
+
+/**
  * Slug a syndicate (or any) name for use in a filename.
  * "The Quarry Estate!" → "the-quarry-estate"
  * Empty / pure-punctuation falls back to "syndicate" so we never emit
@@ -482,18 +497,18 @@ export function buildSimpleDiaryPDF({ entries, label, season, filenameSlug }) {
     // weight/tag, calibre/distance/placement) and the "who/how old/where to"
     // tail at the end. Shooter only shown when not the default "Self".
     const meta = [];
-    if (e.ground)        meta.push('Ground: ' + e.ground);
-    if (e.location_name) meta.push('Location: ' + e.location_name);
+    if (e.ground)        meta.push('Ground: ' + pdfSafeText(e.ground));
+    if (e.location_name) meta.push('Location: ' + pdfSafeText(e.location_name));
     if (e.weight_kg)     meta.push('Weight: ' + e.weight_kg + 'kg');
-    if (e.tag_number)    meta.push('Tag: ' + e.tag_number);
-    if (e.calibre)       meta.push('Calibre: ' + e.calibre);
+    if (e.tag_number)    meta.push('Tag: ' + pdfSafeText(e.tag_number));
+    if (e.calibre)       meta.push('Calibre: ' + pdfSafeText(e.calibre));
     if (e.distance_m)    meta.push('Distance: ' + e.distance_m + 'm');
-    if (e.shot_placement) meta.push('Placement: ' + e.shot_placement);
-    if (e.age_class)     meta.push('Age: ' + e.age_class);
+    if (e.shot_placement) meta.push('Placement: ' + pdfSafeText(e.shot_placement));
+    if (e.age_class)     meta.push('Age: ' + pdfSafeText(e.age_class));
     if (e.shooter && String(e.shooter).trim() && String(e.shooter).trim().toLowerCase() !== 'self') {
-      meta.push('Shooter: ' + String(e.shooter).trim());
+      meta.push('Shooter: ' + pdfSafeText(String(e.shooter).trim()));
     }
-    if (e.destination)   meta.push('Destination: ' + e.destination);
+    if (e.destination)   meta.push('Destination: ' + pdfSafeText(e.destination));
 
     if (meta.length) {
       // Meta can now run long (3 extra fields), so wrap to page width instead
@@ -505,7 +520,7 @@ export function buildSimpleDiaryPDF({ entries, label, season, filenameSlug }) {
       });
     }
     if (e.notes) {
-      const noteLines = doc.splitTextToSize('Notes: ' + e.notes, 180);
+      const noteLines = doc.splitTextToSize('Notes: ' + pdfSafeText(e.notes), 180);
       noteLines.forEach(function(line) {
         if (y > pageH - 24) { doc.addPage(); y = 20; }
         doc.text(line, 14, y); y += 4;
@@ -575,16 +590,16 @@ export function buildSingleEntryPDF({ entry }) {
   const fields = [
     ['Date', dateCell],
     ['Time', timeCell],
-    ['Location', entry.location_name],
-    ['Ground', entry.ground],
-    ['Age class', entry.age_class],
+    ['Location', pdfSafeText(entry.location_name)],
+    ['Ground', pdfSafeText(entry.ground)],
+    ['Age class', pdfSafeText(entry.age_class)],
     ['Carcass weight', hasValue(entry.weight_kg) ? entry.weight_kg + ' kg' : ''],
-    ['Tag number', entry.tag_number || ''],
-    ['Calibre', entry.calibre],
+    ['Tag number', pdfSafeText(entry.tag_number || '')],
+    ['Calibre', pdfSafeText(entry.calibre)],
     ['Distance', hasValue(entry.distance_m) ? entry.distance_m + 'm' : ''],
-    ['Shot placement', entry.shot_placement],
-    ['Destination', entry.destination],
-    ['Notes', entry.notes ? entry.notes.slice(0, 300) : null],
+    ['Shot placement', pdfSafeText(entry.shot_placement)],
+    ['Destination', pdfSafeText(entry.destination)],
+    ['Notes', entry.notes ? pdfSafeText(entry.notes).slice(0, 300) : null],
   ];
 
   let y = bandH + 10;
@@ -680,18 +695,18 @@ export function buildLarderBookPDF({ filteredEntries, user, season }) {
       y = drawTableHeader(doc, { headers, colX, y: 16, pageW });
       doc.setFontSize(7.5);
     }
-    const locText = ((e.location_name || '') + (e.ground ? ' / ' + e.ground : ''))
-      .trim().replace(/^\//, '').trim();
+    const locText = pdfSafeText(((e.location_name || '') + (e.ground ? ' / ' + e.ground : ''))
+      .trim().replace(/^\//, '').trim());
     const row = [
       String(idx + 1),
       e.date || '—',
-      e.tag_number || '—',
+      pdfSafeText(e.tag_number || '—'),
       e.species || '—',
       sexLabel(e.sex, e.species) || '—',
       hasValue(e.weight_kg) ? String(e.weight_kg) : '—',
       (locText || '—').slice(0, 40),
-      (e.destination || '—').slice(0, 25),
-      (e.notes || 'None observed').slice(0, 40)
+      pdfSafeText(e.destination || '—').slice(0, 25),
+      pdfSafeText(e.notes || 'None observed').slice(0, 40)
     ];
     for (let c = 0; c < row.length; c++) doc.text(row[c], colX[c], y);
     y += 5.5;
@@ -823,10 +838,10 @@ export function buildSyndicateLarderBookPDF({ syndicate, season, rows }) {
       const codes = r.abnormalities.filter(function(c) { return c !== 'none'; });
       let shown = codes.slice(0, 2).map(function(c) { return ABNORMALITY_LABEL_BY_CODE[c] || c; }).join(', ');
       if (codes.length > 2) shown += ' (+' + (codes.length - 2) + ')';
-      if (r.abnormalities_other) shown += '; other: ' + r.abnormalities_other;
+      if (r.abnormalities_other) shown += '; other: ' + pdfSafeText(r.abnormalities_other);
       return shown;
     }
-    if (r.abnormalities_other) return r.abnormalities_other;
+    if (r.abnormalities_other) return pdfSafeText(r.abnormalities_other);
     return 'Not recorded';
   }
 
@@ -837,8 +852,8 @@ export function buildSyndicateLarderBookPDF({ syndicate, season, rows }) {
       y = drawTableHeader(doc, { headers, colX, y: 16, pageW });
       doc.setFontSize(7.5);
     }
-    const locText = ((r.location_name || '') + (r.ground ? ' / ' + r.ground : ''))
-      .trim().replace(/^\//, '').trim();
+    const locText = pdfSafeText(((r.location_name || '') + (r.ground ? ' / ' + r.ground : ''))
+      .trim().replace(/^\//, '').trim());
     const ageShort = (function(a) {
       if (!a) return '—';
       const s = String(a).trim();
@@ -851,13 +866,13 @@ export function buildSyndicateLarderBookPDF({ syndicate, season, rows }) {
       String(idx + 1),
       r.date || '—',
       r.time || '—',
-      (r.tag_number || '—').slice(0, 12),
-      (r.culledBy || '—').slice(0, 22),
+      pdfSafeText(r.tag_number || '—').slice(0, 12),
+      pdfSafeText(r.culledBy || '—').slice(0, 22),
       (r.species || '—').slice(0, 14),
       sexLabel(r.sex, r.species) || '—',
       hasValue(r.weight_kg) ? String(r.weight_kg) : '—',
       ageShort,
-      (r.destination || '—').slice(0, 18),
+      pdfSafeText(r.destination || '—').slice(0, 18),
       (locText || '—').slice(0, 22),
       abnormCell(r).slice(0, 28)
     ];
@@ -955,14 +970,14 @@ export function buildGameDealerDeclarationPDF({ entry, user }) {
     ['Sex', sexLabel(entry.sex, entry.species)],
     ['Date of kill', dateCell],
     ['Time', timeCell],
-    ['Location', entry.location_name || ''],
-    ['Ground', entry.ground || ''],
-    ['Tag / carcass number', entry.tag_number || ''],
+    ['Location', pdfSafeText(entry.location_name || '')],
+    ['Ground', pdfSafeText(entry.ground || '')],
+    ['Tag / carcass number', pdfSafeText(entry.tag_number || '')],
     ['Carcass weight (kg)', hasValue(entry.weight_kg) ? String(entry.weight_kg) : ''],
-    ['Age class', entry.age_class || ''],
-    ['Calibre', entry.calibre || ''],
-    ['Shot placement', entry.shot_placement || ''],
-    ['Destination', entry.destination || '']
+    ['Age class', pdfSafeText(entry.age_class || '')],
+    ['Calibre', pdfSafeText(entry.calibre || '')],
+    ['Shot placement', pdfSafeText(entry.shot_placement || '')],
+    ['Destination', pdfSafeText(entry.destination || '')]
   ];
 
   let y = 50;
@@ -983,7 +998,7 @@ export function buildGameDealerDeclarationPDF({ entry, user }) {
   // legacy "notes as abnormalities" behaviour for entries pre-dating the
   // abnormalities columns.
   const abnormCodes = Array.isArray(entry.abnormalities) ? entry.abnormalities : null;
-  const abnormOther = entry.abnormalities_other || '';
+  const abnormOther = pdfSafeText(entry.abnormalities_other || '');
   const hasStructured = (abnormCodes && abnormCodes.length > 0) || abnormOther;
 
   if (hasStructured) {
@@ -1015,7 +1030,7 @@ export function buildGameDealerDeclarationPDF({ entry, user }) {
   } else {
     // Legacy entries: no structured data captured. Fall back to notes as a
     // pragmatic stand-in so an older declaration still reads correctly.
-    const legacy = entry.notes ? entry.notes.slice(0, 500) : 'Not recorded at gralloch';
+    const legacy = entry.notes ? pdfSafeText(entry.notes).slice(0, 500) : 'Not recorded at gralloch';
     const splitNotes = doc.splitTextToSize(legacy, pageW - 40);
     doc.text(splitNotes, 20, y);
     y += splitNotes.length * 6 + 6;
@@ -1209,17 +1224,17 @@ export function buildConsignmentDealerDeclarationPDF({ entries, user }) {
     // table's column rules suffice for eye-tracking.
     const rowY = y + 9;
     doc.text(String(idx + 1), C.num + 4, rowY);
-    doc.text((e.tag_number ? String(e.tag_number) : '–').slice(0, 10), C.tag + 4, rowY);
+    doc.text(pdfSafeText(e.tag_number ? String(e.tag_number) : '–').slice(0, 10), C.tag + 4, rowY);
     doc.text(e.date || '–', C.date + 4, rowY);
     doc.text(e.time || '–', C.time + 4, rowY);
     doc.text((e.species || '–').slice(0, 12), C.sp + 4, rowY);
     doc.text((sexLabel(e.sex, e.species) || '–').slice(0, 8), C.sex + 4, rowY);
     doc.text(hasValue(e.weight_kg) ? String(e.weight_kg) : '–', C.wt + 4, rowY);
     doc.text(shortAge(e.age_class), C.age + 4, rowY);
-    const locTxt = (e.location_name || '–');
+    const locTxt = pdfSafeText(e.location_name || '–');
     const locLines = doc.splitTextToSize(locTxt, W_LOC - 6);
     doc.text(locLines.length > 1 ? locLines[0].slice(0, 30) + '…' : (locLines[0] || '–'), C.loc + 4, rowY);
-    doc.text((e.ground || '–').slice(0, 14), C.grnd + 4, rowY);
+    doc.text(pdfSafeText(e.ground || '–').slice(0, 14), C.grnd + 4, rowY);
 
     // Prefer structured abnormalities over free-text notes: shorter, more
     // uniform, and actually defensible as "trained hunter ticked these boxes".
@@ -1233,13 +1248,13 @@ export function buildConsignmentDealerDeclarationPDF({ entries, user }) {
         const codes = e.abnormalities.filter(function(c) { return c !== 'none'; });
         let shown = codes.slice(0, 2).map(function(c) { return ABNORMALITY_LABEL_BY_CODE[c] || c; }).join(', ');
         if (codes.length > 2) shown += ' (+' + (codes.length - 2) + ')';
-        if (e.abnormalities_other) shown += '; other: ' + e.abnormalities_other;
+        if (e.abnormalities_other) shown += '; other: ' + pdfSafeText(e.abnormalities_other);
         gText = shown;
       }
     } else if (e.abnormalities_other) {
-      gText = e.abnormalities_other;
+      gText = pdfSafeText(e.abnormalities_other);
     } else if (e.notes && e.notes.trim()) {
-      gText = e.notes.trim();
+      gText = pdfSafeText(e.notes.trim());
     } else {
       gText = 'Not recorded';
     }
@@ -1622,18 +1637,18 @@ export function buildSeasonSummaryPDF({
     doc.text((e.tag_number ? String(e.tag_number) : '–').slice(0, 10), COL.tag, y);
     doc.text(hasValue(e.weight_kg) ? String(e.weight_kg).slice(0, 8) : '–', COL.weight, y);
     doc.text(shortAge(e.age_class).slice(0, 10), COL.age, y);
-    const gnd = (e.ground && String(e.ground).trim()) ? String(e.ground).trim() : '–';
+    const gnd = (e.ground && String(e.ground).trim()) ? pdfSafeText(String(e.ground).trim()) : '–';
     const gLines = doc.splitTextToSize(gnd, W_GRND - 2);
     doc.text(gLines.length > 1 ? gLines[0] + '…' : (gLines[0] || '–'), COL.ground, y);
-    doc.text((e.shot_placement || '–').slice(0, 12), COL.placement, y);
-    doc.text((e.shooter && e.shooter !== 'Self' ? e.shooter : '–').slice(0, 14), COL.shooter, y);
-    const dest = (e.destination && String(e.destination).trim()) ? String(e.destination).trim() : '–';
+    doc.text((pdfSafeText(e.shot_placement) || '–').slice(0, 12), COL.placement, y);
+    doc.text((e.shooter && e.shooter !== 'Self' ? pdfSafeText(e.shooter) : '–').slice(0, 14), COL.shooter, y);
+    const dest = (e.destination && String(e.destination).trim()) ? pdfSafeText(String(e.destination).trim()) : '–';
     const dLines = doc.splitTextToSize(dest, W_DEST - 2);
     doc.text(dLines.length > 1 ? dLines[0] + '…' : (dLines[0] || '–'), COL.dest, y);
-    const locRaw = String(e.location_name || '–');
+    const locRaw = pdfSafeText(String(e.location_name || '–'));
     const locLines = doc.splitTextToSize(locRaw, W_LOC - 2);
     doc.text(locLines.length > 1 ? locLines[0] + '…' : (locLines[0] || '–'), COL.location, y);
-    const noteRaw = (e.notes && String(e.notes).trim()) ? String(e.notes).replace(/\s+/g, ' ').trim() : '–';
+    const noteRaw = (e.notes && String(e.notes).trim()) ? pdfSafeText(String(e.notes).replace(/\s+/g, ' ').trim()) : '–';
     const noteLines = doc.splitTextToSize(noteRaw, W_NOTES - 2);
     doc.text(noteLines.length > 1 ? noteLines[0] + '…' : (noteLines[0] || '–'), COL.notes, y);
     hrule(y + 4, P.stone);
@@ -1884,7 +1899,7 @@ export function buildSyndicateSeasonSummaryPDF({
     setPdfText(doc, e.sex === 'm' ? '#8b4513' : '#8b1a4a'); doc.setFont(undefined, 'bold');
     doc.text(sexLabel(e.sex, e.species), COL.sex, y);
     setPdfText(doc, P.bark); doc.setFont(undefined, 'normal');
-    const byLines = doc.splitTextToSize(String(e.culledBy || '—'), W_BY - 2);
+    const byLines = doc.splitTextToSize(pdfSafeText(String(e.culledBy || '—')), W_BY - 2);
     doc.text(byLines.length ? byLines[0] : '—', COL.by, y);
     hrule(y + 4, P.stone);
   });

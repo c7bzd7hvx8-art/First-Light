@@ -2269,10 +2269,10 @@ function seasonDates(season) {
 // Season list + cards + stats + map: omit weather_data (JSONB can be large). Hydrate in openDetail.
 var CULL_ENTRY_LIST_COLUMNS =
   'id,user_id,species,sex,date,time,location_name,lat,lng,weight_kg,' +
-  'calibre,distance_m,shot_placement,age_class,notes,shooter,ground,destination,tag_number,syndicate_id,photo_url,created_at';
+  'calibre,distance_m,shot_placement,age_class,notes,shooter,ground,destination,tag_number,abnormalities,abnormalities_other,syndicate_id,photo_url,created_at';
 var CULL_ENTRY_LIST_COLUMNS_LEGACY =
   'id,user_id,species,sex,date,time,location_name,lat,lng,weight_kg,' +
-  'calibre,distance_m,shot_placement,age_class,notes,shooter,ground,destination,syndicate_id,photo_url,created_at';
+  'calibre,distance_m,shot_placement,age_class,notes,shooter,ground,destination,abnormalities,abnormalities_other,syndicate_id,photo_url,created_at';
 
 async function loadEntries() {
   if (!currentUser || !sb) return;
@@ -4164,7 +4164,7 @@ async function openExportModal(format) {
     try {
       showToast('⏳ Loading diary…');
       var r = await sb.from('cull_entries')
-        .select('date, time, species, sex, location_name, ground, weight_kg, tag_number, calibre, distance_m, shot_placement, age_class, shooter, destination, notes')
+        .select('date, time, species, sex, location_name, ground, weight_kg, tag_number, calibre, distance_m, shot_placement, age_class, shooter, destination, notes, abnormalities, abnormalities_other')
         .eq('user_id', currentUser.id)
         .order('date', { ascending: false });
       if (r.error) throw r.error;
