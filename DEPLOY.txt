@@ -1,0 +1,6 @@
+This folder is a full copy of the web server document root (same set as `betav2/`).
+
+Regenerate from repository root after changing HTML/CSS/JS, modules, lib, or vendor:
+  node scripts/build-betav2.mjs site-root
+
+Do not hand-edit files here; edit the source at repo root and run the command above.
