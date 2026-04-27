@@ -1585,6 +1585,105 @@
   .fg-cat-body.open { display: block; }
   .fg-cat-body .info-card { box-shadow: 0 2px 8px rgba(26,46,26,0.1); }
 
+  /* Field Guide — search: dark green + gold (Field Guide intro family) */
+  .fg-search-wrap {
+    background: linear-gradient(155deg, #15281a 0%, #1a3220 42%, #121f14 100%);
+    border-radius: 18px;
+    margin-bottom: 16px;
+    padding: 14px 16px 12px;
+    border: 1px solid rgba(200, 168, 75, 0.22);
+    box-shadow:
+      0 10px 32px rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+  .fg-search-eyebrow {
+    font-family: 'Playfair Display', serif;
+    font-size: 17px;
+    font-weight: 700;
+    color: #f5dfa0;
+    margin: 0 0 12px;
+    line-height: 1.2;
+    letter-spacing: 0.02em;
+  }
+  .fg-search-inner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-radius: 14px;
+    padding: 6px 6px 6px 12px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  }
+  .fg-search-inner:focus-within {
+    border-color: rgba(200, 168, 75, 0.45);
+    background: rgba(0, 0, 0, 0.32);
+    box-shadow: 0 0 0 1px rgba(200, 168, 75, 0.15), 0 0 0 4px rgba(200, 168, 75, 0.1);
+  }
+  .fg-search-ic {
+    display: flex;
+    color: rgba(200, 168, 75, 0.75);
+    flex-shrink: 0;
+  }
+  .fg-search-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    color: rgba(255, 255, 255, 0.94);
+    padding: 10px 4px 10px 0;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  .fg-search-input::placeholder { color: rgba(210, 205, 190, 0.48); }
+  .fg-search-input:focus { outline: none; }
+  .fg-search-input::-webkit-search-decoration,
+  .fg-search-input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  .fg-search-clear {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 250, 235, 0.92);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .fg-search-clear span { display: block; margin-top: -2px; }
+  .fg-search-clear:hover { background: rgba(200, 168, 75, 0.22); color: #fff; }
+  .fg-search-clear[hidden] { display: none !important; }
+  .fg-search-clear:not([hidden]) { display: flex; }
+  .fg-search-meta {
+    font-size: 11px;
+    color: rgba(200, 195, 175, 0.65);
+    margin-top: 10px;
+    min-height: 1.2em;
+    font-family: 'DM Mono', monospace;
+    letter-spacing: 0.02em;
+  }
+  .fg-search-empty {
+    font-size: 12px;
+    color: rgba(255, 220, 200, 0.92);
+    margin-top: 10px;
+    padding: 9px 12px;
+    border-radius: 11px;
+    background: rgba(180, 60, 30, 0.18);
+    border: 1px solid rgba(255, 160, 120, 0.22);
+    line-height: 1.45;
+  }
+  .fg-search-empty[hidden] { display: none !important; }
+
   /* CIC trophy tables — same language as holdover & legal data tables; fixes contrast on
      light “paper” cells inside both normal and field-mode (dark) cards. */
   #fg-cic-trophy .fg-cat-body {
@@ -1926,6 +2025,34 @@
   }
   html[data-field-mode="on"] .fg-cat-body .info-card {
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  }
+  html[data-field-mode="on"] .fg-search-wrap {
+    background: linear-gradient(155deg, #0e160e 0%, #121a12 45%, #0a100a 100%);
+    border: 1px solid rgba(200, 168, 75, 0.2);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+  html[data-field-mode="on"] .fg-search-eyebrow { color: rgba(245, 230, 190, 0.98); }
+  html[data-field-mode="on"] .fg-search-inner {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+  html[data-field-mode="on"] .fg-search-inner:focus-within {
+    border-color: rgba(200, 168, 75, 0.42);
+    box-shadow: 0 0 0 1px rgba(200, 168, 75, 0.15), 0 0 0 4px rgba(200, 168, 75, 0.08);
+  }
+  html[data-field-mode="on"] .fg-search-ic { color: rgba(200, 168, 75, 0.85); }
+  html[data-field-mode="on"] .fg-search-input { color: rgba(248, 245, 235, 0.98); }
+  html[data-field-mode="on"] .fg-search-input::placeholder { color: rgba(200, 200, 185, 0.62); }
+  html[data-field-mode="on"] .fg-search-clear {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 250, 240, 0.92);
+  }
+  html[data-field-mode="on"] .fg-search-clear:hover { background: rgba(200, 168, 75, 0.22); }
+  html[data-field-mode="on"] .fg-search-meta { color: rgba(195, 200, 185, 0.72); }
+  html[data-field-mode="on"] .fg-search-empty {
+    color: rgba(255, 210, 195, 0.95);
+    background: rgba(200, 80, 40, 0.16);
+    border-color: rgba(255, 150, 100, 0.25);
   }
   html[data-field-mode="on"] .card-header,
   html[data-field-mode="on"] .fg-cat-header {

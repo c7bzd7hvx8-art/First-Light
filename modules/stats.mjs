@@ -714,12 +714,16 @@ export function buildGroundStats(entries) {
 // @param {Function} opts.statsChartEmpty
 //     (message:string) → html. Returns the "no data" placeholder HTML for
 //     a chart card. Also DI'd to keep styling hook consistent.
+// @param {number} [opts.outingTotal]  all diary rows in scope (culls + blank days)
+// @param {number} [opts.outingBlank]  blank-day rows in scope
 export function renderStatsTabBody(entries, opts) {
   var currentSeason            = opts.currentSeason;
   var computeSeasonTargetKpi   = opts.computeSeasonTargetKpi;
   var formatSeasonTargetSub    = opts.formatSeasonTargetSub;
   var hasValue                 = opts.hasValue;
   var statsChartEmpty          = opts.statsChartEmpty;
+  var outingTotal              = opts.outingTotal != null ? opts.outingTotal : entries.length;
+  var outingBlank              = opts.outingBlank != null ? opts.outingBlank : 0;
 
   var total = entries.length;
   var kg = entries.reduce(function(s,e){ return s + (parseFloat(e.weight_kg)||0); }, 0);
@@ -746,6 +750,8 @@ export function renderStatsTabBody(entries, opts) {
 
   _setText('st-total', total);
   _setText('st-total-sub', 'Mapped ' + mappedCount + '/' + total + ' · ' + mappedPct + '%');
+  _setText('st-outing-total', String(outingTotal));
+  _setText('st-outing-blank', String(outingBlank));
   _setText('st-target', targetPct == null ? '–' : (targetPct + '%'));
   _setText('st-target-sub', formatSeasonTargetSub(total, targetCalc));
   _setText('st-dist', avgDist == null ? '–' : String(avgDist) + 'm');

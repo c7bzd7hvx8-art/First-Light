@@ -283,6 +283,7 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
   <a href="#s1"><span>01</span> Creating your account</a>
   <a href="#s2"><span>02</span> The diary view</a>
   <a href="#s3"><span>03</span> Adding a new entry</a>
+  <a href="#s3-blank"><span>03b</span> Blank day (outing, no shot)</a>
   <a href="#s4"><span>04</span> Quick entry</a>
   <a href="#s5"><span>05</span> Viewing an entry</a>
   <a href="#s6"><span>06</span> Editing &amp; deleting</a>
@@ -390,7 +391,7 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
 
   <p>The <strong>three headline numbers</strong> are <strong>Total</strong> (animals), combined carcass <strong>kg</strong>, and how many <strong>species</strong> you have recorded this season — one compact row, aligned with the app.</p>
   <p>Use the <strong>season dropdown</strong> in the header row to switch seasons. The <strong>book</strong> icon opens this guide; the <strong>chart</strong> icon jumps to Stats.</p>
-  <p>After your first entry, you also get a <strong>search</strong> bar (species, ground, tag, notes…), optional <strong>ground</strong> filter when you use more than one permission, <strong>Newest / Oldest</strong> sort, and <strong>Select</strong> for bulk CSV, <strong>Dealer PDF</strong> (consignment declaration — see <a href="#s10-declarations" style="color:var(--gold);">step 10a</a>), or delete.</p>
+  <p>After your first entry, you also get a <strong>search</strong> bar (species, ground, tag, <strong>blank day</strong>, notes…), optional <strong>ground</strong> filter when you use more than one permission, <strong>Newest / Oldest</strong> sort, and <strong>Select</strong> for bulk CSV, <strong>Dealer PDF</strong> (consignment declaration — see <a href="#s10-declarations" style="color:var(--gold);">step 10a</a>), or delete.</p>
   <p>When an <strong>offline</strong> queue is building, a banner appears above the entry list with <strong>Sync now</strong> once you are back online. The <strong>Diary</strong> tab can show a small offline badge when something is pending.</p>
 </div>
 
@@ -510,6 +511,12 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
     <div class="m-btn-save"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h11a4 4 0 0 0 0-8 0h-.5A5.5 5.5 0 0 0 7 11a4 4 0 0 0 0 7z"/></svg>Save to Cloud</div>
     <div style="font-size:11px;color:#a0988a;text-align:center;margin-top:6px;">Syncs to Supabase · Works offline</div>
   </div>
+
+  <h3 id="s3-blank">Blank day (outing, no shot)</h3>
+  <p>When you have been out but <strong>did not take a shot</strong> — and still want a dated record on the right ground — use <strong>Blank day</strong> instead of a full cull. Open <strong>Add entry</strong>, then use the in-form control to switch to the blank-day flow (you will not pick species, sex, or carcass details).</p>
+  <p>Log <strong>date &amp; time</strong>, <strong>location</strong> and <strong>ground</strong> as usual, and add <strong>notes</strong> if you like. <strong>Photos</strong> are not part of a blank day in the same way as a cull entry — the list uses a <strong>no shot</strong> / landscape motif so you can spot it quickly.</p>
+  <p>In the <strong>diary list</strong>, the card title is <strong>Blank day</strong> with the ground and your note preview. <strong>Species</strong> filter must be on <strong>All</strong> — a blank day is not a deer species, so a species chip hides it. <strong>Search</strong> picks up <strong>blank</strong>, <strong>blank day</strong>, <strong>outing</strong>, and <strong>no shot</strong> in addition to your ground and notes.</p>
+  <div class="tip"><strong>Stats:</strong> Cull/carcass and species KPIs on Stats focus on <strong>actual culls</strong>. Blank days are listed separately (outings without a shot) so your season numbers stay meaningful for the larder and returns.</div>
 </div>
 
 <!-- STEP 4 -->

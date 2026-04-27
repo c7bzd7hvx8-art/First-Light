@@ -32,7 +32,8 @@ import {
   parseEntryDateParts,
   MONTH_NAMES,
   seasonLabel,
-  ABNORMALITY_LABEL_BY_CODE
+  ABNORMALITY_LABEL_BY_CODE,
+  isBlankDayEntry
 } from '../lib/fl-pure.mjs';
 
 // ── Private helpers (duplicated from diary.js deliberately) ─────────────────
@@ -481,38 +482,42 @@ export function buildSimpleDiaryPDF({ entries, label, season, filenameSlug }) {
     if (y > pageH - 24) { doc.addPage(); y = 20; }
     doc.setFontSize(12);
 
-    // Title line: "1. Red Deer (Stag) · Wed 29 Jan 2025 · 14:30"
-    //   Date uses the long form so multi-season exports stay unambiguous.
-    //   Time appended only when present. Dash-joiner kept as "·" for
-    //   consistency with the meta row below.
+    // Title line: "1. Red Deer (Stag) · …" or "1. Blank day · …"
     const dateStr = fmtEntryDateLong(e.date) || '—';
     const timeStr = fmtEntryTimeShort(e.time);
     let headerTail = dateStr;
     if (timeStr) headerTail += ' · ' + timeStr;
-    doc.text(
-      (i + 1) + '. ' + pdfSafeText(e.species) + ' (' + sexLabel(e.sex, e.species) + ') · ' + headerTail,
-      14, y
-    );
+    if (isBlankDayEntry(e)) {
+      const g = (e.ground && String(e.ground).trim()) ? pdfSafeText(e.ground) : '—';
+      doc.text(
+        (i + 1) + '. Blank day · ' + g + ' · ' + headerTail,
+        14, y
+      );
+    } else {
+      doc.text(
+        (i + 1) + '. ' + pdfSafeText(e.species) + ' (' + sexLabel(e.sex, e.species) + ') · ' + headerTail,
+        14, y
+      );
+    }
 
     y += 6;
     doc.setFontSize(9);
 
-    // Meta row(s). Ordered so the "where + what" come first (ground/location,
-    // weight/tag, calibre/distance/placement) and the "who/how old/where to"
-    // tail at the end. Shooter only shown when not the default "Self".
     const meta = [];
     if (e.ground)        meta.push('Ground: ' + pdfSafeText(e.ground));
     if (e.location_name) meta.push('Location: ' + pdfSafeText(e.location_name));
-    if (e.weight_kg)     meta.push('Weight: ' + e.weight_kg + 'kg');
-    if (e.tag_number)    meta.push('Tag: ' + pdfSafeText(e.tag_number));
-    if (e.calibre)       meta.push('Calibre: ' + pdfSafeText(e.calibre));
-    if (e.distance_m)    meta.push('Distance: ' + e.distance_m + 'm');
-    if (e.shot_placement) meta.push('Placement: ' + pdfSafeText(e.shot_placement));
-    if (e.age_class)     meta.push('Age: ' + pdfSafeText(e.age_class));
-    if (e.shooter && String(e.shooter).trim() && String(e.shooter).trim().toLowerCase() !== 'self') {
-      meta.push('Shooter: ' + pdfSafeText(String(e.shooter).trim()));
+    if (!isBlankDayEntry(e)) {
+      if (e.weight_kg)     meta.push('Weight: ' + e.weight_kg + 'kg');
+      if (e.tag_number)    meta.push('Tag: ' + pdfSafeText(e.tag_number));
+      if (e.calibre)       meta.push('Calibre: ' + pdfSafeText(e.calibre));
+      if (e.distance_m)    meta.push('Distance: ' + e.distance_m + 'm');
+      if (e.shot_placement) meta.push('Placement: ' + pdfSafeText(e.shot_placement));
+      if (e.age_class)     meta.push('Age: ' + pdfSafeText(e.age_class));
+      if (e.shooter && String(e.shooter).trim() && String(e.shooter).trim().toLowerCase() !== 'self') {
+        meta.push('Shooter: ' + pdfSafeText(String(e.shooter).trim()));
+      }
+      if (e.destination)   meta.push('Destination: ' + pdfSafeText(e.destination));
     }
-    if (e.destination)   meta.push('Destination: ' + pdfSafeText(e.destination));
 
     if (meta.length) {
       // Meta can now run long (3 extra fields), so wrap to page width instead
@@ -561,6 +566,7 @@ export function buildSimpleDiaryPDF({ entries, label, season, filenameSlug }) {
 // entry object (so we stay out of the allEntries lookup business).
 export function buildSingleEntryPDF({ entry }) {
   if (!entry) return null;
+  if (isBlankDayEntry(entry)) return null;
 
   const JsPDF = getJsPDF();
   const doc = new JsPDF();
@@ -651,7 +657,7 @@ export function buildLarderBookPDF({ filteredEntries, user, season }) {
   if (!filteredEntries || !filteredEntries.length) return null;
 
   const entries = filteredEntries
-    .filter(function(e) { return (e.destination || '').toLowerCase() !== 'left on hill'; })
+    .filter(function(e) { return !isBlankDayEntry(e) && (e.destination || '').toLowerCase() !== 'left on hill'; })
     .slice()
     .sort(function(a, b) {
       return (a.date || '').localeCompare(b.date || '')
@@ -941,6 +947,7 @@ export function buildSyndicateLarderBookPDF({ syndicate, season, rows }) {
 //      reference when no explicit hunter name is set.
 export function buildGameDealerDeclarationPDF({ entry, user }) {
   if (!entry) return null;
+  if (isBlankDayEntry(entry)) return null;
 
   const { hunterName, accountEmail } = resolveHunterIdentity(user);
 
@@ -1108,12 +1115,14 @@ export function buildConsignmentDealerDeclarationPDF({ entries, user }) {
   if (!entries || !entries.length) return null;
 
   // Left-on-hill exclusion — a carcass that never entered the larder cannot
-  // be declared to a game dealer.
-  const excluded = entries.filter(function(e) {
+  // be declared. Blank days (no carcass) are excluded the same way.
+  const hillEx = entries.filter(function(e) {
     return (e.destination || '').toLowerCase() === 'left on hill';
   }).length;
+  const blankEx = entries.filter(isBlankDayEntry).length;
+  const excluded = hillEx + blankEx;
   const filtered = entries.filter(function(e) {
-    return (e.destination || '').toLowerCase() !== 'left on hill';
+    return !isBlankDayEntry(e) && (e.destination || '').toLowerCase() !== 'left on hill';
   }).slice(); // clone before sorting (don't mutate caller's array)
 
   if (filtered.length === 0) return { status: 'all-excluded', excluded };
@@ -1151,7 +1160,7 @@ export function buildConsignmentDealerDeclarationPDF({ entries, user }) {
                  : Math.round(totalKg) + ' kg (' + weighedCount + ' of ' + filtered.length + ' weighed)')
     + '  ·  ' + (dateMin === dateMax ? dateMin : dateMin + ' → ' + dateMax);
   const scopeLine = excluded > 0
-    ? '(' + excluded + ' excluded — destination "Left on hill")'
+    ? ('(' + excluded + ' excluded — "Left on hill" or blank day)')
     : '';
   let y = drawProfessionalHeader(doc, {
     pageW: PW,
@@ -1333,6 +1342,9 @@ export function buildSeasonSummaryPDF({
   entries, season, seasonLabelOverride, groundOverride, cullTargets, planSpecies, now
 }) {
   if (!entries || !entries.length) return null;
+  const cullRows = entries.filter(function(e) { return !isBlankDayEntry(e); });
+  const blankDayCount = entries.length - cullRows.length;
+
   const JsPDF = getJsPDF();
   const doc = new JsPDF({ unit: 'pt', format: 'a4', orientation: 'landscape' });
   const PW = 842, PH = 595;
@@ -1368,11 +1380,12 @@ export function buildSeasonSummaryPDF({
   // Avg kg must use entries-with-recorded-weight, not total count — otherwise
   // unweighed entries drag the headline down. (Pre-fix bug: 104kg across 2
   // weighed + 3 unweighed rows previously showed 21kg instead of 52kg.)
-  const weighedEntries = entries.filter(function(e) { return hasValue(e.weight_kg); });
+  // Headline stats exclude blank-day rows; full entry list still appears in the table below.
+  const weighedEntries = cullRows.filter(function(e) { return hasValue(e.weight_kg); });
   const totalKg = weighedEntries.reduce(function(s, e) { return s + (parseFloat(e.weight_kg) || 0); }, 0);
   const avgKg   = weighedEntries.length ? Math.round(totalKg / weighedEntries.length) : 0;
   const spSet = {};
-  entries.forEach(function(e) { spSet[e.species] = (spSet[e.species] || 0) + 1; });
+  cullRows.forEach(function(e) { if (e.species) spSet[e.species] = (spSet[e.species] || 0) + 1; });
   const spCount = Object.keys(spSet).length;
 
   // ── Local date formatters ────────────────────────────────────────────
@@ -1424,11 +1437,11 @@ export function buildSeasonSummaryPDF({
   // ── KPI stats row ────────────────────────────────────────────────────
   const STAT_H = 46, cw = PW / 4;
   const statData = [
-    [String(entries.length), 'Total Cull'],
+    [String(cullRows.length), 'Total Cull'],
     [String(spCount),        'Species'],
     [String(Math.round(totalKg)), 'Total kg'],
     [avgKg ? String(avgKg) + 'kg' : '–',
-     'Avg kg' + (weighedEntries.length && weighedEntries.length < entries.length ? ' (of ' + weighedEntries.length + ')' : '')],
+     'Avg kg' + (weighedEntries.length && weighedEntries.length < cullRows.length ? ' (of ' + weighedEntries.length + ')' : '')],
   ];
   statData.forEach(function(s, i) {
     const x = i * cw;
@@ -1441,6 +1454,11 @@ export function buildSeasonSummaryPDF({
   });
   hrule(y + STAT_H, P.stone);
   y += STAT_H;
+  if (blankDayCount > 0) {
+    setPdfText(doc, P.muted); doc.setFontSize(8); doc.setFont(undefined, 'normal');
+    doc.text('Also logged: ' + blankDayCount + ' blank day' + (blankDayCount === 1 ? '' : 's') + ' (outing, no shot)', ML, y + 6);
+    y += 14;
+  }
 
   // ── Section header helper ────────────────────────────────────────────
   function secHdr(y0, title) {
@@ -1456,7 +1474,7 @@ export function buildSeasonSummaryPDF({
   const spSorted = Object.keys(spSet).sort(function(a, b) { return spSet[b] - spSet[a]; });
   const spMax = Math.max.apply(null, spSorted.map(function(k) { return spSet[k]; }).concat([1]));
   const totalWtBySpecies = {};
-  entries.forEach(function(e) { totalWtBySpecies[e.species] = (totalWtBySpecies[e.species] || 0) + (parseFloat(e.weight_kg) || 0); });
+  cullRows.forEach(function(e) { totalWtBySpecies[e.species] = (totalWtBySpecies[e.species] || 0) + (parseFloat(e.weight_kg) || 0); });
 
   const bxBar = 180, bwBar = 450, bhBar = 5;
   const spCountX = bxBar + bwBar + 25;
@@ -1481,7 +1499,7 @@ export function buildSeasonSummaryPDF({
   if (spSorted.length) {
     y += 22;
     const spTotalBase = y;
-    const spGrandTotal = entries.length;
+    const spGrandTotal = cullRows.length;
     const spGrandKg = Math.round(
       spSorted.reduce(function(s, k) { return s + (totalWtBySpecies[k] || 0); }, 0)
     );
@@ -1500,7 +1518,11 @@ export function buildSeasonSummaryPDF({
   // the section entirely rather than render a wall of "N (no target set)".
   const isAllSeasons = seasonLabelOverride === 'All Seasons';
   const actuals = {};
-  entries.forEach(function(e) { const k = e.species + '-' + e.sex; actuals[k] = (actuals[k] || 0) + 1; });
+  cullRows.forEach(function(e) {
+    if (!e.species || !e.sex) return;
+    const k = e.species + '-' + e.sex;
+    actuals[k] = (actuals[k] || 0) + 1;
+  });
   const planSpeciesArr = planSpecies || [];
   let planRows = 0;
   if (!isAllSeasons) {
@@ -1615,9 +1637,15 @@ export function buildSeasonSummaryPDF({
     doc.setFontSize(TB); setPdfText(doc, P.bark); doc.setFont(undefined, 'normal');
     doc.text(fmtEntryDate(e.date), COL.date, y);
     doc.text(fmtEntryTime(e.time), COL.time, y);
-    doc.text((e.species || '').slice(0, 16), COL.species, y);
-    setPdfText(doc, e.sex === 'm' ? '#8b4513' : '#8b1a4a'); doc.setFont(undefined, 'bold');
-    doc.text(sexLabel(e.sex, e.species), COL.sex, y);
+    if (isBlankDayEntry(e)) {
+      doc.text('Blank day', COL.species, y);
+      setPdfText(doc, P.muted); doc.setFont(undefined, 'normal');
+      doc.text('—', COL.sex, y);
+    } else {
+      doc.text((e.species || '').slice(0, 16), COL.species, y);
+      setPdfText(doc, e.sex === 'm' ? '#8b4513' : '#8b1a4a'); doc.setFont(undefined, 'bold');
+      doc.text(sexLabel(e.sex, e.species), COL.sex, y);
+    }
     setPdfText(doc, P.bark); doc.setFont(undefined, 'normal');
     doc.text((e.tag_number ? String(e.tag_number) : '–').slice(0, 10), COL.tag, y);
     doc.text(hasValue(e.weight_kg) ? String(e.weight_kg).slice(0, 8) : '–', COL.weight, y);

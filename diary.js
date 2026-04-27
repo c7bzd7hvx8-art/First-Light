@@ -1,4 +1,4 @@
-/* Cull Diary — App v2.0 */
+/* Cull Diary — App v2.1 */
 
 // ══════════════════════════════════════════════════════════════
 // MODULE IMPORTS (modularisation Phase 1 — see MODULARISATION-PLAN.md)
@@ -21,6 +21,7 @@ import {
   validateDisplayName,
   validatePasswordChange,
 } from './modules/profile.mjs';
+import { isBlankDayEntry, blankDaySummaryText } from './lib/fl-pure.mjs';
 
 // Tag that the client-side error logger writes into
 // public.app_errors.app_version. Bumped in lock-step with SW_VERSION in
@@ -28,7 +29,7 @@ import {
 // after a deploy can be filtered down to the new build. Hand-maintained
 // (two strings, but cheap to update; see PROJECT-LOG on the error-logger
 // rollout).
-const FL_APP_VERSION = '7.76';
+const FL_APP_VERSION = '7.85';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -331,12 +332,27 @@ function diaryCloudSaveInner(label) {
   return '<span class="di-btn-ic" aria-hidden="true">' + SVG_FL_CLOUD + '</span>' + label;
 }
 
-function diaryNoPhotoListHtml(spClass, species) {
-  var ini = species && species.length ? esc(species.charAt(0)) : '';
-  return '<div class="no-photo-placeholder ' + spClass + ' no-photo-placeholder--list" style="position:absolute;inset:0;">'
+function diaryNoPhotoListHtml(spClass, isWide) {
+  // Species is already shown in the card footer; a single initial under "No photo"
+  // read as a stray letter (e.g. "R" for Roe Deer) and duplicates Red vs Roe.
+  // Wide no-photo: middle band only so the placeholder does not sit on the species strip.
+  var wideC = isWide ? ' no-photo-placeholder--list-wide' : '';
+  return '<div class="no-photo-placeholder ' + spClass + ' no-photo-placeholder--list' + wideC + '">'
     + '<span class="di-ic di-ic--list-noph" aria-hidden="true">' + SVG_FL_IMAGE_OFF + '</span>'
     + '<div class="no-photo-list-cap">No photo</div>'
-    + (ini ? '<div class="no-photo-list-sub">' + ini + '</div>' : '')
+    + '</div>';
+}
+
+/** Sun + hills — same motif as blank-day form; list/detail use .blank-day-svg--on-dark in CSS */
+var SVG_BLANK_DAY_LANDSCAPE = '<svg class="blank-day-svg blank-day-svg--on-dark" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+  + '<circle class="blank-day-sun" cx="17.5" cy="7" r="2.75"/>'
+  + '<path class="blank-day-hill-far" d="M1 17.5h22" stroke-linecap="round"/>'
+  + '<path class="blank-day-hill-near" d="M1 17.5c2.5-3.8 5.2-5 7.8-2.7 1.6 1.2 3 1.4 4.9.4 2.4-1.3 5-1 7.4 1.2 2.1 1.9 3.6 1.5 5.9-1.1" stroke-linecap="round" stroke-linejoin="round"/>'
+  + '</svg>';
+function blankDayListHeroHtml() {
+  return '<div class="no-photo-placeholder sp-blank no-photo-placeholder--list no-photo-placeholder--blank-day" style="position:absolute;inset:0;">'
+    + '<span class="di-ic di-ic--blank-land" aria-hidden="true">' + SVG_BLANK_DAY_LANDSCAPE + '</span>'
+    + '<div class="no-photo-list-cap">No shot</div>'
     + '</div>';
 }
 
@@ -404,6 +420,7 @@ function renderPlanCard(entries, season) {
     }
   }
   filteredByGround.forEach(function(e) {
+    if (isBlankDayEntry(e) || !e.species || !e.sex) return;
     var k = e.species + '-' + e.sex;
     actuals[k] = (actuals[k] || 0) + 1;
   });
@@ -810,6 +827,8 @@ var photoPreviewUrl = null;
 // when the edited entry had no photo to begin with.
 var editingOriginalPhotoPath = null;
 var formSpecies   = '';
+/** When true, form logs a blank day (outing, no shot). */
+var formIsBlank   = false;
 
 function revokeBlobPreviewUrl(u) {
   if (u && u.indexOf('blob:') === 0) {
@@ -906,6 +925,8 @@ function initDiaryFlUi() {
       case 'get-gps': getGPS(); break;
       case 'clear-pinned': clearPinnedLocation(); break;
       case 'save-entry': saveEntry(); break;
+      case 'enter-blank-day': enterBlankDay(); break;
+      case 'exit-blank-day': exitBlankDay(); break;
       case 'open-targets': openTargetsSheet(); break;
       case 'set-cull-layer': setCullLayer(el.getAttribute('data-layer')); break;
       case 'set-pin-layer': setPinLayer(el.getAttribute('data-layer')); break;
@@ -1403,6 +1424,10 @@ function updateFormProgressChip() {
   var chip = document.getElementById('form-progress-chip');
   var sc = document.querySelector('#v-form .form-scroll');
   if (!chip || !sc) return;
+  if (formIsBlank) {
+    chip.textContent = 'Blank day · date, location & ground';
+    return;
+  }
   var sections = Array.from(document.querySelectorAll('#v-form .fsec'));
   if (!sections.length) return;
   var active = 0;
@@ -2285,10 +2310,10 @@ function seasonDates(season) {
 // Season list + cards + stats + map: omit weather_data (JSONB can be large). Hydrate in openDetail.
 var CULL_ENTRY_LIST_COLUMNS =
   'id,user_id,species,sex,date,time,location_name,lat,lng,weight_kg,' +
-  'calibre,distance_m,shot_placement,age_class,notes,shooter,ground,destination,tag_number,abnormalities,abnormalities_other,syndicate_id,photo_url,created_at';
+  'calibre,distance_m,shot_placement,age_class,notes,shooter,ground,destination,tag_number,abnormalities,abnormalities_other,syndicate_id,photo_url,is_blank,created_at';
 var CULL_ENTRY_LIST_COLUMNS_LEGACY =
   'id,user_id,species,sex,date,time,location_name,lat,lng,weight_kg,' +
-  'calibre,distance_m,shot_placement,age_class,notes,shooter,ground,destination,abnormalities,abnormalities_other,syndicate_id,photo_url,created_at';
+  'calibre,distance_m,shot_placement,age_class,notes,shooter,ground,destination,abnormalities,abnormalities_other,syndicate_id,photo_url,is_blank,created_at';
 
 async function loadEntries() {
   if (!currentUser || !sb) return;
@@ -2711,7 +2736,13 @@ function getEmptyListHtml() {
  */
 function entryMatchesSearch(e, query) {
   if (!query) return true;
+  // Blank-day rows rarely repeat “blank” in user-edited fields; index the same
+  // phrasing as the list/detail so queries like "blank" or "outing" match.
+  var blankIndex = isBlankDayEntry(e)
+    ? ((blankDaySummaryText(e) || '') + ' blank day outing no shot is blank')
+    : '';
   var hay = (
+    blankIndex + ' ' +
     (e.species || '') + ' ' +
     (sexLabel(e.sex, e.species) || '') + ' ' +
     (e.location_name || '') + ' ' +
@@ -2874,7 +2905,7 @@ function renderList() {
   // Stats
   var total = entries.length;
   var kg = entries.reduce(function(s,e){ return s + (parseFloat(e.weight_kg)||0); }, 0);
-  var species_set = new Set(entries.map(function(e){ return e.species; }));
+  var species_set = new Set(entries.map(function(e){ return e.species; }).filter(Boolean));
   document.getElementById('stat-total').textContent = total;
   document.getElementById('stat-kg').textContent = Math.round(kg);
   document.getElementById('stat-spp').textContent = species_set.size;
@@ -2888,7 +2919,7 @@ function renderList() {
       container.innerHTML =
         '<div class="list-search-empty">'
           + '<strong>No matches for "' + esc(currentSearch) + '"</strong>'
-          + 'Try a species, ground, tag, shooter, calibre, or location keyword.'
+          + 'Try a species, ground, blank day, tag, shooter, calibre, or location keyword.'
         + '</div>';
       return;
     }
@@ -2925,18 +2956,37 @@ function renderList() {
     var i = 0;
     while (i < group.length) {
       var e = group[i];
+      if (isBlankDayEntry(e)) {
+        var blTitle = (e.ground && String(e.ground).trim()) || '—';
+        var blTime = (e.time && String(e.time).trim()) || '';
+        var blLine = 'Blank day · ' + blTitle + (blTime ? ' · ' + blTime : '');
+        var blNote = (e.notes && String(e.notes).trim()) ? String(e.notes).replace(/\s+/g, ' ').trim().slice(0, 100) : '';
+        var isSelB = flSelection.active && flSelection.ids.has(e.id);
+        var selClassB = isSelB ? ' is-selected' : '';
+        var tickB = flSelection.active ? '<div class="gc-select-tick" aria-hidden="true">✓</div>' : '';
+        html += '<div class="gc blank-day' + selClassB + '" tabindex="0" role="button" data-fl-action="open-detail" data-entry-id="' + e.id + '">'
+          + '<div class="gc-img sp-blank" style="position:relative;">' + blankDayListHeroHtml()
+          + '<div class="gc-img-top"><span class="gc-sex gc-sex--blank" title="No shot logged"> </span></div>'
+          + '<div class="gc-img-bot"><div class="gc-species">Blank day</div><div class="gc-date">' + fmtDate(e.date) + '</div></div>'
+          + tickB
+          + '</div>'
+          + '<div class="gc-body"><div class="gc-meta">' + esc(blLine) + '</div>'
+          + (blNote ? '<div class="gc-sub">' + esc(blNote) + (blNote.length >= 100 ? '…' : '') + '</div>' : '')
+          + '<div class="gc-foot"><span class="gc-kg">—</span><span class="gc-cal"></span></div></div></div>';
+        i++;
+        continue;
+      }
       var spClass = SPECIES_CLASS[e.species] || 'sp-red';
       var sxClass = sexBadgeClass(e.sex, e.species);
       var sxLbl = sexLabel(e.sex, e.species);
       var safePhoto = entryPhotoSrc(e);
       var hasPhoto = !!safePhoto;
-      var imgHtml = hasPhoto
-        ? '<div class="diary-img-skeleton" aria-hidden="true"></div><img class="diary-img diary-img-fade" src="' + esc(safePhoto) + '" alt="" loading="eager" decoding="async"><div class="gc-img-ov"></div>'
-        : diaryNoPhotoListHtml(spClass, e.species);
-
-      // Check if next entry also exists for potential wide layout (no-photo entries shown wide)
+      // Wide layout: two adjacent no-photo entries — compute before img so no-photo can reserve bands.
       var nextE = group[i+1];
       var showWide = !e.photo_url && (!nextE || !nextE.photo_url);
+      var imgHtml = hasPhoto
+        ? '<div class="diary-img-skeleton" aria-hidden="true"></div><img class="diary-img diary-img-fade" src="' + esc(safePhoto) + '" alt="" loading="eager" decoding="async"><div class="gc-img-ov"></div>'
+        : diaryNoPhotoListHtml(spClass, showWide);
       var isSel = flSelection.active && flSelection.ids.has(e.id);
       var selClass = isSel ? ' is-selected' : '';
       var tickHtml = flSelection.active ? '<div class="gc-select-tick" aria-hidden="true">✓</div>' : '';
@@ -3014,6 +3064,50 @@ async function openDetail(id) {
     syndicateDisplay = await resolveSyndicateDisplayName(e.syndicate_id);
   }
   currentEntry = e;
+  if (isBlankDayEntry(e)) {
+    var syncTimeB = e.created_at ? new Date(e.created_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+    var dateDispB = fmtDate(e.date);
+    var wxRawB = renderWeatherStrip(e);
+    var wxCardB = wxRawB ? '<div class="dd-card dd-card--wx">' + wxRawB + '</div>' : '';
+    var notesCardB = e.notes
+      ? '<div class="dd-card"><div class="dd-card-lbl">Notes</div><p class="dd-notes">' + esc(e.notes) + '</p></div>'
+      : '';
+    var whenCardB = '<div class="dd-card"><div class="dd-card-lbl">When &amp; where</div>'
+      + '<div class="dd-kv"><span class="dd-k">Date</span><span class="dd-v">' + esc(dateDispB || '–') + '</span></div>'
+      + '<div class="dd-kv"><span class="dd-k">Time</span><span class="dd-v">' + esc(e.time || '–') + '</span></div>'
+      + '<div class="dd-kv"><span class="dd-k">Location</span><span class="dd-v">' + (e.location_name ? esc(e.location_name) : '–') + '</span></div>'
+      + '<div class="dd-kv"><span class="dd-k">Ground</span><span class="dd-v">' + (e.ground ? esc(e.ground) : '–') + '</span></div>'
+      + (e.syndicate_id
+        ? '<div class="dd-kv"><span class="dd-k">Syndicate</span><span class="dd-v">' + esc(syndicateDisplay || 'Previously assigned (not active)') + '</span></div>'
+        : '')
+      + '</div>';
+    var htmlB = '<div class="detail-hero detail-hero--dense detail-hero--blank sp-blank" style="background:linear-gradient(135deg,#4a3a12,#1a1408);">'
+      + '<div class="detail-blank-hero-ic" aria-hidden="true">' + SVG_BLANK_DAY_LANDSCAPE + '</div>'
+      + '<div class="detail-hero-ov"></div>'
+      + '<button type="button" class="detail-hero-back" data-fl-action="go" data-view="v-list" aria-label="Back to list">←</button>'
+      + '<div class="detail-hero-bot">'
+      + '<div class="detail-species">Blank day</div>'
+      + '<div class="detail-chips">'
+      + '<span class="dchip dchip-blank-day">Outing · no shot</span>'
+      + (e.ground ? '<span class="dchip dc-l"><span class="dchip-ic" aria-hidden="true">' + SVG_FL_PIN + '</span>' + esc(e.ground) + '</span>' : '')
+      + '</div>'
+      + '<div class="sync-row"><div class="sync-dot"></div><span class="sync-txt">Synced' + (syncTimeB ? ' · ' + syncTimeB : '') + '</span></div>'
+      + '</div></div>'
+      + '<div class="detail-dash">'
+      + whenCardB
+      + notesCardB
+      + wxCardB
+      + '<div class="dd-card dd-pdf-hint"><p class="dd-muted">Cull record PDF is for deer shot. Blank days stay in your diary and exports as CSV or season summary only.</p></div>'
+      + '<div class="action-row action-row--dash">'
+      + '<button type="button" class="abtn a-e" data-fl-action="open-edit-entry" data-entry-id="' + e.id + '"><span class="di-btn-ic" aria-hidden="true">' + SVG_FL_PENCIL + '</span>Edit</button>'
+      + '<span class="abtn a-x abtn--disabled" aria-disabled="true"><span class="di-btn-ic" aria-hidden="true">' + SVG_FL_FILE_PDF + '</span>PDF</span>'
+      + '<button type="button" class="abtn a-d" data-fl-action="delete-entry" data-entry-id="' + e.id + '"><span class="di-btn-ic" aria-hidden="true">' + SVG_FL_TRASH + '</span>Delete</button>'
+      + '</div></div>';
+    var detailElB = document.getElementById('detail-content');
+    detailElB.innerHTML = htmlB;
+    go('v-detail');
+    return;
+  }
   var spClass = SPECIES_CLASS[e.species] || 'sp-red';
   var sxLbl = sexLabel(e.sex, e.species);
 
@@ -3195,6 +3289,8 @@ async function openNewEntry() {
   }).formatToParts(now);
   var _gp = function(t){ var p=_ukDate.find(function(x){return x.type===t;}); return p?p.value:''; };
   document.getElementById('form-date-label').textContent = _gp('weekday') + ' ' + _gp('day') + ' ' + _gp('month') + ' ' + _gp('year');
+  formIsBlank = false;
+  applyFormBlankMode();
   go('v-form');
 }
 
@@ -3202,10 +3298,11 @@ async function openEditEntry(id) {
   formDirty = false;
   var e = allEntries.find(function(x){ return x.id === id; });
   if (!e) return;
+  formIsBlank = isBlankDayEntry(e);
   await syncSyndicateGroundFiltersForCurrentUser();
   editingId = id;
-  formSpecies = e.species;
-  formSex = e.sex;
+  formSpecies = formIsBlank ? '' : e.species;
+  formSex = formIsBlank ? '' : e.sex;
   photoFile = null;
   revokeBlobPreviewUrl(photoPreviewUrl);
   photoPreviewUrl = null;
@@ -3229,11 +3326,13 @@ async function openEditEntry(id) {
     resetPhotoSlot();
   }
   // Species
-  document.querySelectorAll('.sp-btn').forEach(function(b){ b.classList.toggle('on', b.querySelector('.sp-name').textContent === e.species); });
-  updateFormSexLabels(e.species);
+  document.querySelectorAll('.sp-btn').forEach(function(b){
+    b.classList.toggle('on', !formIsBlank && b.querySelector('.sp-name').textContent === e.species);
+  });
+  updateFormSexLabels(formIsBlank ? '' : e.species);
   // Sex
-  document.getElementById('sx-m').classList.toggle('on', e.sex === 'm');
-  document.getElementById('sx-f').classList.toggle('on', e.sex === 'f');
+  document.getElementById('sx-m').classList.toggle('on', !formIsBlank && e.sex === 'm');
+  document.getElementById('sx-f').classList.toggle('on', !formIsBlank && e.sex === 'f');
   document.getElementById('f-date').value = e.date || '';
   document.getElementById('f-time').value = e.time || '';
   document.getElementById('f-location').value = e.location_name || '';
@@ -3265,6 +3364,7 @@ async function openEditEntry(id) {
   await populateSyndicateAttributionDropdown(e.syndicate_id || '');
   document.getElementById('form-title').textContent = 'Edit Entry';
   document.getElementById('form-date-label').textContent = fmtDate(e.date);
+  applyFormBlankMode();
   go('v-form');
 }
 
@@ -3304,6 +3404,7 @@ function updateQuickSexLabels(species) {
 }
 
 function pickSpecies(el, name) {
+  if (formIsBlank) return;
   document.querySelectorAll('.sp-btn').forEach(function(b){ b.classList.remove('on'); });
   el.classList.add('on');
   formSpecies = name;
@@ -3311,6 +3412,7 @@ function pickSpecies(el, name) {
   formDirty = true;
 }
 function pickSex(s) {
+  if (formIsBlank) return;
   formSex = s;
   document.getElementById('sx-m').classList.toggle('on', s === 'm');
   document.getElementById('sx-f').classList.toggle('on', s === 'f');
@@ -3318,6 +3420,10 @@ function pickSex(s) {
 }
 
 function handlePhoto(input) {
+  if (formIsBlank) {
+    showToast('⚠️ Photos apply to cull entries — exit blank day to add a photo');
+    return;
+  }
   var file = input.files[0];
   if (!file) return;
   input.value = '';
@@ -3501,125 +3607,273 @@ function getGPS() {
   }, function() { showToast('Could not get location'); });
 }
 
+function diaryFormSaveButtonLabel() {
+  return formIsBlank ? 'Save blank day' : 'Save to Cloud';
+}
+
+function hasCullFormData() {
+  if (formSpecies || formSex) return true;
+  if (hasValue(document.getElementById('f-wt') && document.getElementById('f-wt').value)) return true;
+  if (getCalibreValue()) return true;
+  if (hasValue(document.getElementById('f-dist') && document.getElementById('f-dist').value)) return true;
+  if (getPlacementValue()) return true;
+  if (document.getElementById('f-age') && String(document.getElementById('f-age').value || '').trim()) return true;
+  if (document.getElementById('f-destination') && String(document.getElementById('f-destination').value || '').trim()) return true;
+  if (document.getElementById('f-tag') && String(document.getElementById('f-tag').value || '').trim()) return true;
+  if (photoFile || photoPreviewUrl) return true;
+  var ab = getAbnormalityValues();
+  if (ab.abnormalities && ab.abnormalities.length) {
+    if (ab.abnormalities.length > 1 || ab.abnormalities[0] !== 'none') return true;
+  }
+  if (ab.abnormalities_other && String(ab.abnormalities_other).trim()) return true;
+  return false;
+}
+
+function clearCullOnlyFormFields() {
+  formSpecies = '';
+  formSex = '';
+  document.querySelectorAll('.sp-btn').forEach(function(b){ b.classList.remove('on'); });
+  document.getElementById('sx-m').classList.remove('on');
+  document.getElementById('sx-f').classList.remove('on');
+  updateFormSexLabels('');
+  setCalibreValue('');
+  document.getElementById('f-dist').value = '';
+  setPlacementValue('');
+  document.getElementById('f-wt').value = '';
+  document.getElementById('f-age').value = '';
+  var destEl = document.getElementById('f-destination');
+  if (destEl) destEl.value = '';
+  var tagEl = document.getElementById('f-tag');
+  if (tagEl) tagEl.value = '';
+  setAbnormalityValues(null, '');
+  removePhoto();
+}
+
+function applyFormBlankMode() {
+  var vf = document.getElementById('v-form');
+  if (vf) vf.classList.toggle('form--blank-day', formIsBlank);
+  var btn = document.getElementById('blank-day-btn');
+  var back = document.getElementById('blank-day-back');
+  if (btn) btn.style.display = formIsBlank ? 'none' : '';
+  if (back) back.style.display = formIsBlank ? '' : 'none';
+  document.querySelectorAll('.fl-cull-only').forEach(function(el) {
+    el.style.display = formIsBlank ? 'none' : '';
+  });
+  var saveB = document.getElementById('save-btn');
+  if (saveB) saveB.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
+  updateFormProgressChip();
+}
+
+function enterBlankDay() {
+  if (formIsBlank) return;
+  if (hasCullFormData()) {
+    if (!window.confirm('Switch to a blank day? Cull details you entered will be cleared.')) return;
+  }
+  formIsBlank = true;
+  clearCullOnlyFormFields();
+  formDirty = true;
+  applyFormBlankMode();
+}
+
+function exitBlankDay() {
+  if (!formIsBlank) return;
+  formIsBlank = false;
+  applyFormBlankMode();
+}
+
 async function saveEntry() {
-  if (!formSpecies) { showToast('⚠️ Please select a species'); return; }
-  if (!formSex)     { showToast('⚠️ Please select sex'); return; }
   if (!sb)          { showToast('⚠️ Supabase not configured'); return; }
+  if (!formIsBlank) {
+    if (!formSpecies) { showToast('⚠️ Please select a species'); return; }
+    if (!formSex)     { showToast('⚠️ Please select sex'); return; }
+  }
   var btn = document.getElementById('save-btn');
   btn.disabled = true;
   btn.innerHTML = diaryCloudSaveInner('Saving…');
   var selectedGround = getGroundValue();
   var selectedSyndicate = getSyndicateAttributionValue();
+  var dateVal = document.getElementById('f-date').value;
+  if (!dateVal) {
+    showToast('⚠️ Please set a date');
+    btn.disabled = false;
+    btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
+    return;
+  }
+  if (!selectedGround) {
+    showToast('⚠️ Please select a ground (permission)');
+    btn.disabled = false;
+    btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
+    return;
+  }
   var wtRaw = parseFloat(document.getElementById('f-wt').value);
   var distRaw = parseInt(document.getElementById('f-dist').value, 10);
   var wtVal = Number.isFinite(wtRaw) ? Math.max(0, wtRaw) : null;
   var distVal = Number.isFinite(distRaw) ? Math.max(0, distRaw) : null;
   if (!(await validateSyndicateAttributionGround(selectedSyndicate, selectedGround))) {
     btn.disabled = false;
-    btn.innerHTML = diaryCloudSaveInner('Save to Cloud');
+    btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
     return;
   }
 
-  // Collect abnormality selections once so we can reuse across offline/online
-  // payloads without scraping the DOM twice. Null-vs-[] distinction matters
-  // (see getAbnormalityValues() comment) so we keep the object as-is.
-  var _abnorm = getAbnormalityValues();
+  var _abnorm = formIsBlank
+    ? { abnormalities: null, abnormalities_other: null }
+    : getAbnormalityValues();
 
   // ── Offline check — queue locally if no connection ──
   if (!navigator.onLine && !editingId) {
-    var offlinePayload = {
-      species:         formSpecies,
-      sex:             formSex,
-      date:            document.getElementById('f-date').value,
-      time:            document.getElementById('f-time').value,
-      location_name:   document.getElementById('f-location').value,
-      lat:             formPinLat || lastGpsLat || null,
-      lng:             formPinLng || lastGpsLng || null,
-      weight_kg:       wtVal,
-      calibre:         getCalibreValue(),
-      distance_m:      distVal,
-      shot_placement:  getPlacementValue(),
-      age_class:       document.getElementById('f-age').value,
-      notes:           document.getElementById('f-notes').value,
-      shooter:         document.getElementById('f-shooter').value.trim() || 'Self',
-      ground:          selectedGround,
-      syndicate_id:    selectedSyndicate,
-      destination:     document.getElementById('f-destination').value || null,
-      tag_number:      document.getElementById('f-tag').value.trim() || null,
-      abnormalities:       _abnorm.abnormalities,
-      abnormalities_other: _abnorm.abnormalities_other,
-      _photoDataUrl:   null,
-      _existingPhotoUrl: (function() {
-        if (!photoPreviewUrl || photoPreviewUrl.indexOf('blob:') === 0) return null;
-        var p = cullPhotoStoragePath(photoPreviewUrl);
-        if (p) return p;
-        return photoPreviewUrl.indexOf('http') === 0 ? photoPreviewUrl : null;
-      })(),
-    };
-    if (photoFile) {
-      try {
-        offlinePayload._photoDataUrl = await fileToDataUrl(photoFile);
-      } catch (fe) {
-        showToast('⚠️ Could not read photo for offline save');
-        btn.disabled = false;
-        btn.innerHTML = diaryCloudSaveInner('Save to Cloud');
-        return;
+    var offlinePayload;
+    if (formIsBlank) {
+      offlinePayload = {
+        is_blank: true,
+        species: null,
+        sex: null,
+        date: dateVal,
+        time: document.getElementById('f-time').value,
+        location_name: document.getElementById('f-location').value,
+        lat: formPinLat || lastGpsLat || null,
+        lng: formPinLng || lastGpsLng || null,
+        weight_kg: null,
+        calibre: null,
+        distance_m: null,
+        shot_placement: null,
+        age_class: null,
+        notes: document.getElementById('f-notes').value,
+        shooter: document.getElementById('f-shooter').value.trim() || 'Self',
+        ground: selectedGround,
+        syndicate_id: selectedSyndicate,
+        destination: null,
+        tag_number: null,
+        abnormalities: null,
+        abnormalities_other: null,
+        _photoDataUrl: null,
+        _existingPhotoUrl: null,
+      };
+    } else {
+      offlinePayload = {
+        is_blank: false,
+        species: formSpecies,
+        sex: formSex,
+        date: dateVal,
+        time: document.getElementById('f-time').value,
+        location_name: document.getElementById('f-location').value,
+        lat: formPinLat || lastGpsLat || null,
+        lng: formPinLng || lastGpsLng || null,
+        weight_kg: wtVal,
+        calibre: getCalibreValue(),
+        distance_m: distVal,
+        shot_placement: getPlacementValue(),
+        age_class: document.getElementById('f-age').value,
+        notes: document.getElementById('f-notes').value,
+        shooter: document.getElementById('f-shooter').value.trim() || 'Self',
+        ground: selectedGround,
+        syndicate_id: selectedSyndicate,
+        destination: document.getElementById('f-destination').value || null,
+        tag_number: document.getElementById('f-tag').value.trim() || null,
+        abnormalities: _abnorm.abnormalities,
+        abnormalities_other: _abnorm.abnormalities_other,
+        _photoDataUrl: null,
+        _existingPhotoUrl: (function() {
+          if (!photoPreviewUrl || photoPreviewUrl.indexOf('blob:') === 0) return null;
+          var p = cullPhotoStoragePath(photoPreviewUrl);
+          if (p) return p;
+          return photoPreviewUrl.indexOf('http') === 0 ? photoPreviewUrl : null;
+        })(),
+      };
+      if (photoFile) {
+        try {
+          offlinePayload._photoDataUrl = await fileToDataUrl(photoFile);
+        } catch (fe) {
+          showToast('⚠️ Could not read photo for offline save');
+          btn.disabled = false;
+          btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
+          return;
+        }
       }
     }
     await queueOfflineEntry(offlinePayload);
     formDirty = false;
     btn.disabled = false;
-    btn.innerHTML = diaryCloudSaveInner('Save to Cloud');
+    btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
     return;
   }
 
   try {
-    var payload = {
-      user_id:         currentUser.id,
-      species:         formSpecies,
-      sex:             formSex,
-      date:            document.getElementById('f-date').value,
-      time:            document.getElementById('f-time').value,
-      location_name:   document.getElementById('f-location').value,
-      lat:             formPinLat || lastGpsLat || null,
-      lng:             formPinLng || lastGpsLng || null,
-      weight_kg:       wtVal,
-      calibre:         getCalibreValue(),
-      distance_m:      distVal,
-      shot_placement:  getPlacementValue(),
-      age_class:       document.getElementById('f-age').value,
-      notes:           document.getElementById('f-notes').value,
-      shooter:         document.getElementById('f-shooter').value.trim() || 'Self',
-      ground:          selectedGround,
-      syndicate_id:    selectedSyndicate,
-      destination:     document.getElementById('f-destination').value || null,
-      tag_number:      document.getElementById('f-tag').value.trim() || null,
-      abnormalities:       _abnorm.abnormalities,
-      abnormalities_other: _abnorm.abnormalities_other,
-    };
-    if (photoFile) {
-      try {
-        var path = newCullPhotoPath(currentUser.id);
-        var upload = await sb.storage.from('cull-photos').upload(path, photoFile, {
-          upsert: true,
-          contentType: 'image/jpeg'
-        });
-        if (upload.error) {
-          flDebugLog('error', 'Photo upload error', upload.error);
-          showToast('⚠️ Photo upload failed: ' + (upload.error.message || 'Check storage policies'));
-        } else {
-          payload.photo_url = path;
-          showToast('📷 Photo uploaded');
+    var payload;
+    if (formIsBlank) {
+      payload = {
+        user_id:         currentUser.id,
+        is_blank:        true,
+        species:         null,
+        sex:             null,
+        date:            dateVal,
+        time:            document.getElementById('f-time').value,
+        location_name:   document.getElementById('f-location').value,
+        lat:             formPinLat || lastGpsLat || null,
+        lng:             formPinLng || lastGpsLng || null,
+        weight_kg:       null,
+        calibre:         null,
+        distance_m:      null,
+        shot_placement:  null,
+        age_class:       null,
+        notes:           document.getElementById('f-notes').value,
+        shooter:         document.getElementById('f-shooter').value.trim() || 'Self',
+        ground:          selectedGround,
+        syndicate_id:    selectedSyndicate,
+        destination:     null,
+        tag_number:      null,
+        abnormalities: null,
+        abnormalities_other: null,
+        photo_url:       null,
+      };
+    } else {
+      payload = {
+        user_id:         currentUser.id,
+        is_blank:        false,
+        species:         formSpecies,
+        sex:             formSex,
+        date:            dateVal,
+        time:            document.getElementById('f-time').value,
+        location_name:   document.getElementById('f-location').value,
+        lat:             formPinLat || lastGpsLat || null,
+        lng:             formPinLng || lastGpsLng || null,
+        weight_kg:       wtVal,
+        calibre:         getCalibreValue(),
+        distance_m:      distVal,
+        shot_placement:  getPlacementValue(),
+        age_class:       document.getElementById('f-age').value,
+        notes:           document.getElementById('f-notes').value,
+        shooter:         document.getElementById('f-shooter').value.trim() || 'Self',
+        ground:          selectedGround,
+        syndicate_id:    selectedSyndicate,
+        destination:     document.getElementById('f-destination').value || null,
+        tag_number:      document.getElementById('f-tag').value.trim() || null,
+        abnormalities: _abnorm.abnormalities,
+        abnormalities_other: _abnorm.abnormalities_other,
+      };
+      if (photoFile) {
+        try {
+          var path = newCullPhotoPath(currentUser.id);
+          var upload = await sb.storage.from('cull-photos').upload(path, photoFile, {
+            upsert: true,
+            contentType: 'image/jpeg'
+          });
+          if (upload.error) {
+            flDebugLog('error', 'Photo upload error', upload.error);
+            showToast('⚠️ Photo upload failed: ' + (upload.error.message || 'Check storage policies'));
+          } else {
+            payload.photo_url = path;
+            showToast('📷 Photo uploaded');
+          }
+        } catch(uploadErr) {
+          showToast('⚠️ Photo upload error — entry saved without photo');
+          flDebugLog('error', 'Upload exception', uploadErr);
         }
-      } catch(uploadErr) {
-        showToast('⚠️ Photo upload error — entry saved without photo');
-        flDebugLog('error', 'Upload exception', uploadErr);
+      } else if (photoPreviewUrl) {
+        var keepPath = cullPhotoStoragePath(photoPreviewUrl);
+        if (keepPath) payload.photo_url = keepPath;
+      } else if (!photoPreviewUrl) {
+        payload.photo_url = null;
       }
-    } else if (photoPreviewUrl) {
-      var keepPath = cullPhotoStoragePath(photoPreviewUrl);
-      if (keepPath) payload.photo_url = keepPath;
-    } else if (!photoPreviewUrl) {
-      payload.photo_url = null; // removed
     }
 
     var result;
@@ -3640,11 +3894,6 @@ async function saveEntry() {
     // Keep the season-dropdown cache fresh so a backdated entry grows the
     // dropdown without a full re-probe on the next loadEntries() call.
     if (payload && payload.date) extendSeasonCacheForDate(payload.date);
-    // Orphan-photo cleanup: if this was an edit that replaced or removed the
-    // original photo, delete the old storage object. Best-effort only — a
-    // failure here doesn't roll back the save, just leaves one orphan behind.
-    // Skipped when the payload didn't touch `photo_url` (upload-failed branch
-    // above) because the DB still points at the original.
     if (editingId && editingOriginalPhotoPath && Object.prototype.hasOwnProperty.call(payload, 'photo_url')) {
       if (payload.photo_url !== editingOriginalPhotoPath) {
         try {
@@ -3664,13 +3913,8 @@ async function saveEntry() {
     go('v-list');
 
     // Silently fetch and attach weather in background (last 7 days only).
-    // Previously fell back to "most recent row for this user" when the insert
-    // did not return an id — but during concurrent offline-sync drain that
-    // could attach the current form's weather to someone else's (newer) row.
-    // Better to skip weather than guess wrong; a later edit can re-fetch.
     var savedId = editingId || (result.data && result.data[0] && result.data[0].id) || null;
     if (savedId && payload.date) {
-      // Use this form's selected pin first; never reuse quick-entry coords here.
       var wxLat = numOrNull(formPinLat);
       var wxLng = numOrNull(formPinLng);
       if (wxLat == null || wxLng == null) {
@@ -3678,8 +3922,8 @@ async function saveEntry() {
         wxLng = numOrNull(lastGpsLng);
       }
       if ((wxLat == null || wxLng == null) && payload.location_name) {
-        var coordMatch = payload.location_name.match(/^(-?[\d.]+),\s*(-?[\d.]+)$/);
-        if (coordMatch) { wxLat = numOrNull(parseFloat(coordMatch[1])); wxLng = numOrNull(parseFloat(coordMatch[2])); }
+        var coordMatch2 = payload.location_name.match(/^(-?[\d.]+),\s*(-?[\d.]+)$/);
+        if (coordMatch2) { wxLat = numOrNull(parseFloat(coordMatch2[1])); wxLng = numOrNull(parseFloat(coordMatch2[2])); }
       }
       if (wxLat != null && wxLng != null) {
         attachWeatherToEntry(savedId, payload.date, payload.time, wxLat, wxLng);
@@ -3690,7 +3934,7 @@ async function saveEntry() {
     flHapticError();
   }
   btn.disabled = false;
-  btn.innerHTML = diaryCloudSaveInner('Save to Cloud');
+  btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
 }
 
 // Currently-pending id for the themed delete-entry confirm modal.
@@ -3707,11 +3951,17 @@ function deleteEntry(id) {
   if (summary) {
     if (e) {
       var parts = [];
-      if (e.species) parts.push('<span class="del-sp">' + esc(e.species) + '</span>');
-      var sl = sexLabel(e.sex, e.species);
-      if (sl) parts.push(esc(sl));
-      if (e.date) parts.push(esc(fmtDate(e.date)));
-      if (e.location_name) parts.push(esc(e.location_name));
+      if (isBlankDayEntry(e)) {
+        parts.push('<span class="del-sp">Blank day</span>');
+        if (e.ground) parts.push(esc(e.ground));
+        if (e.date) parts.push(esc(fmtDate(e.date)));
+      } else {
+        if (e.species) parts.push('<span class="del-sp">' + esc(e.species) + '</span>');
+        var sl = sexLabel(e.sex, e.species);
+        if (sl) parts.push(esc(sl));
+        if (e.date) parts.push(esc(fmtDate(e.date)));
+        if (e.location_name) parts.push(esc(e.location_name));
+      }
       summary.innerHTML = parts.join(' · ');
     } else {
       summary.textContent = '';
@@ -4028,17 +4278,19 @@ function buildStats(speciesFilter) {
     if (_ssl1) _ssl1.textContent = y1 + '–' + y2 + ' · ' + seasonDateStr;
   }
 
-  // Pure paint half — hand off to modules/stats.mjs. Everything that is
-  // simply a function of `entries` + a few DI'd helpers lives there (KPIs,
-  // weight grid, species+sex chart, sex chart, seven sub-cards, monthly
-  // chart). See Commit O in MODULARISATION-PLAN.md.
-  var entries = speciesFilter ? allEntries.filter(function(e){ return e.species === speciesFilter; }) : allEntries;
-  renderStatsTabBody(entries, {
+  // Pure paint half — hand off to modules/stats.mjs. Charts and cull KPIs use
+  // cull rows only; outing totals are passed separately.
+  var rawForStats = speciesFilter ? allEntries.filter(function(e){ return e.species === speciesFilter; }) : allEntries;
+  var cullForStats = rawForStats.filter(function(e) { return !isBlankDayEntry(e); });
+  var blankOutingCount = rawForStats.filter(isBlankDayEntry).length;
+  renderStatsTabBody(cullForStats, {
     currentSeason:          currentSeason,
     computeSeasonTargetKpi: computeSeasonTargetKpi,
     formatSeasonTargetSub:  formatSeasonTargetSub,
     hasValue:               hasValue,
     statsChartEmpty:        statsChartEmpty,
+    outingTotal:            rawForStats.length,
+    outingBlank:            blankOutingCount,
   });
 
   statsNeedsFullRebuild = false;
@@ -4334,10 +4586,10 @@ function exportCSV() {
 }
 
 function exportCSVData(entries, label) {
-  var headers = ['Date','Time','Species','Sex','Location','Ground','Weight(kg)','Tag','Calibre','Distance(m)','Placement','Age class','Shooter','Destination','Notes'];
+  var headers = ['Date','Time','Is blank day','Species','Sex','Location','Ground','Weight(kg)','Tag','Calibre','Distance(m)','Placement','Age class','Shooter','Destination','Notes'];
   var rows = entries.map(function(e) {
     return [
-      csvField(e.date), csvField(e.time), csvField(e.species),
+      csvField(e.date), csvField(e.time), csvField(isBlankDayEntry(e) ? 'yes' : 'no'), csvField(e.species),
       csvField(sexLabel(e.sex, e.species)), csvField(e.location_name), csvField(e.ground||''),
       csvField(e.weight_kg), csvField(e.tag_number||''),
       csvField(e.calibre), csvField(e.distance_m), csvField(e.shot_placement),
@@ -4776,6 +5028,10 @@ function exportSyndicateSeasonSummaryPdf(syndicate, season, entries, summaryRows
 function exportSinglePDF(id) {
   var e = allEntries.find(function(x){ return x.id === id; });
   if (!e) return;
+  if (isBlankDayEntry(e)) {
+    showToast('⚠️ PDF is for cull records only');
+    return;
+  }
   var res = buildSingleEntryPDF({ entry: e });
   if (res) showToast('✅ PDF downloaded');
 }
@@ -4820,6 +5076,10 @@ function exportGameDealerDeclaration(id) {
   // Thin shim over modules/pdf.mjs → buildGameDealerDeclarationPDF.
   var e = allEntries.find(function(x){ return x.id === id; });
   if (!e) return;
+  if (isBlankDayEntry(e)) {
+    showToast('⚠️ Declaration is for cull entries only');
+    return;
+  }
   var res = buildGameDealerDeclarationPDF({ entry: e, user: currentUser });
   if (res) showToast('✅ Game dealer declaration PDF downloaded');
 }
@@ -5726,11 +5986,18 @@ function renderCullMapPins() {
   cullMarkers = [];
 
   var entries = allEntries.filter(function(e) {
-    return e.lat != null && e.lng != null && (cullFilter === 'all' || e.species === cullFilter);
+    if (e.lat == null || e.lng == null) return false;
+    if (cullFilter === 'all') return true;
+    if (isBlankDayEntry(e)) return false;
+    return e.species === cullFilter;
   });
 
   var noGps = allEntries.filter(function(e){ return e.lat == null || e.lng == null; }).length;
-  var spSet = new Set(allEntries.filter(function(e){ return e.lat != null && e.lng != null; }).map(function(e){ return e.species; }));
+  var spSet = new Set(allEntries.filter(function(e){
+    if (e.lat == null || e.lng == null) return false;
+    if (isBlankDayEntry(e)) return false;
+    return e.species;
+  }).map(function(e){ return e.species; }));
 
   document.getElementById('cms-pinned').textContent = entries.length;
   document.getElementById('cms-nogps').textContent = noGps;
@@ -5772,16 +6039,23 @@ function renderCullMapPins() {
 
   var bounds = [];
   entries.forEach(function(e) {
-    var clr = SP_COLORS[e.species] || '#5a7a30';
-    var sex = e.sex === 'm' ? '&#9794;' : '&#9792;';
-    var popup = '<div style="font-size:13px;font-weight:700;color:#3d2b1f;">' + esc(e.species) + ' ' + sex + '</div>'
-      + '<div style="font-size:11px;color:#a0988a;margin-top:2px;">' + esc(e.date||'') + (e.time ? ' · ' + esc(e.time) : '') + '</div>'
-      + (hasValue(e.weight_kg) ? '<div style="font-size:11px;color:#3d2b1f;margin-top:4px;">' + esc(String(e.weight_kg)) + ' kg</div>' : '')
-      + (e.tag_number ? '<div style="font-size:11px;color:#c8a84b;margin-top:2px;">Tag: ' + esc(e.tag_number) + '</div>' : '')
-      + (e.shot_placement  ? '<div style="font-size:11px;color:#3d2b1f;">' + esc(e.shot_placement) + '</div>' : '')
-      + (e.location_name ? '<div style="font-size:10px;color:#a0988a;margin-top:3px;display:flex;align-items:center;gap:4px;">'
-        + '<span style="display:inline-flex;width:12px;height:12px;flex-shrink:0;" aria-hidden="true">' + SVG_FL_PIN + '</span>'
-        + '<span>' + esc(e.location_name) + '</span></div>' : '');
+    var clr = isBlankDayEntry(e) ? '#b8932e' : (SP_COLORS[e.species] || '#5a7a30');
+    var popup;
+    if (isBlankDayEntry(e)) {
+      popup = '<div style="font-size:13px;font-weight:700;color:#6a4a0a;">Blank day</div>'
+        + '<div style="font-size:11px;color:#a0988a;margin-top:2px;">' + esc(e.date||'') + (e.time ? ' · ' + esc(e.time) : '') + '</div>'
+        + (e.ground ? '<div style="font-size:11px;color:#3d2b1f;margin-top:4px;">' + esc(e.ground) + '</div>' : '');
+    } else {
+      var sex = e.sex === 'm' ? '&#9794;' : '&#9792;';
+      popup = '<div style="font-size:13px;font-weight:700;color:#3d2b1f;">' + esc(e.species) + ' ' + sex + '</div>'
+        + '<div style="font-size:11px;color:#a0988a;margin-top:2px;">' + esc(e.date||'') + (e.time ? ' · ' + esc(e.time) : '') + '</div>'
+        + (hasValue(e.weight_kg) ? '<div style="font-size:11px;color:#3d2b1f;margin-top:4px;">' + esc(String(e.weight_kg)) + ' kg</div>' : '')
+        + (e.tag_number ? '<div style="font-size:11px;color:#c8a84b;margin-top:2px;">Tag: ' + esc(e.tag_number) + '</div>' : '')
+        + (e.shot_placement  ? '<div style="font-size:11px;color:#3d2b1f;">' + esc(e.shot_placement) + '</div>' : '')
+        + (e.location_name ? '<div style="font-size:10px;color:#a0988a;margin-top:3px;display:flex;align-items:center;gap:4px;">'
+          + '<span style="display:inline-flex;width:12px;height:12px;flex-shrink:0;" aria-hidden="true">' + SVG_FL_PIN + '</span>'
+          + '<span>' + esc(e.location_name) + '</span></div>' : '');
+    }
 
     var marker = L.marker([e.lat, e.lng], { icon: makeMarkerIcon(clr) })
       .bindPopup(popup);
@@ -5931,6 +6205,7 @@ function offlineEntryFingerprint(entry) {
   if (!entry) return '';
   if (entry._id) return 'id:' + String(entry._id);
   return 'sig:' + [
+    entry.is_blank ? '1' : '0',
     entry.species || '',
     entry.sex || '',
     entry.date || '',
@@ -6143,32 +6418,62 @@ async function syncOfflineQueue() {
         continue;
       }
       try {
-        var payload = {
-          user_id:         currentUser.id,
-          species:         entry.species,
-          sex:             entry.sex,
-          date:            entry.date,
-          time:            entry.time,
-          location_name:   entry.location_name == null ? null : entry.location_name,
-          lat:             entry.lat == null ? null : entry.lat,
-          lng:             entry.lng == null ? null : entry.lng,
-          weight_kg:       entry.weight_kg == null ? null : entry.weight_kg,
-          calibre:         entry.calibre == null ? null : entry.calibre,
-          distance_m:      entry.distance_m == null ? null : entry.distance_m,
-          shot_placement:  entry.shot_placement == null ? null : entry.shot_placement,
-          age_class:       entry.age_class == null ? null : entry.age_class,
-          notes:           entry.notes == null ? null : entry.notes,
-          shooter:         entry.shooter || 'Self',
-          ground:          entry.ground == null ? null : entry.ground,
-          syndicate_id:    entry.syndicate_id == null ? null : entry.syndicate_id,
-          destination:     entry.destination == null ? null : entry.destination,
-          tag_number:      entry.tag_number == null ? null : entry.tag_number,
-          abnormalities:       Array.isArray(entry.abnormalities) ? entry.abnormalities : null,
-          abnormalities_other: entry.abnormalities_other == null ? null : entry.abnormalities_other,
-        };
+        var payload;
+        if (entry.is_blank) {
+          payload = {
+            user_id:         currentUser.id,
+            is_blank:        true,
+            species:         null,
+            sex:             null,
+            date:            entry.date,
+            time:            entry.time,
+            location_name:   entry.location_name == null ? null : entry.location_name,
+            lat:             entry.lat == null ? null : entry.lat,
+            lng:             entry.lng == null ? null : entry.lng,
+            weight_kg:       null,
+            calibre:         null,
+            distance_m:      null,
+            shot_placement:  null,
+            age_class:       null,
+            notes:           entry.notes == null ? null : entry.notes,
+            shooter:         entry.shooter || 'Self',
+            ground:          entry.ground == null ? null : entry.ground,
+            syndicate_id:    entry.syndicate_id == null ? null : entry.syndicate_id,
+            destination:     null,
+            tag_number:      null,
+            abnormalities: null,
+            abnormalities_other: null,
+            photo_url:       null,
+          };
+        } else {
+          payload = {
+            user_id:         currentUser.id,
+            is_blank:        false,
+            species:         entry.species,
+            sex:             entry.sex,
+            date:            entry.date,
+            time:            entry.time,
+            location_name:   entry.location_name == null ? null : entry.location_name,
+            lat:             entry.lat == null ? null : entry.lat,
+            lng:             entry.lng == null ? null : entry.lng,
+            weight_kg:       entry.weight_kg == null ? null : entry.weight_kg,
+            calibre:         entry.calibre == null ? null : entry.calibre,
+            distance_m:      entry.distance_m == null ? null : entry.distance_m,
+            shot_placement:  entry.shot_placement == null ? null : entry.shot_placement,
+            age_class:       entry.age_class == null ? null : entry.age_class,
+            notes:           entry.notes == null ? null : entry.notes,
+            shooter:         entry.shooter || 'Self',
+            ground:          entry.ground == null ? null : entry.ground,
+            syndicate_id:    entry.syndicate_id == null ? null : entry.syndicate_id,
+            destination:     entry.destination == null ? null : entry.destination,
+            tag_number:      entry.tag_number == null ? null : entry.tag_number,
+            abnormalities:       Array.isArray(entry.abnormalities) ? entry.abnormalities : null,
+            abnormalities_other: entry.abnormalities_other == null ? null : entry.abnormalities_other,
+          };
+        }
 
       // Upload photo if queued (IndexedDB blob preferred, with dataURL fallback).
-      if (entry._photoBlobId || entry._photoDataUrl) {
+      if (!entry.is_blank && (entry._photoBlobId || entry._photoDataUrl)) {
         try {
           var blob = null;
           if (entry._photoBlobId) {
@@ -6188,7 +6493,7 @@ async function syncOfflineQueue() {
             }
           }
         } catch(photoErr) { console.warn('Photo sync failed:', photoErr); }
-      } else if (entry._existingPhotoUrl) {
+      } else if (!entry.is_blank && entry._existingPhotoUrl) {
         var ex = entry._existingPhotoUrl;
         var npath = cullPhotoStoragePath(ex);
         payload.photo_url = npath || ex;

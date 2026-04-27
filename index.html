@@ -92,7 +92,7 @@
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
       <span style="font-size:11px;color:rgba(255,255,255,0.25);font-style:italic;white-space:nowrap;">by Sohaib Mengal</span>
       <span style="color:rgba(255,255,255,0.15);">·</span>
-      <span style="background:linear-gradient(135deg,#c9a84c,#d4b45a);color:#0f1a0f;font-size:9px;font-weight:800;padding:2px 7px;border-radius:6px;letter-spacing:0.5px;">V2</span>
+      <span style="background:linear-gradient(135deg,#c9a84c,#d4b45a);color:#0f1a0f;font-size:9px;font-weight:800;padding:2px 7px;border-radius:6px;letter-spacing:0.5px;">V2.1</span>
       <span style="color:rgba(255,255,255,0.15);">·</span>
       <button type="button" data-fl-action="open-changelog" style="font-size:10px;color:rgba(200,168,75,0.55);background:none;border:none;padding:0;cursor:pointer;font-family:inherit;text-decoration:underline;text-underline-offset:2px;">What's new</button>
     </div>
@@ -1498,6 +1498,21 @@
           <div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;">Stalking safety, rifle, calibres &amp; optic setup (incl. UK law &amp; holdover), shot placement, gralloch, CIC trophy measurement, rut calendar and notifiable diseases.</div>
         </div>
       </div>
+    </div>
+
+    <div class="fg-search-wrap" id="fg-search-wrap" role="search" aria-labelledby="fg-search-heading">
+      <p class="fg-search-eyebrow" id="fg-search-heading">Find a topic</p>
+      <div class="fg-search-inner">
+        <span class="fg-search-ic" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </span>
+        <input type="search" id="fg-search-input" class="fg-search-input" placeholder="e.g. gralloch, CIC, NPA, holdover…" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search" aria-labelledby="fg-search-heading">
+        <button type="button" id="fg-search-clear" class="fg-search-clear" aria-label="Clear search" hidden>
+          <span aria-hidden="true">×</span>
+        </button>
+      </div>
+      <p class="fg-search-meta" id="fg-search-count" aria-live="polite"></p>
+      <p class="fg-search-empty" id="fg-search-empty" hidden>No sections match. Try another word or clear the search above.</p>
     </div>
 
     <!-- ── CATEGORY 1: SHOT PLACEMENT ── -->
@@ -4095,7 +4110,7 @@
             <span style="color:rgba(255,255,255,0.15);">·</span>
             <a href="deerschool.html" style="font-size:10px;color:rgba(200,168,75,0.5);text-decoration:none;">Deer School</a>
             <span style="color:rgba(255,255,255,0.15);">·</span>
-            <span style="font-size:10px;color:rgba(255,255,255,0.2);">v2.0</span>
+            <span style="font-size:10px;color:rgba(255,255,255,0.2);">v2.1</span>
           </div>
           <div style="margin-top:10px;font-size:10px;color:rgba(255,255,255,0.18);text-align:center;">
             © 2025–2026 Sohaib Mengal · First Light · All rights reserved
@@ -4281,10 +4296,27 @@
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div>
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#5a7a30;margin-bottom:2px;">First Light</div>
-        <div id="changelog-title" style="font-size:18px;font-weight:700;color:#2d3a1f;font-family:'Playfair Display',serif;">What's new in v2.0</div>
+        <div id="changelog-title" style="font-size:18px;font-weight:700;color:#2d3a1f;font-family:'Playfair Display',serif;">What's new in v2.1</div>
       </div>
       <div style="font-size:10px;color:#bbb;text-align:right;white-space:nowrap;">April 2026</div>
     </div>
+
+    <ul style="list-style:none;padding:0;margin:0 0 18px;display:flex;flex-direction:column;gap:12px;">
+      <li style="display:flex;align-items:flex-start;gap:12px;">
+        <span style="background:#e8f0dc;border-radius:6px;padding:3px 6px;font-size:11px;font-weight:700;color:#3d5a1c;display:inline-flex;align-items:center;justify-content:center;min-width:64px;flex-shrink:0;margin-top:1px;">v2.1</span>
+        <span style="font-size:13px;color:#444;line-height:1.5;"><strong>Blank day</strong> — log a stalk with no shot (date, time, place, ground, notes). It appears in the diary list, can be found by searching <em>blank</em>, <em>blank day</em>, or <em>outing</em>, and Stats show outings and blank days separately from cull totals. The Cull Diary in-app guide (section 03b) explains the flow.</span>
+      </li>
+      <li style="display:flex;align-items:flex-start;gap:12px;">
+        <span style="background:#e8f0dc;border-radius:6px;padding:3px 6px;font-size:11px;font-weight:700;color:#3d5a1c;display:inline-flex;align-items:center;justify-content:center;min-width:64px;flex-shrink:0;margin-top:1px;">v2.1</span>
+        <span style="font-size:13px;color:#444;line-height:1.5;">Cull Diary list: clearer layout for <strong>no-photo</strong> cards when two no-photo entries sit together in a month.</span>
+      </li>
+      <li style="display:flex;align-items:flex-start;gap:12px;">
+        <span style="background:#e8f0dc;border-radius:6px;padding:3px 6px;font-size:11px;font-weight:700;color:#3d5a1c;display:inline-flex;align-items:center;justify-content:center;min-width:64px;flex-shrink:0;margin-top:1px;">v2.1</span>
+        <span style="font-size:13px;color:#444;line-height:1.5;"><strong>Field Guide</strong> — search box filters the big collapsible sections and opens matches (multi-word: all words must appear somewhere in that section). Clear the box to show everything again.</span>
+      </li>
+    </ul>
+
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:#9a958c;margin:4px 0 12px;">From v2.0</div>
 
     <ul style="list-style:none;padding:0;margin:0 0 18px;display:flex;flex-direction:column;gap:12px;">
       <li style="display:flex;align-items:flex-start;gap:12px;">

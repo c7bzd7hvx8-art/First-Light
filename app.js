@@ -1,4 +1,4 @@
-/* First Light — App v2.0 */
+/* First Light — App v2.1 */
 
 // ── block ──
 
@@ -1622,6 +1622,88 @@ function toggleFgCategory(header) {
   header.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
   var body = header.parentElement.querySelector('.fg-cat-body');
   if (body) body.classList.toggle('open', isOpen);
+}
+
+/** Field Guide: filter `.fg-category` blocks by tokenized substring match on full section text. */
+function initFieldGuideSearch() {
+  var panel = document.getElementById('tab-shots');
+  var input = document.getElementById('fg-search-input');
+  if (!panel || !input) return;
+  var emptyEl = document.getElementById('fg-search-empty');
+  var countEl = document.getElementById('fg-search-count');
+  var clearBtn = document.getElementById('fg-search-clear');
+  var categories = [].slice.call(panel.querySelectorAll('.fg-category'));
+  var index = categories.map(function(cat) {
+    return (cat.textContent || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  });
+  function clearSearch() {
+    input.value = '';
+    run();
+    input.focus();
+  }
+  /** Set when a search first runs; restored when the box is cleared so sections don’t stay all expanded. */
+  var preSearchOpen = null;
+  function run() {
+    var q = input.value.trim().toLowerCase();
+    var tokens = q ? q.split(/\s+/).filter(Boolean) : [];
+
+    if (!tokens.length && preSearchOpen) {
+      categories.forEach(function(cat, i) {
+        cat.style.display = '';
+        var hdr = cat.querySelector('.fg-cat-header');
+        if (!hdr) return;
+        var want = preSearchOpen[i];
+        var isOpen = hdr.classList.contains('open');
+        if (want && !isOpen) toggleFgCategory(hdr);
+        if (!want && isOpen) toggleFgCategory(hdr);
+      });
+      preSearchOpen = null;
+      if (emptyEl) emptyEl.hidden = true;
+      if (countEl) countEl.textContent = '';
+      if (clearBtn) clearBtn.hidden = !input.value.trim();
+      return;
+    }
+
+    if (!tokens.length) {
+      categories.forEach(function(cat) { cat.style.display = ''; });
+      if (emptyEl) emptyEl.hidden = true;
+      if (countEl) countEl.textContent = '';
+      if (clearBtn) clearBtn.hidden = !input.value.trim();
+      return;
+    }
+
+    if (!preSearchOpen) {
+      preSearchOpen = categories.map(function(cat) {
+        var h = cat.querySelector('.fg-cat-header');
+        return h ? h.classList.contains('open') : false;
+      });
+    }
+
+    var n = 0;
+    categories.forEach(function(cat, i) {
+      var show = tokens.every(function(t) { return index[i].indexOf(t) !== -1; });
+      cat.style.display = show ? '' : 'none';
+      if (show) {
+        n++;
+        var hdr = cat.querySelector('.fg-cat-header');
+        if (hdr && !hdr.classList.contains('open')) toggleFgCategory(hdr);
+      }
+    });
+    if (emptyEl) emptyEl.hidden = !(n === 0);
+    if (countEl) {
+      if (n === 0) countEl.textContent = '';
+      else countEl.textContent = n === 1 ? '1 section matches' : n + ' sections match';
+    }
+    if (clearBtn) clearBtn.hidden = !input.value.trim();
+  }
+  input.addEventListener('input', run);
+  if (clearBtn) clearBtn.addEventListener('click', clearSearch);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && input.value) {
+      e.preventDefault();
+      clearSearch();
+    }
+  });
 }
 
 // ── Tab switching ─────────────────────────────────────────────
@@ -3707,6 +3789,7 @@ if ('serviceWorker' in navigator) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFgCategory(this); }
       });
     });
+    initFieldGuideSearch();
 
     // ── Location preset buttons ────────────────────────────
     document.querySelectorAll('.loc-preset[data-lat]').forEach(function(btn) {
