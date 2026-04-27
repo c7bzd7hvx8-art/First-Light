@@ -29,7 +29,7 @@ import { isBlankDayEntry, blankDaySummaryText } from './lib/fl-pure.mjs';
 // after a deploy can be filtered down to the new build. Hand-maintained
 // (two strings, but cheap to update; see PROJECT-LOG on the error-logger
 // rollout).
-const FL_APP_VERSION = '7.85';
+const FL_APP_VERSION = '7.86';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -3699,12 +3699,8 @@ async function saveEntry() {
     btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
     return;
   }
-  if (!selectedGround) {
-    showToast('⚠️ Please select a ground (permission)');
-    btn.disabled = false;
-    btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
-    return;
-  }
+  // Ground optional (same as pre–blank-day saves). If a syndicate is attributed and
+  // that syndicate has a ground filter, validateSyndicateAttributionGround still enforces a match.
   var wtRaw = parseFloat(document.getElementById('f-wt').value);
   var distRaw = parseInt(document.getElementById('f-dist').value, 10);
   var wtVal = Number.isFinite(wtRaw) ? Math.max(0, wtRaw) : null;
