@@ -713,6 +713,10 @@
   .legal .live-dot { background: #5adf5a; box-shadow: 0 0 4px #5adf5a; animation: pulse 1.8s infinite; }
   .illegal .live-dot { background: #df5a5a; box-shadow: 0 0 4px #df5a5a; animation: pulse 1.8s infinite; }
   .twilight .live-dot { background: #f0c040; box-shadow: 0 0 4px rgba(240, 192, 64, 0.4); animation: pulse 1.8s infinite; }
+  /* Soft "live" pulse for the location status dot. The three rules above
+     reference this; it was never defined, so the dot rendered static. Honoured
+     only when motion is allowed — the prefers-reduced-motion block neutralises it. */
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
   .legal .banner-location--top .live-dot,
   .illegal .banner-location--top .live-dot,
   .twilight .banner-location--top .live-dot {

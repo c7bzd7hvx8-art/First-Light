@@ -395,8 +395,13 @@ export function buildDopeCardPDF(args) {
       doc.setDrawColor(...COLOURS.stoneRGB);
       doc.rect(chartLeft, chartTop, chartW, chartH);
 
-      // y=0 baseline
-      const yZero = chartTop + ((maxD - 0) / dSpan) * chartH;
+      // y=0 baseline (LoS). PDF coords: Y increases downward, so larger
+      // drop values must yield larger py. Formula: py grows with
+      // (dropCm - minD). Same orientation as renderDropChart in
+      // ballistics-ui.js after the 9.36→9.37 fix — this code path was
+      // missed at that time, so until now the printed dope card showed
+      // the bullet visually rising with range. (Fixed 2026-06-09.)
+      const yZero = chartTop + ((0 - minD) / dSpan) * chartH;
       doc.setDrawColor(...COLOURS.goldRGB);
       doc.setLineDashPattern([1, 1], 0);
       doc.line(chartLeft, yZero, chartRight, yZero);
@@ -408,7 +413,7 @@ export function buildDopeCardPDF(args) {
       let prev = null;
       for (const r of rows) {
         const px = chartLeft + (r.rangeM / maxR) * chartW;
-        const py = chartTop + ((maxD - r.dropCm) / dSpan) * chartH;
+        const py = chartTop + ((r.dropCm - minD) / dSpan) * chartH;
         if (prev) doc.line(prev.x, prev.y, px, py);
         prev = { x: px, y: py };
       }

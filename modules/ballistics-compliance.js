@@ -47,13 +47,42 @@ export function groupComplianceResults(results) {
 export function renderComplianceSection(profile, deps) {
   const { state, checkLegalCompliance, checkAbsoluteFloor, escapeHtml } = deps;
   const filter = state.settings.speciesFilter;
-  if (!filter || filter.length === 0) return '';
+  const jurLabelEmpty = JURISDICTIONS.find(j => j.code === state.settings.jurisdiction)?.label || '';
+
+  // No species selected: render a discoverable placeholder rather than
+  // collapsing the panel to nothing. Without this, stalkers assume the
+  // feature is broken or missing — the compliance section is one of the
+  // calculator's headline features and silently disappearing hides it.
+  // (Added 2026-06-09.)
+  if (!filter || filter.length === 0) {
+    return `
+      <div class="bx-output-section bx-compliance-section bx-compliance-empty">
+        <div class="bx-output-label">Legal compliance${jurLabelEmpty ? ' · ' + escapeHtml(jurLabelEmpty) : ''}</div>
+        <div class="bx-compliance-empty-msg">
+          Select one or more deer species above to check this load against the statutory minimum calibre, muzzle energy and bullet weight for your jurisdiction.
+        </div>
+      </div>
+    `;
+  }
 
   const results = filter
     .map(sp => checkLegalCompliance(profile, state.settings.jurisdiction, sp))
     .filter(r => r.checks.length > 0);  // skip species without statutory thresholds
 
-  if (results.length === 0) return '';
+  // All selected species lack statutory thresholds — fall back to the same
+  // placeholder rather than rendering nothing. Rare in practice (every UK
+  // deer species has thresholds in at least one jurisdiction) but possible
+  // if a user picks e.g. muntjac with Scotland selected.
+  if (results.length === 0) {
+    return `
+      <div class="bx-output-section bx-compliance-section bx-compliance-empty">
+        <div class="bx-output-label">Legal compliance${jurLabelEmpty ? ' · ' + escapeHtml(jurLabelEmpty) : ''}</div>
+        <div class="bx-compliance-empty-msg">
+          The selected species have no statutory thresholds in ${escapeHtml(jurLabelEmpty || 'this jurisdiction')}. Choose another species or jurisdiction to see legal compliance.
+        </div>
+      </div>
+    `;
+  }
 
   // Sort: failed first (most important), then unknown, then passed.
   const order = { fail: 0, unknown: 1, pass: 2 };

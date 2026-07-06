@@ -11,12 +11,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Supabase -->
 <link rel="stylesheet" href="vendor/leaflet/leaflet.min.css">
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" integrity="sha384-pmjIAcz2bAn0xukfxADbZIb3t8oRT9Sv0rvO+BR5Csr6Dhqq+nZs59P0pPKQJkEV" crossorigin="anonymous">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" integrity="sha384-wgw+aLYNQ7dlhK47ZPK7FRACiq7ROZwgFNg0m04avm4CaXS+Z9Y7nMu8yNjBKYC+" crossorigin="anonymous">
 <script src="vendor/leaflet/leaflet.min.js"></script>
-<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
 <meta name="fl-mapbox-token" content="pk.eyJ1IjoibWlyc29oYWliNyIsImEiOiJjbW80dndqZjQxMXFqMnJxdzVzZjVzN2I0In0.vZCwBljNfCNdaQS6Di0gkA">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.106.2/dist/umd/supabase.js" integrity="sha384-m/8UHFJHeU6nrCKP2hBnAseuvAKUmLF+8e5bWos5CJL023vuxX7kiVL5t8yjsJhV" crossorigin="anonymous"></script>
 <!-- jsPDF for PDF export -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
 <link rel="stylesheet" href="diary.css">
@@ -70,7 +70,7 @@
     <div class="di-modal-title">Reset password</div>
     <p class="di-modal-lede">We’ll email you a link to choose a new password. If it does not arrive in a few minutes, check your spam folder and try again.</p>
     <label class="di-modal-field-lbl" for="forgot-password-email">Email</label>
-    <input type="email" id="forgot-password-email" class="di-modal-input" placeholder="you@example.com" autocomplete="email">
+    <input type="email" id="forgot-password-email" aria-label="Email for password reset" class="di-modal-input" placeholder="you@example.com" autocomplete="email">
     <div class="auth-err di-modal-err" id="forgot-password-err" style="display:none;"></div>
     <button type="button" class="di-btn-full di-btn-pri-solid" data-fl-action="send-password-reset">Send reset link</button>
     <button type="button" class="di-btn-full di-btn-sec-tonal" data-fl-action="close-forgot-password-modal">Cancel</button>
@@ -82,7 +82,7 @@
     <div class="di-modal-title" id="name-edit-title">Edit display name</div>
     <p class="di-modal-lede">Used on your account card, in PDF signatures, and alongside your entries in any syndicate you belong to. Changing it updates those places only — existing shooter names on past diary entries are left as they were.</p>
     <label class="di-modal-field-lbl" for="name-edit-input">Your name</label>
-    <input type="text" id="name-edit-input" class="di-modal-input" placeholder="e.g. John Smith" autocomplete="name" maxlength="60">
+    <input type="text" id="name-edit-input" aria-label="Display name" class="di-modal-input" placeholder="e.g. John Smith" autocomplete="name" maxlength="60">
     <div class="auth-err di-modal-err" id="name-edit-err" style="display:none;"></div>
     <button type="button" class="di-btn-full di-btn-pri-solid" id="name-edit-btn" data-fl-action="save-name-edit">Save name</button>
     <button type="button" class="di-btn-full di-btn-sec-tonal" data-fl-action="close-name-edit">Cancel</button>
@@ -94,11 +94,11 @@
     <div class="di-modal-title" id="password-change-title">Change password</div>
     <p class="di-modal-lede">Enter your current password for security, then pick a new one of at least 8 characters.</p>
     <label class="di-modal-field-lbl" for="password-change-current">Current password</label>
-    <input type="password" id="password-change-current" class="di-modal-input" placeholder="••••••••" autocomplete="current-password">
+    <input type="password" id="password-change-current" aria-label="Current password" class="di-modal-input" placeholder="••••••••" autocomplete="current-password">
     <label class="di-modal-field-lbl" for="password-change-next">New password</label>
-    <input type="password" id="password-change-next" class="di-modal-input" placeholder="At least 8 characters" autocomplete="new-password">
+    <input type="password" id="password-change-next" aria-label="New password" class="di-modal-input" placeholder="At least 8 characters" autocomplete="new-password">
     <label class="di-modal-field-lbl" for="password-change-confirm">Confirm new password</label>
-    <input type="password" id="password-change-confirm" class="di-modal-input" placeholder="Type the new password again" autocomplete="new-password">
+    <input type="password" id="password-change-confirm" aria-label="Confirm new password" class="di-modal-input" placeholder="Type the new password again" autocomplete="new-password">
     <div class="auth-err di-modal-err" id="password-change-err" style="display:none;"></div>
     <button type="button" class="di-btn-full di-btn-pri-solid" id="password-change-btn" data-fl-action="save-password-change">Update password</button>
     <button type="button" class="di-btn-full di-btn-sec-tonal" data-fl-action="close-password-change">Cancel</button>
@@ -124,7 +124,7 @@
       </div>
     </div>
     <div class="list-row2">
-      <select class="season-sel" id="season-select">
+      <select class="season-sel" id="season-select" aria-label="Season">
       </select>
       <a href="diary-guide.html" class="hdr-btn" style="text-decoration:none;font-size:11px;font-weight:700;color:rgba(200,168,75,0.7);display:flex;align-items:center;gap:4px;" title="How to use the Cull Diary" aria-label="Open diary guide"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M8 7h8M8 11h6"/></svg></a>
       <button class="hdr-btn" type="button" data-fl-action="go" data-view="v-stats" aria-label="Open stats"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="2" y="12" width="5" height="9" rx="1.5" fill="#c8a84b" opacity="0.9"/><rect x="9.5" y="7" width="5" height="14" rx="1.5" fill="white"/><rect x="17" y="16" width="5" height="5" rx="1.5" fill="#c8a84b" opacity="0.6"/></svg></button>
@@ -145,7 +145,7 @@
     <button type="button" id="list-search-clear" class="list-search-clear" data-fl-action="clear-list-search" hidden aria-label="Clear search">✕</button>
   </div>
   <div class="list-secondary-filters" id="list-secondary-filters" style="display:none;">
-    <select class="ground-filter-sel" id="ground-filter" data-fl-action="filter-ground"><option value="all">All grounds</option></select>
+    <select class="ground-filter-sel" id="ground-filter" aria-label="Filter by ground" data-fl-action="filter-ground"><option value="all">All grounds</option></select>
     <button class="sort-toggle-btn" id="sort-toggle" type="button" data-fl-action="toggle-sort" title="Toggle sort order"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg><span id="sort-label">Newest</span></button>
     <button class="sort-toggle-btn" id="select-mode-toggle" type="button" data-fl-action="enter-select-mode" title="Select multiple entries for a consignment PDF" aria-label="Select multiple entries"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 20 6"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h10"/></svg><span>Select</span></button>
   </div>
@@ -225,14 +225,14 @@
     <div class="qs-wt">
       <div class="qs-wt-lbl">Weight</div>
       <div class="qs-wt-row">
-        <input class="qs-wt-input" id="qs-wt" type="number" placeholder="0" inputmode="decimal" min="0" step="0.1">
+        <input class="qs-wt-input" id="qs-wt" aria-label="Weight in kilograms" type="number" placeholder="0" inputmode="decimal" min="0" step="0.1">
         <span class="qs-wt-unit">kg</span>
       </div>
     </div>
     <div class="qs-lbl">Tag number (optional)</div>
     <div class="qs-wt">
       <div class="qs-wt-row">
-        <input class="qs-wt-input qs-tag-input" id="qs-tag" type="text" placeholder="e.g. FL-0047" style="text-align:left;">
+        <input class="qs-wt-input qs-tag-input" id="qs-tag" aria-label="Tag number" type="text" placeholder="e.g. FL-0047" style="text-align:left;">
       </div>
     </div>
     <button class="qs-save" id="qs-save-btn" type="button" data-fl-action="save-quick"><span class="di-btn-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h11a4 4 0 0 0 0-8h-.5A5.5 5.5 0 0 0 7 11a4 4 0 0 0 0 7z"/></svg></span>Save to Cloud</button>
@@ -359,7 +359,7 @@
         <select class="ground-input" id="f-ground">
           <option value="">Select ground…</option>
         </select>
-        <input type="text" id="f-ground-custom" class="ground-custom-input" placeholder="Enter ground name…" style="display:none;">
+        <input type="text" id="f-ground-custom" aria-label="Custom ground name" class="ground-custom-input" placeholder="Enter ground name…" style="display:none;">
         <div class="loc-ground-note">
           <span class="loc-ground-note-line">Syndicate permissions must match team tallies exactly.</span>
           <span class="loc-ground-note-line">New grounds are saved automatically when you save an entry.</span>
@@ -410,7 +410,7 @@
               <option value="__custom__">Other / custom…</option>
             </select>
           </div>
-          <input type="text" id="f-calibre" placeholder="e.g. 6.5×47 Lapua…" style="display:none;margin-top:8px;">
+          <input type="text" id="f-calibre" aria-label="Custom calibre" placeholder="e.g. 6.5×47 Lapua…" style="display:none;margin-top:8px;">
         </div>
         <div class="ff"><label for="f-dist">Distance (m)</label><input type="number" id="f-dist" placeholder="e.g. 120" inputmode="numeric" min="0"></div>
       </div>
@@ -433,7 +433,7 @@
               <option value="__other__">Other / describe…</option>
             </select>
           </div>
-          <input type="text" id="f-placement-custom" class="sp-placement-custom"
+          <input type="text" id="f-placement-custom" aria-label="Custom shot placement" class="sp-placement-custom"
             placeholder="e.g. frontal chest, base of skull…" style="display:none;margin-top:8px;">
         </div>
         <div class="ff"><label for="f-shooter">Shooter</label>
@@ -482,7 +482,7 @@
       <div class="fsec-hdr"><div class="fsec-num">7</div><div class="fsec-title">Larder inspection</div></div>
       <div class="abnorm-none">
         <label class="abnorm-none-lbl">
-          <input type="checkbox" id="f-abnorm-none">
+          <input type="checkbox" id="f-abnorm-none" aria-label="No abnormalities observed">
           <span class="abnorm-none-text"><strong>No abnormalities observed</strong><small>Tick if the carcass and viscera were unremarkable at gralloch.</small></span>
         </label>
       </div>
@@ -514,7 +514,7 @@
     </div>
     <div class="stats-hdr-row">
       <h2>Season Statistics</h2>
-      <select class="season-pill-sel" id="season-select-stats">
+      <select class="season-pill-sel" id="season-select-stats" aria-label="Season for statistics">
       </select>
     </div>
     <p id="stats-season-lbl" style="margin-top:4px;"></p>
@@ -774,7 +774,7 @@
     </div>
     <div class="di-delete-input-wrap">
       <div class="di-delete-confirm-hint">Type <strong>DELETE</strong> to confirm</div>
-      <input id="delete-confirm-input" class="di-modal-input di-modal-input--center" type="text" placeholder="Type DELETE here" autocomplete="off">
+      <input id="delete-confirm-input" aria-label="Type DELETE to confirm" class="di-modal-input di-modal-input--center" type="text" placeholder="Type DELETE here" autocomplete="off">
     </div>
     <button id="delete-confirm-btn" class="di-btn-full" type="button" data-fl-action="delete-account" disabled>Delete everything</button>
     <button type="button" class="di-btn-full di-btn-sec-tonal di-btn-sec-tonal--soft" data-fl-action="close-delete-modal">Cancel — keep my account</button>
@@ -860,12 +860,12 @@
 
       <div class="di-modal-field-block">
         <label class="di-modal-field-lbl di-modal-field-lbl--field" for="export-season-sel">Season</label>
-        <select id="export-season-sel" class="di-modal-select"></select>
+        <select id="export-season-sel" aria-label="Export season" class="di-modal-select"></select>
       </div>
 
       <div class="di-modal-field-block di-modal-field-block--lg">
         <label class="di-modal-field-lbl di-modal-field-lbl--field" for="export-ground-sel">Permission / Ground</label>
-        <select id="export-ground-sel" class="di-modal-select"></select>
+        <select id="export-ground-sel" aria-label="Export ground" class="di-modal-select"></select>
       </div>
 
       <div class="di-modal-preview">
@@ -887,9 +887,9 @@
     <div class="di-modal-title-sans" id="syndicate-export-modal-title">Syndicate export</div>
     <div class="di-modal-lede di-modal-lede--tight" id="syndicate-export-modal-sub">Choose syndicate and scope.</div>
     <label class="syndicate-export-lbl" for="syndicate-export-syndicate">Syndicate</label>
-    <select id="syndicate-export-syndicate" class="syndicate-export-select"></select>
+    <select id="syndicate-export-syndicate" aria-label="Syndicate to export" class="syndicate-export-select"></select>
     <label class="syndicate-export-lbl" for="syndicate-export-season">Season</label>
-    <select id="syndicate-export-season" class="syndicate-export-select"></select>
+    <select id="syndicate-export-season" aria-label="Season to export" class="syndicate-export-select"></select>
     <div id="syndicate-export-scope-wrap" class="syndicate-export-scope">
       <span class="syndicate-export-scope-t">List scope (CSV / PDF)</span>
       <label class="syndicate-export-radio"><input type="radio" name="syndicate-export-scope" value="season" checked> This season only</label>
@@ -912,7 +912,7 @@
   <div class="pinmap-topbar">
     <button class="pinmap-back" type="button" data-fl-action="close-pin" aria-label="Back to form">←</button>
     <div style="flex:1;position:relative;">
-      <input id="pinmap-search" type="text" placeholder="Search place name…"
+      <input id="pinmap-search" aria-label="Search place name" type="text" placeholder="Search place name…"
         style="width:100%;padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.1);color:white;font-size:13px;font-family:'DM Sans',sans-serif;outline:none;">
       <div id="pinmap-search-results" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#1a2e10;border-radius:10px;overflow:hidden;z-index:800;box-shadow:0 4px 20px rgba(0,0,0,0.5);max-height:200px;overflow-y:auto;"></div>
     </div>
@@ -987,12 +987,12 @@
         <div class="tgrid-sp"><div class="tgrid-dot" style="background:#c8a84b;"></div>Red Deer</div>
         <div class="tstepper">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="redm" data-step-delta="-1">−</button>
-          <input class="tstep-val" id="tt-redm" type="number" value="0" min="0">
+          <input class="tstep-val" id="tt-redm" aria-label="Red stag target" type="number" value="0" min="0">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="redm" data-step-delta="1">+</button>
         </div>
         <div class="tstepper">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="redf" data-step-delta="-1">−</button>
-          <input class="tstep-val" id="tt-redf" type="number" value="0" min="0">
+          <input class="tstep-val" id="tt-redf" aria-label="Red hind target" type="number" value="0" min="0">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="redf" data-step-delta="1">+</button>
         </div>
       </div>
@@ -1000,12 +1000,12 @@
         <div class="tgrid-sp"><div class="tgrid-dot" style="background:#5a7a30;"></div>Roe Deer</div>
         <div class="tstepper">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="roem" data-step-delta="-1">−</button>
-          <input class="tstep-val" id="tt-roem" type="number" value="0" min="0">
+          <input class="tstep-val" id="tt-roem" aria-label="Roe buck target" type="number" value="0" min="0">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="roem" data-step-delta="1">+</button>
         </div>
         <div class="tstepper">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="roef" data-step-delta="-1">−</button>
-          <input class="tstep-val" id="tt-roef" type="number" value="0" min="0">
+          <input class="tstep-val" id="tt-roef" aria-label="Roe doe target" type="number" value="0" min="0">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="roef" data-step-delta="1">+</button>
         </div>
       </div>
@@ -1013,12 +1013,12 @@
         <div class="tgrid-sp"><div class="tgrid-dot" style="background:#f57f17;"></div>Fallow</div>
         <div class="tstepper">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="fallowm" data-step-delta="-1">−</button>
-          <input class="tstep-val" id="tt-fallowm" type="number" value="0" min="0">
+          <input class="tstep-val" id="tt-fallowm" aria-label="Fallow buck target" type="number" value="0" min="0">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="fallowm" data-step-delta="1">+</button>
         </div>
         <div class="tstepper">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="fallowf" data-step-delta="-1">−</button>
-          <input class="tstep-val" id="tt-fallowf" type="number" value="0" min="0">
+          <input class="tstep-val" id="tt-fallowf" aria-label="Fallow doe target" type="number" value="0" min="0">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="fallowf" data-step-delta="1">+</button>
         </div>
       </div>
@@ -1026,12 +1026,12 @@
         <div class="tgrid-sp"><div class="tgrid-dot" style="background:#6a1b9a;"></div>Muntjac</div>
         <div class="tstepper">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="muntjacm" data-step-delta="-1">−</button>
-          <input class="tstep-val" id="tt-muntjacm" type="number" value="0" min="0">
+          <input class="tstep-val" id="tt-muntjacm" aria-label="Muntjac buck target" type="number" value="0" min="0">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="muntjacm" data-step-delta="1">+</button>
         </div>
         <div class="tstepper">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="muntjacf" data-step-delta="-1">−</button>
-          <input class="tstep-val" id="tt-muntjacf" type="number" value="0" min="0">
+          <input class="tstep-val" id="tt-muntjacf" aria-label="Muntjac doe target" type="number" value="0" min="0">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="muntjacf" data-step-delta="1">+</button>
         </div>
       </div>
@@ -1039,12 +1039,12 @@
         <div class="tgrid-sp"><div class="tgrid-dot" style="background:#1565c0;"></div>Sika</div>
         <div class="tstepper">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="sikam" data-step-delta="-1">−</button>
-          <input class="tstep-val" id="tt-sikam" type="number" value="0" min="0">
+          <input class="tstep-val" id="tt-sikam" aria-label="Sika stag target" type="number" value="0" min="0">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="sikam" data-step-delta="1">+</button>
         </div>
         <div class="tstepper">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="sikaf" data-step-delta="-1">−</button>
-          <input class="tstep-val" id="tt-sikaf" type="number" value="0" min="0">
+          <input class="tstep-val" id="tt-sikaf" aria-label="Sika hind target" type="number" value="0" min="0">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="sikaf" data-step-delta="1">+</button>
         </div>
       </div>
@@ -1052,12 +1052,12 @@
         <div class="tgrid-sp"><div class="tgrid-dot" style="background:#00695c;"></div>CWD</div>
         <div class="tstepper">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="cwdm" data-step-delta="-1">−</button>
-          <input class="tstep-val" id="tt-cwdm" type="number" value="0" min="0">
+          <input class="tstep-val" id="tt-cwdm" aria-label="Chinese water deer buck target" type="number" value="0" min="0">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="cwdm" data-step-delta="1">+</button>
         </div>
         <div class="tstepper">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="cwdf" data-step-delta="-1">−</button>
-          <input class="tstep-val" id="tt-cwdf" type="number" value="0" min="0">
+          <input class="tstep-val" id="tt-cwdf" aria-label="Chinese water deer doe target" type="number" value="0" min="0">
           <button class="tstep-btn" type="button" data-fl-action="tstep" data-step-id="cwdf" data-step-delta="1">+</button>
         </div>
       </div>
@@ -1086,7 +1086,7 @@
         </div>
         <!-- Add ground input (hidden by default) -->
         <div class="ground-add-input-row" id="ground-add-row" style="display:none;">
-          <input class="ground-add-input" id="ground-add-inp" type="text" placeholder="e.g. Farm A, Woodland Block…"
+          <input class="ground-add-input" id="ground-add-inp" aria-label="New ground name" type="text" placeholder="e.g. Farm A, Woodland Block…"
            
             autocomplete="off">
           <button class="ground-add-cancel" type="button" data-fl-action="hide-add-ground">✕</button>
@@ -1151,12 +1151,12 @@
 
       <div class="di-modal-field-block">
         <label class="di-modal-field-lbl di-modal-field-lbl--field" for="summary-season-sel">Season</label>
-        <select id="summary-season-sel" class="di-modal-select"></select>
+        <select id="summary-season-sel" aria-label="Summary season" class="di-modal-select"></select>
       </div>
 
       <div class="di-modal-field-block di-modal-field-block--lg">
         <label class="di-modal-field-lbl di-modal-field-lbl--field" for="summary-ground-sel">Permission / Ground</label>
-        <select id="summary-ground-sel" class="di-modal-select"></select>
+        <select id="summary-ground-sel" aria-label="Summary ground" class="di-modal-select"></select>
       </div>
 
       <div id="summary-preview" class="di-modal-preview">

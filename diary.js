@@ -29,7 +29,7 @@ import { isBlankDayEntry, blankDaySummaryText, formatRelativeTime } from './lib/
 // after a deploy can be filtered down to the new build. Hand-maintained
 // (two strings, but cheap to update; see PROJECT-LOG on the error-logger
 // rollout).
-const FL_APP_VERSION = '7.97';
+const FL_APP_VERSION = '7.107';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -262,6 +262,8 @@ function isCurrentSeason(season) {
 }
 
 /** UK deer season immediately after `seasonKey` (Aug–Jul), e.g. 2025-26 → 2026-27. */
+// SPEC: lib/fl-pure.mjs#getNextSeasonAfter — byte-identical body; the fl-pure
+// copy is the tested spec (added 2026-07-06, audit A9). Change both together.
 function getNextSeasonAfter(seasonKey) {
   if (!seasonKey || seasonKey === '__all__') return null;
   var parts = String(seasonKey).split('-');
@@ -1215,7 +1217,11 @@ function seasonLabel(s) {
   return y1 + '–' + y2 + ' Season';
 }
 
-// SPEC: lib/fl-pure.mjs#buildSeasonFromEntry — keep in sync.
+// SPEC: lib/fl-pure.mjs#buildSeasonFromEntry — parsing logic identical, but
+// this copy DELIBERATELY diverges on invalid input: pure returns null (and
+// modules/stats.mjs uses that, so Stats excludes malformed dates), while this
+// copy falls back to getCurrentSeason() so a list row always lands in a
+// season bucket. If you change the parsing, change both files.
 function buildSeasonFromEntry(dateStr) {
   // Given an entry date, return which season it belongs to
   if (dateStr == null || dateStr === '') return getCurrentSeason();
@@ -1256,7 +1262,10 @@ function populateSeasonDropdown(seasons) {
 
 // SPEC: lib/fl-pure.mjs#buildSeasonList — pure version takes `current` as an
 // arg so it is testable in Node; this wrapper resolves `current` via
-// getCurrentSeason() so existing diary.js call sites stay single-arg.
+// getCurrentSeason() so existing diary.js call sites stay single-arg. This
+// copy ALSO unshifts the upcoming season (getNextSeasonAfter — spec'd and
+// tested in fl-pure) for plan-ahead targets; that prepend is deliberately
+// not part of the pure backwards-list spec.
 function buildSeasonList(earliestSeason) {
   // Build list from earliest season with entries up to current season
   var current = getCurrentSeason();
@@ -2420,7 +2429,8 @@ function changeSeason() {
 // RENDER LIST
 // ════════════════════════════════════
 var SPECIES_CLASS = { 'Red Deer':'sp-red','Roe Deer':'sp-roe','Fallow':'sp-fallow','Sika':'sp-sika','Muntjac':'sp-muntjac','CWD':'sp-cwd' };
-// SPEC: lib/fl-pure.mjs#MONTH_NAMES — must be byte-identical.
+// SPEC: lib/fl-pure.mjs#MONTH_NAMES — values must match exactly (declaration
+// style differs: fl-pure uses `export const`, this is `var` with padding).
 var MONTH_NAMES   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 var FULL_MONTHS   = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -4700,7 +4710,11 @@ function triggerCsvDownload(rowLines, filename) {
  * quote when the raw value begins with `=`, `+`, `-`, `@`, TAB, or CR — the
  * OWASP-recommended defence against CSV / formula injection.
  */
-// SPEC: lib/fl-pure.mjs#csvField — RFC-4180 quoting, CR/LF squash, + formula-injection guard. Tests pin this.
+// SPEC: lib/fl-pure.mjs#csvField — sanitise (pdfSafeText) → RFC-4180 quoting,
+// CR/LF squash, formula-injection guard. Tests pin this (fl-pure adopted the
+// sanitise step 2026-07-06, audit A4 — the copies had drifted since 6faad5f).
+// Only difference here: the sanitiser alias (`flPdfSafeText` = pdfSafeText
+// re-exported via modules/pdf.mjs) and `var` style.
 function csvField(v) {
   var raw = v === null || v === undefined ? '' : flPdfSafeText(String(v));
   var first = raw.charAt(0);

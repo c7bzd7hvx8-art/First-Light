@@ -1545,6 +1545,13 @@ function openLeadFreeMatcher() {
       <p class="bx-lf-msg"><strong>No lead-free factory loads in our database for ${escapeHtml(calibreName)}.</strong></p>
       <p class="bx-lf-msg">If the 2029 lead restriction will apply to where you stalk, you may need to consider switching to a different calibre. Calibres with the most lead-free options in our database are .308 Win, 6.5 Creedmoor, .30-06, .243 Win, and 6.5×55.</p>
     `;
+  } else if (result.reason === 'no-weight-match') {
+    const calibreName = getCalibreById(state.db, sourceLoad.calibre)?.name || sourceLoad.calibre;
+    body = `
+      <p class="bx-lf-msg"><strong>No like-for-like lead-free options for your ${sourceLoad.weightGrains}gr load in ${escapeHtml(calibreName)}.</strong></p>
+      <p class="bx-lf-msg">Lead-free loads do exist in this calibre, but only at substantially different bullet weights. We deliberately don't suggest them as alternatives — terminal performance, recoil and twist-rate requirements diverge too far for a credible swap.</p>
+      <p class="bx-lf-msg">Talk to your dealer about heavier-for-calibre copper monolithics, or consider switching to a calibre with better deer-weight lead-free coverage (.308 Win, 6.5 Creedmoor, .30-06, .243 Win, 6.5×55).</p>
+    `;
   } else {
     // ok — render the matches
     const ranges = result.sourceTrajectory.map(r => r.rangeM);
@@ -2625,10 +2632,25 @@ export async function initBallisticsUi() {
   // Wire up controls.
   const slider = $('bx-range-slider');
   if (slider) {
+    // Coalesce slider `input` events through requestAnimationFrame so a
+    // single drag doesn't queue dozens of full recomputes per frame.
+    // Each renderOutput() pass triggers computeShot() + the ethical-range
+    // probe (~48 solveShot calls in 10m steps) + the range-card render +
+    // compliance + renderDropChart (~38 more solveShot calls). On low-end
+    // Android that's ~80-100 trajectory solves per slider tick; without
+    // coalescing the UI janks badly. rAF lets the browser run at most
+    // one render per frame; the latest slider.value is read at flush time
+    // so we never render a stale value. (Added 2026-06-09.)
+    let rafScheduled = false;
     slider.addEventListener('input', () => {
-      state.rangeM = parseInt(slider.value, 10) || 100;
-      renderRangeControl();
-      renderOutput();
+      if (rafScheduled) return;
+      rafScheduled = true;
+      requestAnimationFrame(() => {
+        rafScheduled = false;
+        state.rangeM = parseInt(slider.value, 10) || 100;
+        renderRangeControl();
+        renderOutput();
+      });
     });
     // Persist on release (change event fires once when the user lifts
     // their finger), not on every input tick. Avoids hammering localStorage

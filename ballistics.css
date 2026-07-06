@@ -241,6 +241,10 @@ details[open] .bx-rc-summary::before{content:'▾ ';}
 /* ── Legal compliance ───────────────────────────────────────────── */
 .bx-compliance-section{padding-top:14px !important;}
 .bx-compliance-prerelease{font-size:10px;color:#ffb0b0;background:rgba(198,40,40,0.10);border:1px solid rgba(198,40,40,0.25);border-radius:6px;padding:6px 10px;margin:8px 0 12px;line-height:1.4;}
+/* Placeholder when no species are selected (or none have statutory thresholds
+   for the chosen jurisdiction). Keeps the panel discoverable rather than
+   silently collapsing the whole section. */
+.bx-compliance-empty-msg{font-size:12px;color:rgba(255,255,255,0.7);line-height:1.5;padding:8px 0 2px;}
 .bx-compliance-floor-warn{font-size:11px;color:#ffd0d0;background:rgba(198,40,40,0.20);border:1px solid rgba(198,40,40,0.5);border-radius:8px;padding:10px 12px;margin:8px 0 12px;line-height:1.5;}
 .bx-compliance-floor-warn strong{color:#ff6060;font-weight:700;display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;font-size:11px;}
 .bx-compliance-list{display:flex;flex-direction:column;gap:8px;margin-top:8px;}

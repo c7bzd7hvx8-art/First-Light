@@ -5,7 +5,7 @@
 // the cache strings (`v7.34`) because they were three separate literals.
 // Bumping triggers the `activate` step to sweep old caches and reload clients
 // via the `controllerchange` path in diary.js.
-const SW_VERSION = '9.40';
+const SW_VERSION = '9.50';
 const STATIC_CACHE  = 'first-light-static-v'  + SW_VERSION;
 const RUNTIME_CACHE = 'first-light-runtime-v' + SW_VERSION;
 
@@ -37,6 +37,11 @@ const PRECACHE_URLS = [
   './modules/photos.mjs',
   './modules/stats.mjs',
   './modules/pdf.mjs',
+  // Pure lib statically imported by diary.js (isBlankDayEntry, blankDaySummaryText,
+  // formatRelativeTime). A failed ES-module import aborts the whole diary module
+  // graph, so this MUST be precached alongside the diary modules above — a miss
+  // here 404s the import on a fresh device's first offline launch.
+  './lib/fl-pure.mjs',
   './privacy.html',
   './terms.html',
   './manifest.json',
@@ -52,13 +57,15 @@ const PRECACHE_URLS = [
   './questions.js',
   './diary-guide.html',
   // Per-species deer illustrations for the calculator's anatomy panel.
-  // Add additional species PNGs here as they land in species/aimthedeer/.
+  // Add additional species SVGs here as they land in species/aimthedeer/.
+  // Muntjac and CWD SVGs exist on disk but are intentionally NOT precached
+  // (and not referenced from lib/fl-anatomy.js SPECIES_IMAGE) because both
+  // species are excluded from SPECIES_BODY — the anatomy dropdown never
+  // offers them. See PROJECT-LOG.md 2026-06-03 for the rationale.
   './species/aimthedeer/reddeer.svg',
   './species/aimthedeer/roedeer.svg',
   './species/aimthedeer/fallow.svg',
   './species/aimthedeer/sika.svg',
-  './species/aimthedeer/muntjac.svg',
-  './species/aimthedeer/cwd.svg',
   // Ballistic calculator. Standalone — no dependency on diary state
   // or auth, but every file the calculator needs at boot must be
   // precached so the calculator is fully usable offline like the
@@ -95,7 +102,9 @@ const PRECACHE_URLS = [
 // self-hosted (see PRECACHE_URLS) to dodge Edge Tracking Prevention; these
 // three happen to work cross-origin so we leave them on their CDN.
 const CDN_URLS = [
-  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+  // Pinned + SRI-verified in diary.html/index.html (audit A3, SW 9.48). The
+  // URL here must stay byte-identical to the <script src> or offline breaks.
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.106.2/dist/umd/supabase.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js',
   'https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css',
@@ -141,21 +150,37 @@ function isDeerSchoolAsset(url) {
   );
 }
 
-async function staleWhileRevalidate(request, cacheName) {
+async function staleWhileRevalidate(request, cacheName, event) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
-  let networkResponse;
-  try {
-    networkResponse = await fetch(request);
-  } catch (e) {
-    networkResponse = undefined;
-  }
-  if (networkResponse && networkResponse.ok) {
+  // Refresh runs regardless; failures are swallowed (offline is normal here).
+  const revalidate = (async () => {
+    let networkResponse;
     try {
-      await cache.put(request, networkResponse.clone());
-    } catch (e) { /* quota / opaque — still serve networkResponse */ }
+      networkResponse = await fetch(request);
+    } catch (e) {
+      networkResponse = undefined;
+    }
+    if (networkResponse && networkResponse.ok) {
+      try {
+        await cache.put(request, networkResponse.clone());
+      } catch (e) { /* quota / opaque — still serve networkResponse */ }
+    }
+    return networkResponse;
+  })();
+  if (cached) {
+    // Audit A7 (fixed SW 9.50): serve the cached copy IMMEDIATELY. The old
+    // code awaited the network before responding and then returned the
+    // cached copy anyway — every "cached" asset load was network-latency
+    // bound for zero benefit (painful on rural signal). The refresh now
+    // continues in the background; event.waitUntil keeps the SW alive
+    // until the cache.put lands. Offline behaviour is unchanged.
+    if (event && typeof event.waitUntil === 'function') {
+      event.waitUntil(revalidate.catch(function() {}));
+    }
+    return cached;
   }
-  const out = cached || networkResponse;
+  const out = await revalidate;
   return out instanceof Response ? out : new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
 }
 
@@ -171,17 +196,38 @@ async function networkFirst(request, cacheName) {
     }
     return network instanceof Response ? network : new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
   } catch (e) {
+    // Offline path. Order matters (audit A1, fixed SW 9.47):
+    // 1. The cache we were handed (RUNTIME_CACHE for navigations) may hold a
+    //    fresher copy than the install-time precache — check it first.
+    // 2. Then ALL caches via caches.match — the precached app shell lives in
+    //    STATIC_CACHE, which this function never consulted before 9.47. The
+    //    old code looked up './index.html' *before* the page-specific
+    //    fallback, and since index.html is always precached that lookup
+    //    always won: a fresh install (or first offline launch after any SW
+    //    bump — RUNTIME_CACHE is version-named, so it starts empty)
+    //    navigating offline to diary.html / ballistics.html /
+    //    deerschool.html got the Field Guide instead of the requested app.
+    // 3. Navigations only: retry ignoring query strings (?utm=… launches),
+    //    then by trailing path segment, then index.html as the last-resort
+    //    shell (still needed: manifest.json start_url './' resolves to '/',
+    //    which no precache key matches directly). Non-navigation misses now
+    //    503 instead of receiving index.html with the wrong MIME (audit A8).
     const cached = await cache.match(request);
     if (cached) return cached;
-    let fallback = await caches.match('./index.html');
-    if (!fallback && isNavigationRequest(request)) {
+    const anyCached = await caches.match(request);
+    if (anyCached) return anyCached;
+    if (isNavigationRequest(request)) {
+      const ignoringSearch = await caches.match(request, { ignoreSearch: true });
+      if (ignoringSearch) return ignoringSearch;
       const lastSeg = url.pathname.replace(/\/$/, '').split('/').pop() || '';
       if (lastSeg.endsWith('.html') && lastSeg !== 'index.html') {
-        fallback = await caches.match('./' + lastSeg);
+        const bySegment = await caches.match('./' + lastSeg);
+        if (bySegment) return bySegment;
       }
+      const shell = await caches.match('./index.html');
+      if (shell) return shell;
     }
-    const out = fallback || new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
-    return out instanceof Response ? out : new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
+    return new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
   }
 }
 
@@ -239,7 +285,7 @@ self.addEventListener('fetch', event => {
           // Keep Deer School UI assets in sync on first load after updates.
           res = await networkFirst(request, STATIC_CACHE);
         } else if (isStaticAsset(request, url) || isCacheableCDN) {
-          res = await staleWhileRevalidate(request, isSameOrigin ? STATIC_CACHE : RUNTIME_CACHE);
+          res = await staleWhileRevalidate(request, isSameOrigin ? STATIC_CACHE : RUNTIME_CACHE, event);
         } else {
           res = await networkFirst(request, RUNTIME_CACHE);
         }

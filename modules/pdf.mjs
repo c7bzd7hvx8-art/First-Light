@@ -33,8 +33,15 @@ import {
   MONTH_NAMES,
   seasonLabel,
   ABNORMALITY_LABEL_BY_CODE,
-  isBlankDayEntry
+  isBlankDayEntry,
+  pdfSafeText
 } from '../lib/fl-pure.mjs';
+
+// pdfSafeText's definition moved to lib/fl-pure.mjs (2026-07-06, audit A4) so
+// the pure csvField spec can sanitise identically to production. Re-exported
+// here so existing importers keep working unchanged (diary.js imports it from
+// this module as `flPdfSafeText`; tests/pdf.test.mjs pins its behaviour).
+export { pdfSafeText };
 
 // ── Private helpers (duplicated from diary.js deliberately) ─────────────────
 // These are ~3 lines each and moving them into fl-pure.mjs would touch every
@@ -78,25 +85,6 @@ export function fmtEntryTimeShort(t) {
 
 export function hasValue(v) {
   return !(v === null || v === undefined || v === '');
-}
-
-/**
- * Strip ephemeral / local-only URLs from text before PDF output. Browser
- * `blob:` URLs (photo previews, object URLs) are invalid outside the session
- * and show up as junk when users share exports (e.g. WhatsApp). Long `data:`
- * image payloads in pasted notes are replaced so the PDF stays small and readable.
- */
-export function pdfSafeText(v) {
-  if (v == null || v === '') return '';
-  let s = String(v);
-  // Blob URLs are never portable in exports. Allow whitespace / line breaks
-  // after "blob:" (copy-paste and soft-wrap often insert space or \n before https).
-  s = s.replace(/blob:\s*https?:\/\/\S+/gi, '');
-  // Opaque blob:… (e.g. blob:null/…) and any remaining blob: fragment
-  s = s.replace(/blob:\s*\S+/gi, '');
-  s = s.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=\s]+/gi, '[image data omitted]');
-  s = s.replace(/\s{2,}/g, ' ').trim();
-  return s;
 }
 
 /**
