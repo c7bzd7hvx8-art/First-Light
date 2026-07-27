@@ -5,7 +5,6 @@
 //
 // Scope of this module:
 //   Data tables (pure lookups — Commit H):
-//     • CAL_COLORS       — 6-colour gradient palette for the calibre chart
 //     • SP_COLORS_D      — species → stats-chart colour
 //     • AGE_CLASSES      — ordered age-class label list
 //     • AGE_COLORS       — one colour per AGE_CLASSES index
@@ -57,24 +56,9 @@
 // `document` and are tested with a small in-memory DOM stub.
 // =============================================================================
 
-import { esc, seasonLabel, buildSeasonFromEntry, MONTH_NAMES } from '../lib/fl-pure.mjs';
+import { esc, seasonLabel, buildSeasonFromEntry, MONTH_NAMES, normalizeSeasonStartMonth } from '../lib/fl-pure.mjs';
 
 // ── Shared palettes / age labels ──────────────────────────────────────────
-
-/**
- * 6-colour calibre chart palette. Ordered loudest-to-softest so that the
- * chart's first-place bar draws the eye. Must have at least 6 entries
- * because we render up to the top-6 calibres (beyond that the bars get
- * unreadable on mobile).
- */
-export const CAL_COLORS = [
-  'linear-gradient(90deg,#5a7a30,#7adf7a)',
-  'linear-gradient(90deg,#c8a84b,#f0c870)',
-  'linear-gradient(90deg,#6a1b9a,#ab47bc)',
-  'linear-gradient(90deg,#1565c0,#42a5f5)',
-  'linear-gradient(90deg,#c62828,#ef5350)',
-  'linear-gradient(90deg,#00695c,#26a69a)'
-];
 
 /**
  * Species → solid colour for stats charts (distance-by-species, trends).
@@ -87,14 +71,58 @@ export const SP_COLORS_D = {
   'Fallow':   '#f57f17',
   'Muntjac':  '#6a1b9a',
   'Sika':     '#1565c0',
-  'CWD':      '#00695c'
+  'CWD':      '#00695c',
+  // Pest Control (v3) — matches lib/fl-pure.mjs QUARRY_SPECIES colours.
+  'Fox':           '#b45f2a',
+  'Rabbit':        '#c9a05a',
+  'Grey Squirrel': '#8a8f98',
+  'Pigeon':        '#46688a',
+  'Corvid':        '#2f3237',
+  'Wild Boar':     '#5c4a38'
 };
 
 /** Age classes in canonical order (juvenile → mature). */
 export const AGE_CLASSES = ['Calf / Kid / Fawn', 'Yearling', '2–4 years', '5–8 years', '9+ years'];
 
-/** One colour per AGE_CLASSES index (same length + order). */
-export const AGE_COLORS = ['#5a9a3a', '#5a7a30', '#c8a84b', '#f57f17', '#c62828'];
+/**
+ * A11 - one colour vocabulary for the whole Stats page.
+ *
+ * Five cards each invented their own six-hue categorical palette out of the
+ * same six hues. Inside 140px of scroll, gold meant "West Acre", "Red Deer",
+ * "Game dealer", "Morning" AND "2-4 years"; purple meant "Muntjac", "Stalking
+ * client" and "Dusk". A reader who learns a colour on one card is then actively
+ * misled by the next one.
+ *
+ * Species is the only dimension here whose colour is real - it is the same
+ * palette as the map pins, the diary chips, the season hero and the PDF - so it
+ * keeps hue as identity. Everywhere else hue was decoration dressed as data:
+ * these are ranked lists whose label and count already carry the meaning, and
+ * whose bar length already carries the order. They now share one neutral bark
+ * bar, so nothing on the page claims a meaning it does not have.
+ *
+ * Two exceptions earn their colour: "Condemned" stays red because red means
+ * loss everywhere in this app, and the not-recorded / untagged ghosts stay pale
+ * so absence never looks like a category.
+ *
+ * Genuinely ORDINAL series (age class, time of day) keep a ramp - but a
+ * single-hue one, which reads as an axis rather than as a legend.
+ */
+export const STATS_BAR = 'linear-gradient(90deg,#5c4a38,#8a7259)';
+export const STATS_BAR_GHOST = 'linear-gradient(90deg,#d8d1c6,#e6e0d6)';
+export const STATS_BAR_ALERT = 'linear-gradient(90deg,#c62828,#ef5350)';
+
+/** Single-hue ordinal ramp, pale (first) to dark (last). */
+export const STATS_RAMP = ['#b8a58e', '#9c8770', '#806a54', '#67543f', '#4e3d2c'];
+export function statsRampColor(i, n) {
+  if (!(n > 1)) return STATS_RAMP[STATS_RAMP.length - 1];
+  var idx = Math.round(i / (n - 1) * (STATS_RAMP.length - 1));
+  return STATS_RAMP[Math.max(0, Math.min(STATS_RAMP.length - 1, idx))];
+}
+
+/** One colour per AGE_CLASSES index (same length + order) - now an ordinal
+ *  ramp: pale = young, dark = mature. The old green-to-red ramp borrowed a
+ *  good-to-bad vocabulary that age class does not have. */
+export const AGE_COLORS = STATS_RAMP.slice();
 
 /**
  * Summary groupings for the "age pills" row under the per-class bars.
@@ -109,6 +137,56 @@ export const AGE_GROUPS = {
 };
 
 // ── Pure aggregators ──────────────────────────────────────────────────────
+
+/**
+ * Animals represented by one diary row. Deer/fox/boar rows are always 1;
+ * Pest Control rows carry `quantity` (a 12-rabbit evening = one row, 12
+ * animals). ST3: every cull chart counts animals so the whole stats page
+ * reconciles with the headline Total cull and the species bars (PQ2b) —
+ * previously six charts counted rows and their numbers disagreed with the
+ * headline on any diary containing pest bags.
+ */
+export function entryAnimals(e) {
+  var q = e ? (e.quantity | 0) : 0;
+  return q > 0 ? q : 1;
+}
+
+/**
+ * ST6 - one ruler for the whole page.
+ *
+ * Every cull chart used to scale to its OWN tallest bar. Three consequences,
+ * all of them lies the user had no way to detect:
+ *   - a card holding a single value ("Carcass destination: Self 1") drew a
+ *     full-width bar and read as "all of them", when it was 1 of 10;
+ *   - the species card stacked two rulers 4px apart (parent bars against the
+ *     global max, the sex sub-bars against that species' own total), so one
+ *     Red stag rendered a quarter-width bar above a full-width one;
+ *   - no two cards were comparable, because each had a private denominator.
+ *
+ * Now every bar is a share of the SAME number the headline counts: animals in
+ * scope. A 3% floor keeps one animal visible without implying more.
+ */
+export function statsAnimalsIn(entries) {
+  return (entries || []).reduce(function(sum, e){ return sum + entryAnimals(e); }, 0);
+}
+
+export function statsBarPct(cnt, total) {
+  if (!total || total <= 0 || !cnt) return 0;
+  var p = cnt / total * 100;
+  if (p < 3) return 3;
+  return Math.round(p * 10) / 10;
+}
+
+/**
+ * Coverage footnote. A card that describes part of the season must say so, in
+ * the same unit as the headline. Silent at full coverage - a note that always
+ * fires is a note nobody reads.
+ */
+export function statsCoverageNote(covered, total, verbPhrase) {
+  if (!total || covered >= total) return '';
+  return '<div class="stats-cov-note">' + covered + ' of ' + total + ' animal'
+    + (total === 1 ? '' : 's') + ' ' + verbPhrase + ' \u00b7 ' + (total - covered) + ' not recorded</div>';
+}
 
 /**
  * Shooter histogram. Treats blank/undefined `shooter` as the literal string
@@ -131,7 +209,7 @@ export function aggregateShooterStats(entries) {
   var counts = {};
   (entries || []).forEach(function (e) {
     var s = (e && e.shooter && e.shooter.trim()) ? e.shooter.trim() : 'Self';
-    counts[s] = (counts[s] || 0) + 1;
+    counts[s] = (counts[s] || 0) + entryAnimals(e);
   });
   var names = Object.keys(counts);
   names.sort(function (a, b) {
@@ -156,7 +234,7 @@ export function aggregateShooterStats(entries) {
 export function aggregateDestinationStats(entries) {
   var counts = {};
   (entries || []).forEach(function (e) {
-    if (e && e.destination) counts[e.destination] = (counts[e.destination] || 0) + 1;
+    if (e && e.destination) counts[e.destination] = (counts[e.destination] || 0) + entryAnimals(e);
   });
   var names = Object.keys(counts);
   names.sort(function (a, b) { return counts[b] - counts[a]; });
@@ -172,12 +250,15 @@ export function aggregateDestinationStats(entries) {
  * renders at the bottom.
  */
 export const TIME_OF_DAY_BUCKETS = [
-  { label: 'Dawn (05–07)',      min: 5,  max: 7,  clr: 'linear-gradient(90deg,#f57f17,#ffb74d)' },
-  { label: 'Morning (08–10)',   min: 8,  max: 10, clr: 'linear-gradient(90deg,#c8a84b,#f0c870)' },
-  { label: 'Midday (11–14)',    min: 11, max: 14, clr: 'linear-gradient(90deg,#5a7a30,#7adf7a)' },
-  { label: 'Afternoon (15–17)', min: 15, max: 17, clr: 'linear-gradient(90deg,#1565c0,#42a5f5)' },
-  { label: 'Dusk (18–20)',      min: 18, max: 20, clr: 'linear-gradient(90deg,#6a1b9a,#ab47bc)' },
-  { label: 'Night (21–04)',     min: -1, max: -1, clr: 'linear-gradient(90deg,#444,#888)' }
+  // A11: ordinal by daylight, so the ramp itself is the axis - pale at dawn,
+  // darkest at night. Six unrelated hues here were the single biggest source of
+  // cross-card colour collisions (purple "Dusk" vs purple "Muntjac").
+  { label: 'Dawn (05–07)',      min: 5,  max: 7,  clr: 'linear-gradient(90deg,#c8b7a2,#ddd0be)' },
+  { label: 'Morning (08–10)',   min: 8,  max: 10, clr: 'linear-gradient(90deg,#b8a58e,#cec0ac)' },
+  { label: 'Midday (11–14)',    min: 11, max: 14, clr: 'linear-gradient(90deg,#9c8770,#b5a48d)' },
+  { label: 'Afternoon (15–17)', min: 15, max: 17, clr: 'linear-gradient(90deg,#806a54,#9c8770)' },
+  { label: 'Dusk (18–20)',      min: 18, max: 20, clr: 'linear-gradient(90deg,#67543f,#806a54)' },
+  { label: 'Night (21–04)',     min: -1, max: -1, clr: 'linear-gradient(90deg,#3b2e22,#5c4a38)' }
 ];
 
 /**
@@ -217,7 +298,7 @@ export function aggregateTimeOfDayStats(entries) {
     if (!e || !e.time) return;
     var h = parseInt(String(e.time).split(':')[0], 10);
     if (isNaN(h)) return;
-    counts[categorizeHourToBucket(h)]++;
+    counts[categorizeHourToBucket(h)] += entryAnimals(e);
   });
   var total = counts.reduce(function (a, b) { return a + b; }, 0);
   var maxCount = Math.max.apply(null, counts);
@@ -232,10 +313,13 @@ export function aggregateTimeOfDayStats(entries) {
 // element's innerHTML in one write.
 //
 // The cards are styled by `.bar-row` / `.bar-lbl` / `.bar-track` /
-// `.bar-fill` / `.bar-cnt` in `diary.css`; the colour choice for each row
-// is inlined as a `style` attribute because each series uses a different
-// palette (self=green / other=gold for shooter; a colour-coded map for
-// destination; pre-baked colours from the aggregator for time-of-day).
+// `.bar-fill` / `.bar-cnt` in `diary.css`; the fill is inlined as a `style`
+// attribute because it is data, not decoration. A11 flattened the old
+// per-series palettes into three shared constants: STATS_BAR for an ordinary
+// row, STATS_BAR_GHOST for a "not recorded" row, STATS_BAR_ALERT for the one
+// row that is bad news (Condemned). Rank is carried by bar length; hue is
+// reserved for the two states length cannot express. Time-of-day and species
+// still carry meaning-bearing colour of their own.
 
 /** Render the Shooter-breakdown card. Hides the card when every entry was
  *  shot by "Self" (no useful comparison to draw). */
@@ -249,13 +333,13 @@ export function buildShooterStats(entries) {
   if (agg.isAllSelf) { card.style.display = 'none'; return; }
   card.style.display = 'block';
 
+  var shTot = statsAnimalsIn(entries);
   var html = '';
   agg.sortedNames.forEach(function(s) {
     var cnt = agg.counts[s];
-    var pct = Math.round(cnt / agg.maxCount * 100);
-    var barClr = s === 'Self'
-      ? 'linear-gradient(90deg,#5a7a30,#7adf7a)'
-      : 'linear-gradient(90deg,#c8a84b,#f0c870)';
+    var pct = statsBarPct(cnt, shTot);
+    // A11: rank is carried by bar length, not by hue.
+    var barClr = STATS_BAR;
     html += '<div class="bar-row">'
       + '<div class="bar-lbl">' + esc(s) + '</div>'
       + '<div class="bar-track"><div class="bar-fill" style="width:'+pct+'%;background:'+barClr+';"></div></div>'
@@ -277,31 +361,35 @@ export function buildDestinationStats(entries) {
   if (agg.sortedNames.length === 0) { card.style.display = 'none'; return; }
   card.style.display = 'block';
 
-  // Per-destination gradient palette. Matches the semantic colour each
-  // destination carries throughout the app (Self = green, Dealer = gold,
-  // Condemned = red, etc.). Falls back to the Self/green gradient so an
-  // unexpected free-text destination still renders rather than crash.
-  var destColors = {
-    'Self / personal use': 'linear-gradient(90deg,#5a7a30,#7adf7a)',
-    'Game dealer':         'linear-gradient(90deg,#c8a84b,#f0c870)',
-    'Friend / family':     'linear-gradient(90deg,#1565c0,#42a5f5)',
-    'Stalking client':     'linear-gradient(90deg,#6a1b9a,#ab47bc)',
-    'Estate / landowner':  'linear-gradient(90deg,#00695c,#4db6ac)',
-    'Left on hill':        'linear-gradient(90deg,#888,#aaa)',
-    'Condemned':           'linear-gradient(90deg,#c62828,#ef5350)'
-  };
+  // A11: six hues for seven destinations was a legend nobody could learn, built
+  // from the same six hues the species chart uses for something else entirely.
+  // The label states the destination; the bar states the share. Only Condemned
+  // keeps a colour, because losing a carcass is the one row that is bad news.
+  var destColors = { 'Condemned': STATS_BAR_ALERT };
 
+  var dTot = statsAnimalsIn(entries);
+  var dCovered = agg.sortedNames.reduce(function(sum, d){ return sum + agg.counts[d]; }, 0);
   var html = '';
   agg.sortedNames.forEach(function(d) {
     var cnt = agg.counts[d];
-    var pct = Math.round(cnt / agg.maxCount * 100);
-    var barClr = destColors[d] || 'linear-gradient(90deg,#5a7a30,#7adf7a)';
+    var pct = statsBarPct(cnt, dTot);
+    var barClr = destColors[d] || STATS_BAR;
     html += '<div class="bar-row">'
       + '<div class="bar-lbl">' + esc(d) + '</div>'
       + '<div class="bar-track"><div class="bar-fill" style="width:'+pct+'%;background:'+barClr+';"></div></div>'
       + '<div class="bar-cnt">'+cnt+'</div>'
       + '</div>';
   });
+  // ST6: the missing nine are part of the answer. Drawn as a ghost row rather
+  // than left out, so "Self 1" cannot be read as "all of them".
+  if (dCovered < dTot) {
+    html += '<div class="bar-row">'
+      + '<div class="bar-lbl" style="color:var(--muted);font-style:italic;">Not recorded</div>'
+      + '<div class="bar-track"><div class="bar-fill" style="width:'+statsBarPct(dTot - dCovered, dTot)+'%;background:'+STATS_BAR_GHOST+';"></div></div>'
+      + '<div class="bar-cnt" style="color:var(--muted);">'+(dTot - dCovered)+'</div>'
+      + '</div>';
+  }
+  html += statsCoverageNote(dCovered, dTot, 'have a destination');
   chart.innerHTML = html;
 }
 
@@ -317,16 +405,18 @@ export function buildTimeOfDayStats(entries) {
   if (agg.total === 0) { card.style.display = 'none'; return; }
   card.style.display = 'block';
 
+  var tTot = statsAnimalsIn(entries);
   var html = '';
   for (var j = 0; j < agg.buckets.length; j++) {
     if (agg.counts[j] === 0) continue;
-    var pct = Math.round(agg.counts[j] / agg.maxCount * 100);
+    var pct = statsBarPct(agg.counts[j], tTot);
     html += '<div class="bar-row">'
       + '<div class="bar-lbl">' + agg.buckets[j].label + '</div>'
       + '<div class="bar-track"><div class="bar-fill" style="width:'+pct+'%;background:'+agg.buckets[j].clr+';"></div></div>'
       + '<div class="bar-cnt">'+agg.counts[j]+'</div>'
       + '</div>';
   }
+  html += statsCoverageNote(agg.total, tTot, 'have a time');
   chart.innerHTML = html;
 }
 
@@ -361,29 +451,43 @@ export function buildCalibreDistanceStats(entries) {
     var calCount = {}, calDist = {};
     calEntries.forEach(function(e) {
       var c = e.calibre.trim();
-      calCount[c] = (calCount[c]||0) + 1;
+      calCount[c] = (calCount[c]||0) + entryAnimals(e); // ST6: animals, like every other card
       if (e.distance_m) {
         if (!calDist[c]) calDist[c] = [];
         calDist[c].push(e.distance_m);
       }
     });
     var sorted = Object.keys(calCount).sort(function(a,b){ return calCount[b]-calCount[a]; });
-    var maxCnt = calCount[sorted[0]] || 1;
+    var calTot = statsAnimalsIn(entries);
+    var calCovered = sorted.reduce(function(sum, c){ return sum + calCount[c]; }, 0);
+    var calShown = 0;
 
     var html = '';
     sorted.slice(0,6).forEach(function(cal, i) {
       var cnt = calCount[cal];
-      var pct = Math.round(cnt/maxCnt*100);
+      calShown += cnt;
+      var pct = statsBarPct(cnt, calTot);
       var avgDist = calDist[cal] && calDist[cal].length
         ? Math.round(calDist[cal].reduce(function(s,v){return s+v;},0)/calDist[cal].length)
         : null;
       html += '<div class="cal-row">'
         + '<div class="cal-name">' + esc(cal) + '</div>'
-        + '<div class="cal-bar-wrap"><div class="cal-bar" style="width:'+pct+'%;background:'+CAL_COLORS[i%CAL_COLORS.length]+';"></div></div>'
+        // ST5 then A11: rank charts speak one dialect page-wide, and that
+        // dialect is length. The retired CAL_COLORS ranked rainbow was the
+        // chart whose hues meant nothing; the green-leader/gold-rest split
+        // that briefly replaced it went the same way, for the same reason.
+        + '<div class="cal-bar-wrap"><div class="cal-bar" style="width:'+pct+'%;background:'+STATS_BAR+';"></div></div>'
         + '<div class="cal-cnt">' + cnt + '</div>'
         + '<div class="cal-avg-lbl">' + (avgDist ? avgDist+'m' : '–') + '</div>'
         + '</div>';
     });
+    // Top-6 rule keeps the card readable; say so rather than silently dropping
+    // the tail, and state the denominator the bars are drawn against.
+    if (sorted.length > 6) {
+      html += '<div class="stats-cov-note">Top 6 of ' + sorted.length + ' calibres \u00b7 ' + (calCovered - calShown) + ' animal'
+        + ((calCovered - calShown) === 1 ? '' : 's') + ' in the rest</div>';
+    }
+    html += statsCoverageNote(calCovered, calTot, 'have a calibre');
     calChart.innerHTML = html;
   }
   }
@@ -398,9 +502,6 @@ export function buildCalibreDistanceStats(entries) {
     distCard.style.display = 'none';
   } else {
     distCard.style.display = 'block';
-
-    var totalDist = distEntries.reduce(function(s,e){ return s+e.distance_m; }, 0);
-    var avgDist = Math.round(totalDist / distEntries.length);
 
     var spDist = {};
     distEntries.forEach(function(e) {
@@ -429,11 +530,11 @@ export function buildCalibreDistanceStats(entries) {
     });
     var totalBand = distEntries.length;
 
-    var html = '<div class="dist-avg-box">'
-      + '<div><div class="dist-avg-val">' + avgDist + '</div><div class="dist-avg-unit">metres avg</div></div>'
-      + '<div><div class="dist-avg-lbl">Overall average</div>'
-      + '<div class="dist-avg-sub">Based on ' + distEntries.length + ' entr' + (distEntries.length===1?'y':'ies') + ' with<br>distance recorded</div></div>'
-      + '</div>';
+    // ST4: the overall-average box is gone — it repeated the Avg distance KPI
+    // word for word ("180m · 1 entry with distance", twice on one page). The
+    // KPI is the average's one home; this card's own content is the
+    // by-species comparison and the range bands.
+    var html = '';
 
     if (spAvgs.length > 1) {
       html += '<div class="scard-sub-t">By species</div>';
@@ -442,22 +543,32 @@ export function buildCalibreDistanceStats(entries) {
         var pct = Math.round(s.avg/maxAvg*100);
         html += '<div class="dist-sp-row">'
           + '<div class="dist-sp-dot" style="background:'+clr+';"></div>'
-          + '<div class="dist-sp-name">'+s.sp+'</div>'
+          + '<div class="dist-sp-name">'+esc(s.sp)+'</div>'
           + '<div class="dist-bar-wrap"><div class="dist-bar" style="width:'+pct+'%;background:'+clr+';"></div></div>'
           + '<div class="dist-val">'+s.avg+'m</div>'
           + '</div>';
       });
     }
 
-    html += '<div class="scard-sub-t" style="margin-top:14px;">Distance bands</div>'
+    // ST4: skip-zero bands — only ranges you've actually shot at render
+    // (matching time-of-day). Three "0 · 0% of culls" cells around one real
+    // one asserted nothing.
+    html += '<div class="scard-sub-t"' + (spAvgs.length > 1 ? ' style="margin-top:14px;"' : '') + '>Distance bands</div>'
       + '<div class="range-grid">';
     bands.forEach(function(b, i) {
       var cnt = bandCounts[i];
+      if (!cnt) return;
       var pct = totalBand ? Math.round(cnt/totalBand*100) : 0;
+      // Honest denominator: the bands only cover culls WITH a distance, so
+      // "% of culls" over-claimed whenever some culls had none. Below five
+      // ranged culls a percentage is noise anyway — show the plain fraction.
+      var pctLine = totalBand >= 5
+        ? pct + '% of culls with distance'
+        : cnt + ' of ' + totalBand + ' with distance';
       html += '<div class="range-cell">'
         + '<div class="range-band">'+b.label+'</div>'
         + '<div class="range-cnt">'+cnt+'</div>'
-        + '<div class="range-pct">'+pct+'% of culls</div>'
+        + '<div class="range-pct">'+pctLine+'</div>'
         + '<div class="range-bar"><div class="range-bar-fill" style="width:'+pct+'%;background:'+b.color+';"></div></div>'
         + '</div>';
     });
@@ -492,28 +603,37 @@ export function buildAgeStats(entries) {
   AGE_CLASSES.forEach(function(a){ counts[a] = 0; });
   aged.forEach(function(e){
     var ageKey = normalizeAgeClassLabel(e.age_class);
-    if (counts[ageKey] !== undefined) counts[ageKey]++;
+    if (counts[ageKey] !== undefined) counts[ageKey] += entryAnimals(e);
   });
-  var total = aged.length;
-  var maxCnt = Math.max.apply(null, AGE_CLASSES.map(function(a){ return counts[a]; }).concat([1]));
+  // ST6: animals, not rows. This card counted 7 while the species card two
+  // cards up counted 10, on the same screen, with neither naming its unit.
+  // And the percentages are now shares of the SEASON, not of the aged subset -
+  // "2-4 years 100%" sitting beside "Not recorded 4" contradicted itself.
+  var total = statsAnimalsIn(entries);
+  var agedAnimals = statsAnimalsIn(aged);
 
+  // ST4: skip-zero — the ladder shows the classes you've actually culled
+  // (matching the time-of-day chart and the per-species minis below). Five
+  // fixed rows around one real one read as four dead dashes, not structure.
   var html = '';
   AGE_CLASSES.forEach(function(ac, i) {
     var cnt = counts[ac];
+    if (!cnt) return;
     var pct = total ? Math.round(cnt/total*100) : 0;
-    var barPct = Math.round(cnt/maxCnt*100);
+    var barPct = statsBarPct(cnt, total);
     html += '<div class="age-row">'
       + '<div class="age-lbl">' + ac + '</div>'
       + '<div class="age-bar-wrap"><div class="age-bar" style="width:'+barPct+'%;background:'+AGE_COLORS[i]+';"></div></div>'
       + '<div class="age-cnt">' + cnt + '</div>'
-      + '<div class="age-pct">' + (cnt ? pct+'%' : '–') + '</div>'
+      + '<div class="age-pct">' + pct + '%</div>'
       + '</div>';
   });
 
-  var notRecorded = entries.length - aged.length;
+  var notRecorded = total - agedAnimals;
   html += '<div class="age-summary">';
   Object.keys(AGE_GROUPS).forEach(function(grp) {
     var grpCnt = AGE_GROUPS[grp].reduce(function(s,a){ return s+(counts[a]||0); }, 0);
+    if (!grpCnt) return; // ST4: no "Juvenile 0 · 0%" dead pills
     var grpPct = total ? Math.round(grpCnt/total*100) : 0;
     var dotClr = grp==='Juvenile' ? '#7adf7a' : grp==='Adult' ? '#c8a84b' : '#f57f17';
     html += '<div class="age-pill">'
@@ -543,9 +663,8 @@ export function buildAgeStats(entries) {
       AGE_CLASSES.forEach(function(a){ spCounts[a] = 0; });
       spEntries.forEach(function(e){
         var ageKey = normalizeAgeClassLabel(e.age_class);
-        if (spCounts[ageKey] !== undefined) spCounts[ageKey]++;
+        if (spCounts[ageKey] !== undefined) spCounts[ageKey] += entryAnimals(e);
       });
-      var spMax = Math.max.apply(null, AGE_CLASSES.map(function(a){ return spCounts[a]; }).concat([1]));
       var clr = SP_COLORS_D[sp] || '#5a7a30';
 
       html += '<div class="age-sp-section">';
@@ -553,7 +672,7 @@ export function buildAgeStats(entries) {
       AGE_CLASSES.forEach(function(ac, i) {
         var cnt = spCounts[ac];
         if (!cnt) return;
-        var barPct = Math.round(cnt/spMax*100);
+        var barPct = statsBarPct(cnt, total); // same ruler as the card above it
         html += '<div class="age-mini-row">'
           + '<div class="age-mini-lbl">'+ac+'</div>'
           + '<div class="age-mini-bw"><div class="age-mini-bf" style="width:'+barPct+'%;background:'+AGE_COLORS[i]+';"></div></div>'
@@ -564,6 +683,7 @@ export function buildAgeStats(entries) {
     });
   }
 
+  html += statsCoverageNote(agedAnimals, total, 'have an age class');
   chart.innerHTML = html;
 }
 
@@ -577,19 +697,24 @@ export function buildAgeStats(entries) {
 // @param {Array} entries  Every entry the user has access to.
 // @param {Object} opts
 // @param {string} opts.currentSeason  e.g. '2025-26' or '__all__'.
+// @param {number} [opts.seasonStartMonth]  1–12 (default 8/August) — the
+//     USER's "season starts in" month (Stats is a personal-only page, so
+//     this is never a syndicate's month). Buckets bars and formats labels;
+//     omitted ⇒ historical Aug–Jul behaviour exactly.
 export function buildTrendsChart(entries, opts) {
   var card  = document.getElementById('trends-card');
   var chart = document.getElementById('trends-chart');
   if (!card || !chart) return;
 
   var currentSeason = opts && opts.currentSeason;
+  var seasonStartMonth = opts && opts.seasonStartMonth;
   if (currentSeason !== '__all__') { card.style.display = 'none'; return; }
 
   var bySeason = {};
   entries.forEach(function(e) {
-    var s = buildSeasonFromEntry(e.date);
+    var s = buildSeasonFromEntry(e.date, seasonStartMonth);
     if (!bySeason[s]) bySeason[s] = { count: 0, totalWt: 0, wtN: 0, species: {} };
-    bySeason[s].count++;
+    bySeason[s].count += entryAnimals(e);
     if (e.weight_kg) { bySeason[s].totalWt += parseFloat(e.weight_kg); bySeason[s].wtN++; }
     bySeason[s].species[e.species] = true;
   });
@@ -605,17 +730,17 @@ export function buildTrendsChart(entries, opts) {
 
   var maxCount = Math.max.apply(null, keys.map(function(k){ return bySeason[k].count; }));
 
-  var html = '<div style="font-size:9px;font-weight:700;color:rgba(0,0,0,0.4);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Total cull per season</div>';
+  var html = '<div style="font-size:10px;font-weight:700;color:rgba(0,0,0,0.4);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Total cull per season</div>';
   keys.forEach(function(k) {
     var d = bySeason[k];
     var pct = Math.round(d.count / maxCount * 100);
     var avgWt = d.wtN > 0 ? (d.totalWt / d.wtN).toFixed(1) : '–';
     html += '<div class="bar-row">'
-      + '<div class="bar-lbl">' + seasonLabel(k) + '</div>'
-      + '<div class="bar-track"><div class="bar-fill" style="width:'+pct+'%;background:linear-gradient(90deg,#5a7a30,#7adf7a);"></div></div>'
+      + '<div class="bar-lbl">' + seasonLabel(k, seasonStartMonth) + '</div>'
+      + '<div class="bar-track"><div class="bar-fill" style="width:'+pct+'%;background:'+STATS_BAR+';"></div></div>'
       + '<div class="bar-cnt">' + d.count + '</div>'
       + '</div>';
-    html += '<div style="font-size:9px;color:rgba(0,0,0,0.35);margin:-2px 0 6px 0;padding-left:2px;">'
+    html += '<div style="font-size:10px;color:rgba(0,0,0,0.35);margin:-2px 0 6px 0;padding-left:2px;">'
       + 'Avg weight: ' + avgWt + ' kg · ' + Object.keys(d.species).length + ' species'
       + '</div>';
   });
@@ -629,16 +754,40 @@ export function buildTrendsChart(entries, opts) {
 // counted toward the max or sort), so they don't visually compete with
 // real grounds. The card hides when zero tagged grounds are present; if
 // every entry is untagged, the card is still hidden (nothing to compare).
-export function buildGroundStats(entries) {
+/**
+ * PURE: the cull-density strip under the ground chart (G3 — GROUNDS-PLAN §5).
+ * `counts` = animal-based tallies per ground (the buildGroundStats shape);
+ * `areasHa` = {ground: hectares} from real drawn boundaries (lib/fl-geo via
+ * diary.js groundAreasHaFrom). Only grounds with BOTH culls and a boundary
+ * appear — no boundary, no number (hide-when-empty law). Density = animals
+ * per 100 ha this season, the DMG dialect.
+ */
+export function groundDensityNoteHtml(counts, areasHa) {
+  if (!counts || !areasHa) return '';
+  var parts = [];
+  Object.keys(counts)
+    .filter(function(g) { return g !== '__untagged__' && areasHa[g] > 0; })
+    .sort(function(a, b) { return counts[b] - counts[a]; })
+    .forEach(function(g) {
+      var d = counts[g] * 100 / areasHa[g];
+      var dTxt = d >= 10 ? String(Math.round(d)) : d.toFixed(1);
+      parts.push(esc(g) + ' ' + dTxt);
+    });
+  if (!parts.length) return '';
+  return '<div class="ground-density-note">Cull density · ' + parts.join(' · ') + ' per 100 ha</div>';
+}
+
+export function buildGroundStats(entries, opts) {
   var card  = document.getElementById('ground-card');
   var chart = document.getElementById('ground-chart');
   if (!card || !chart) return;
 
   var counts = {};
   entries.forEach(function(e) {
+    var q = entryAnimals(e);
     var g = (e.ground && e.ground.trim()) ? e.ground.trim() : null;
-    if (g) counts[g] = (counts[g]||0) + 1;
-    else   counts['__untagged__'] = (counts['__untagged__']||0) + 1;
+    if (g) counts[g] = (counts[g]||0) + q;
+    else   counts['__untagged__'] = (counts['__untagged__']||0) + q;
   });
 
   var grounds = Object.keys(counts).filter(function(g){ return g !== '__untagged__'; });
@@ -647,17 +796,18 @@ export function buildGroundStats(entries) {
   card.style.display = 'block';
 
   grounds.sort(function(a,b){ return counts[b]-counts[a]; });
-  var maxCnt = Math.max.apply(null, grounds.map(function(g){ return counts[g]; }).concat([1]));
+  // ST6: shared denominator - every ground bar is a share of the season's
+  // animals, so this card is comparable with the species card beside it.
+  var gTot = statsAnimalsIn(entries);
 
   var html = '';
   grounds.forEach(function(g, i) {
     var cnt = counts[g];
-    var pct = Math.round(cnt/maxCnt*100);
-    // Top-1 ground gets the "winner" green gradient; everyone else gets
-    // gold. Purely decorative — the count column carries the real info.
-    var barClr = i === 0
-      ? 'linear-gradient(90deg,#5a7a30,#7adf7a)'
-      : 'linear-gradient(90deg,#c8a84b,#f0c870)';
+    var pct = statsBarPct(cnt, gTot);
+    // A11: the old green/gold split was, by its own comment, "purely
+    // decorative" - and it spent gold, which the species chart 140px below
+    // spends on Red Deer. The list is already sorted; length says the rest.
+    var barClr = STATS_BAR;
     html += '<div class="bar-row">'
       + '<div class="bar-lbl">' + esc(g) + '</div>'
       + '<div class="bar-track"><div class="bar-fill" style="width:'+pct+'%;background:'+barClr+';"></div></div>'
@@ -667,13 +817,18 @@ export function buildGroundStats(entries) {
 
   if (counts['__untagged__']) {
     var uCnt = counts['__untagged__'];
-    var uPct = Math.round(uCnt/maxCnt*100);
+    // ST6: on the shared ruler an untagged pile can no longer out-run the
+    // track - it is a share of the same total as every other row here.
+    var uPct = statsBarPct(uCnt, gTot);
     html += '<div class="bar-row">'
       + '<div class="bar-lbl" style="color:var(--muted);font-style:italic;">Untagged</div>'
-      + '<div class="bar-track"><div class="bar-fill" style="width:'+uPct+'%;background:#e0dcd6;"></div></div>'
+      + '<div class="bar-track"><div class="bar-fill" style="width:'+uPct+'%;background:'+STATS_BAR_GHOST+';"></div></div>'
       + '<div class="bar-cnt" style="color:var(--muted);">'+uCnt+'</div>'
       + '</div>';
   }
+
+  // G3: cull density per 100 ha for grounds with a drawn boundary.
+  html += groundDensityNoteHtml(counts, opts && opts.groundAreasHa);
 
   chart.innerHTML = html;
 }
@@ -706,8 +861,6 @@ export function buildGroundStats(entries) {
 // @param {Function} opts.computeSeasonTargetKpi
 //     (totalActual:number) → { targetPct:number|null, … }. Diary.js owns
 //     the logic because it reads cullTargets / groundTargets globals.
-// @param {Function} opts.formatSeasonTargetSub
-//     (totalActual:number, calc) → string. Formats the "X of Y culls" line.
 // @param {Function} opts.hasValue
 //     (v) → bool. Truthy for anything that isn't null/undefined/''.
 //     DI'd so diary.js can share its own implementation.
@@ -716,19 +869,21 @@ export function buildGroundStats(entries) {
 //     a chart card. Also DI'd to keep styling hook consistent.
 // @param {number} [opts.outingTotal]  all diary rows in scope (culls + blank days)
 // @param {number} [opts.outingBlank]  blank-day rows in scope
+// @param {number} [opts.seasonStartMonth]  1–12 (default 8/August) — the
+//     USER's "season starts in" month (personal-only page). Threaded into
+//     buildTrendsChart (bucketing + labels) and rotates the monthly chart's
+//     column order to start at this month. Omitted ⇒ Aug→Jul exactly.
 export function renderStatsTabBody(entries, opts) {
   var currentSeason            = opts.currentSeason;
   var computeSeasonTargetKpi   = opts.computeSeasonTargetKpi;
-  var formatSeasonTargetSub    = opts.formatSeasonTargetSub;
   var hasValue                 = opts.hasValue;
   var statsChartEmpty          = opts.statsChartEmpty;
   var outingTotal              = opts.outingTotal != null ? opts.outingTotal : entries.length;
   var outingBlank              = opts.outingBlank != null ? opts.outingBlank : 0;
+  var seasonStartMonth         = opts.seasonStartMonth;
 
   var total = entries.length;
   var kg = entries.reduce(function(s,e){ return s + (parseFloat(e.weight_kg)||0); }, 0);
-  var mappedCount = entries.filter(function(e){ return e.lat != null && e.lng != null; }).length;
-  var mappedPct = total ? Math.round(mappedCount * 100 / total) : 0;
   var speciesCount = new Set(entries.map(function(e){ return e.species; }).filter(Boolean)).size;
   var weightEntries = entries.filter(function(e){ return hasValue(e.weight_kg); });
   var avgWeight = weightEntries.length ? (kg / weightEntries.length) : 0;
@@ -738,8 +893,13 @@ export function renderStatsTabBody(entries, opts) {
     if (!m) return e;
     return parseFloat(e.weight_kg) > parseFloat(m.weight_kg) ? e : m;
   }, null);
-  var targetCalc = computeSeasonTargetKpi(total);
-  var targetPct = targetCalc.targetPct;
+  // Season-target KPI is DEER-ONLY: fox + pest cull rows must not count toward a
+  // deer target. diary.js hands the deer-row count in opts.targetRows; `total`
+  // (all cull rows) stays the "across N entries" sub + no-target species split.
+  var targetRows = (opts.targetRows != null) ? opts.targetRows : total;
+  var targetCalc = computeSeasonTargetKpi(targetRows);
+  // Missing-weight counts WEIGHABLE rows only (deer); pests never record weight.
+  var weighableRows = (opts.weighableRows != null) ? opts.weighableRows : total;
 
   // Null-safe DOM writes — if the cached HTML is an older version missing any
   // of these IDs (e.g. service worker served a stale diary.html against the
@@ -748,29 +908,63 @@ export function renderStatsTabBody(entries, opts) {
   function _setText(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; }
   function _setHtml(id, val) { var el = document.getElementById(id); if (el) el.innerHTML = val; }
 
-  _setText('st-total', total);
-  _setText('st-total-sub', 'Mapped ' + mappedCount + '/' + total + ' · ' + mappedPct + '%');
+  // PQ2b: the headline "Total cull" counts ANIMALS (sum of per-entry quantity, so
+  // a 200-bird pigeon bag counts in full) — matching the diary list header. `total`
+  // stays the cull-ROW count: it is what the deer-based Season target KPI measures
+  // against (stashed on data-rows below and read by refreshSeasonTargetKpi) so a big
+  // pest bag can never inflate the target %.
+  var animals = entries.reduce(function(s, e){ return s + entryAnimals(e); }, 0);
+  _setText('st-total', animals);
+  var _sttEl = document.getElementById('st-total');
+  if (_sttEl) _sttEl.setAttribute('data-rows', String(targetRows));
+  // Finding 34: st-total-sub, st-target and st-target-sub were written here to
+  // elements diary.html has not contained since the season-hero redesign. The hero
+  // owns all three facts now - #st-total + #sh-of carry "N / target", #sh-cap the
+  // percentage and the pace status, and #sh-note the A3 animals-vs-deer-rows
+  // reconciliation this sub used to attempt. The writes painted nothing, and the
+  // only place those ids still existed was the test stub asserting them, which is
+  // exactly how four dead writes outlived the redesign that removed their cells.
   _setText('st-outing-total', String(outingTotal));
   _setText('st-outing-blank', String(outingBlank));
-  _setText('st-target', targetPct == null ? '–' : (targetPct + '%'));
-  _setText('st-target-sub', formatSeasonTargetSub(total, targetCalc));
   _setText('st-dist', avgDist == null ? '–' : String(avgDist) + 'm');
-  _setText('st-dist-sub', distEntries.length > 0
-    ? (distEntries.length + ' entr' + (distEntries.length === 1 ? 'y' : 'ies') + ' with distance')
-    : 'No shot distances recorded');
+  // A4: one shot is not an average. With a single ranged cull the KPI named
+  // itself "Avg dist" and presented 180m as the season's typical shot. The
+  // label now carries the sample size, so the headline cannot over-claim.
+  _setText('st-dist-l', distEntries.length === 1
+    ? 'Shot dist (1)'
+    : (distEntries.length > 1 ? 'Avg dist (' + distEntries.length + ')' : 'Avg dist'));
+  // st-dist-sub removed with the others: the A4 label above already carries the
+  // sample size, which is the whole of what that sub said.
   _setText('st-species', speciesCount);
+
+  // Adaptive season hero (design pass): diary.js paints it; we just hand over the
+  // numbers. `entries` here is already cull-only (blank days filtered by caller).
+  if (typeof opts.renderSeasonHero === 'function') {
+    var heroCounts = {};
+    entries.forEach(function(e){ if (e && e.species) heroCounts[e.species] = (heroCounts[e.species] || 0) + entryAnimals(e); });
+    opts.renderSeasonHero({ total: total, targetRows: targetRows, animals: animals, targetCalc: targetCalc, speciesCounts: heroCounts });
+  }
 
   // Weight grid — four cells: total kg, average, heaviest-ever, missing-weight
   // count. Each cell is styled as a range-cell so the visual rhythm matches
   // the distance-bands grid lower down.
-  var weightMeta = maxE ? (esc(maxE.species || '') + (maxE.date ? ' · ' + esc(String(maxE.date).slice(0, 7)) : '')) : 'No carcass weights recorded yet';
-  _setHtml('weight-chart',
-    '<div class="range-grid">'
-      + '<div class="range-cell"><div class="range-band">Total kg</div><div class="range-cnt">' + Math.round(kg) + '</div><div class="range-pct">all recorded entries</div></div>'
-      + '<div class="range-cell"><div class="range-band">Average kg</div><div class="range-cnt">' + (weightEntries.length ? avgWeight.toFixed(1) : '–') + '</div><div class="range-pct">' + weightEntries.length + ' weighted entr' + (weightEntries.length === 1 ? 'y' : 'ies') + '</div></div>'
-      + '<div class="range-cell"><div class="range-band">Heaviest</div><div class="range-cnt">' + (maxE ? esc(String(maxE.weight_kg)) : '–') + '</div><div class="range-pct">' + weightMeta + '</div></div>'
-      + '<div class="range-cell"><div class="range-band">Missing weight</div><div class="range-cnt">' + Math.max(0, total - weightEntries.length) + '</div><div class="range-pct">entries without carcass kg</div></div>'
-    + '</div>');
+  // ST2: hidden until anything is weighed — with zero weights every cell was
+  // a dead zero or dash ("Total kg 0 · Average – · Heaviest –"), and "Missing
+  // weight" only means something once there are weights to be missing from.
+  var weightCard = document.getElementById('weight-card');
+  if (weightEntries.length === 0) {
+    if (weightCard) weightCard.style.display = 'none';
+  } else {
+    if (weightCard) weightCard.style.display = 'block';
+    var weightMeta = esc(maxE.species || '') + (maxE.date ? ' · ' + esc(String(maxE.date).slice(0, 7)) : '');
+    _setHtml('weight-chart',
+      '<div class="range-grid">'
+        + '<div class="range-cell"><div class="range-band">Total kg</div><div class="range-cnt">' + Math.round(kg) + '</div><div class="range-pct">all recorded entries</div></div>'
+        + '<div class="range-cell"><div class="range-band">Average kg</div><div class="range-cnt">' + avgWeight.toFixed(1) + '</div><div class="range-pct">' + weightEntries.length + ' weighted entr' + (weightEntries.length === 1 ? 'y' : 'ies') + '</div></div>'
+        + '<div class="range-cell"><div class="range-band">Heaviest</div><div class="range-cnt">' + esc(String(maxE.weight_kg)) + '</div><div class="range-pct">' + weightMeta + '</div></div>'
+        + '<div class="range-cell"><div class="range-band">Missing weight</div><div class="range-cnt">' + Math.max(0, weighableRows - weightEntries.length) + '</div><div class="range-pct">entries without carcass kg</div></div>'
+      + '</div>');
+  }
 
   // Species chart with sex sub-breakdown. Each species row gets the species
   // colour; below each row the male/female sub-rows reuse the same dark-red
@@ -778,11 +972,17 @@ export function renderStatsTabBody(entries, opts) {
   // below, so the two cards reinforce each other rather than competing.
   var spCount = {}, spMale = {}, spFemale = {};
   entries.forEach(function(e){
-    spCount[e.species]  = (spCount[e.species]||0)+1;
-    if (e.sex==='m') spMale[e.species]   = (spMale[e.species]||0)+1;
-    else             spFemale[e.species] = (spFemale[e.species]||0)+1;
+    // PQ2b: species bars count ANIMALS (per-entry quantity) so a 200-bird pigeon
+    // row shows 200, matching the headline. Sexed species (deer/fox/boar) are
+    // always quantity 1, so animals === rows for them and the sex sub-bar widths
+    // (mCnt/spCount) stay ≤100%. Sex sub-rows count only rows that are genuinely
+    // male/female — a sex-less pest row (NULL sex) must NOT be bucketed as female
+    // (the old `else` did exactly that).
+    var q = e ? (e.quantity | 0) : 0; if (q < 1) q = 1;
+    spCount[e.species]  = (spCount[e.species]||0)+q;
+    if (e.sex==='m')      spMale[e.species]   = (spMale[e.species]||0)+1;
+    else if (e.sex==='f') spFemale[e.species] = (spFemale[e.species]||0)+1;
   });
-  var spMax = Math.max.apply(null, Object.values(spCount).concat([1]));
   // Species palette is intentionally kept local (rather than lifted to the
   // top-of-module SP_COLORS_D) because these 6-hex swatches are slightly
   // darker variants intended for the species chart's main bars, while
@@ -793,34 +993,53 @@ export function renderStatsTabBody(entries, opts) {
   var spMaleLabels  = {'Red Deer':'Stag','Roe Deer':'Buck','Fallow':'Buck','Sika':'Stag','Muntjac':'Buck','CWD':'Buck'};
   var spFemLabels   = {'Red Deer':'Hind','Roe Deer':'Doe','Fallow':'Doe','Sika':'Hind','Muntjac':'Doe','CWD':'Doe'};
   var spHtml = Object.keys(spCount).sort(function(a,b){ return spCount[b]-spCount[a]; }).map(function(sp) {
-    var clr = spColors[sp]||'#5a7a30';
+    // ST3: pests fall back to SP_COLORS_D (all 12 species) — previously every
+    // pest wore the '#5a7a30' default, indistinguishable from Roe and each other.
+    var clr = spColors[sp] || SP_COLORS_D[sp] || '#5a7a30';
     var mCnt = spMale[sp]||0, fCnt = spFemale[sp]||0;
     var mLbl = spMaleLabels[sp]||'Male', fLbl = spFemLabels[sp]||'Female';
     var html = '<div class="bar-row" style="margin-bottom:4px;">'
-      + '<div class="bar-lbl" style="font-size:12px;font-weight:700;">' + sp + '</div>'
-      + '<div class="bar-track"><div class="bar-fill" style="width:' + (spCount[sp]/spMax*100) + '%;background:' + clr + ';"></div></div>'
+      + '<div class="bar-lbl" style="font-size:12px;font-weight:700;">' + esc(sp) + '</div>'
+      + '<div class="bar-track"><div class="bar-fill" style="width:' + statsBarPct(spCount[sp], animals) + '%;background:' + clr + ';"></div></div>'
       + '<div class="bar-cnt">' + spCount[sp] + '</div></div>';
     if (mCnt > 0) html += '<div class="bar-row" style="padding-left:12px;margin-bottom:3px;">'
       + '<div class="bar-lbl" style="font-size:10px;color:var(--muted);">♂ ' + mLbl + '</div>'
-      + '<div class="bar-track" style="height:4px;"><div class="bar-fill" style="width:' + (mCnt/spCount[sp]*100) + '%;background:rgba(191,54,12,0.55);"></div></div>'
+      + '<div class="bar-track" style="height:4px;"><div class="bar-fill" style="width:' + statsBarPct(mCnt, animals) + '%;background:rgba(191,54,12,0.55);"></div></div>'
       + '<div class="bar-cnt" style="font-size:10px;color:var(--muted);">' + mCnt + '</div></div>';
     if (fCnt > 0) html += '<div class="bar-row" style="padding-left:12px;margin-bottom:8px;">'
       + '<div class="bar-lbl" style="font-size:10px;color:var(--muted);">♀ ' + fLbl + '</div>'
-      + '<div class="bar-track" style="height:4px;"><div class="bar-fill" style="width:' + (fCnt/spCount[sp]*100) + '%;background:rgba(136,14,79,0.55);"></div></div>'
+      + '<div class="bar-track" style="height:4px;"><div class="bar-fill" style="width:' + statsBarPct(fCnt, animals) + '%;background:rgba(136,14,79,0.55);"></div></div>'
       + '<div class="bar-cnt" style="font-size:10px;color:var(--muted);">' + fCnt + '</div></div>';
     return html;
   }).join('');
-  _setHtml('species-chart', spHtml || statsChartEmpty('No culls this season'));
+  // A1: the page's two headline numbers used to differ with nothing to
+  // reconcile them - the hero counts deer rows against a deer target, the
+  // charts count every animal. Name the unit here, where the gap is visible.
+  var spNote = (animals !== total)
+    ? '<div class="stats-cov-note">Counts animals \u00b7 ' + animals + ' from ' + total + ' entr' + (total === 1 ? 'y' : 'ies') + ' (a pest bag counts in full)</div>'
+    : '';
+  _setHtml('species-chart', spHtml ? (spHtml + spNote) : statsChartEmpty('No culls this season'));
 
   // Top-level Sex chart (card sits below the species one). Uses the same
   // dark-red / dark-purple palette but at full opacity — the detail-level
   // sex sub-rows above use a muted variant on purpose.
-  var mCount = entries.filter(function(e){ return e.sex === 'm'; }).length;
-  var fCount = entries.filter(function(e){ return e.sex === 'f'; }).length;
-  var sexMax = Math.max(mCount, fCount, 1);
-  _setHtml('sex-chart',
-    '<div class="bar-row"><div class="bar-lbl">♂ Male</div><div class="bar-track"><div class="bar-fill" style="width:' + (mCount/sexMax*100) + '%;background:rgba(191,54,12,0.75);"></div></div><div class="bar-cnt">' + mCount + '</div></div>' +
-    '<div class="bar-row"><div class="bar-lbl">♀ Female</div><div class="bar-track"><div class="bar-fill" style="width:' + (fCount/sexMax*100) + '%;background:rgba(136,14,79,0.75);"></div></div><div class="bar-cnt">' + fCount + '</div></div>');
+  // ST2: hides when no sexed culls exist (empty or pest-only season) — it was
+  // the only chart with no hide rule, painting "♂ 0 / ♀ 0" ghost bars.
+  var mCount = entries.reduce(function(a, e){ return a + (e.sex === 'm' ? entryAnimals(e) : 0); }, 0);
+  var fCount = entries.reduce(function(a, e){ return a + (e.sex === 'f' ? entryAnimals(e) : 0); }, 0);
+  var sexCard = document.getElementById('sex-card');
+  if (mCount === 0 && fCount === 0) {
+    if (sexCard) sexCard.style.display = 'none';
+  } else {
+    if (sexCard) sexCard.style.display = 'block';
+    // A3: this card silently dropped every sex-less animal (pests are logged by
+    // quantity with no sex), so a 10-animal season read as 6 males and nothing
+    // else. Same ruler as every other card, and the remainder is stated.
+    _setHtml('sex-chart',
+      '<div class="bar-row"><div class="bar-lbl">♂ Male</div><div class="bar-track"><div class="bar-fill" style="width:' + statsBarPct(mCount, animals) + '%;background:rgba(191,54,12,0.75);"></div></div><div class="bar-cnt">' + mCount + '</div></div>' +
+      '<div class="bar-row"><div class="bar-lbl">♀ Female</div><div class="bar-track"><div class="bar-fill" style="width:' + statsBarPct(fCount, animals) + '%;background:rgba(136,14,79,0.75);"></div></div><div class="bar-cnt">' + fCount + '</div></div>' +
+      statsCoverageNote(mCount + fCount, animals, 'have a recorded sex'));
+  }
 
   // Fan out to the seven sub-builders. Each one is independently self-
   // contained: it reads its own card + chart elements by id, hides the
@@ -830,29 +1049,66 @@ export function renderStatsTabBody(entries, opts) {
   buildShooterStats(entries);
   buildDestinationStats(entries);
   buildTimeOfDayStats(entries);
-  buildTrendsChart(entries, { currentSeason: currentSeason });
-  buildGroundStats(entries);
+  buildTrendsChart(entries, { currentSeason: currentSeason, seasonStartMonth: seasonStartMonth });
+  buildGroundStats(entries, { groundAreasHa: opts.groundAreasHa });
 
-  // Monthly chart — 12 columns in UK-deer-season order (Aug → Jul). A bar's
-  // height is scaled to the peak month's count but capped at 60px; empty
-  // months get a 3px stub with 40% opacity so every column still reads as
-  // present. The peak month gets the `.pk` accent class.
+  // Monthly chart — 12 columns in season order, starting at the user's
+  // configured start month (default Aug → Jul). Per-month COUNTS are
+  // boundary-independent (calendar months) — only the column ORDER rotates.
+  // A bar's height is scaled to the peak month's count but capped at 60px;
+  // empty months get a 3px stub with 40% opacity so every column still reads
+  // as present. The peak month gets the `.pk` accent class.
   var mCount2 = {};
   entries.forEach(function(e) {
     if (!e.date) return;
     var dp = String(e.date).trim().split('-');
     var m = parseInt(dp[1], 10);
     if (!Number.isFinite(m) || m < 1 || m > 12) return;
-    mCount2[m] = (mCount2[m] || 0) + 1;
+    mCount2[m] = (mCount2[m] || 0) + entryAnimals(e); // ST3: animals, matching the headline
   });
   var mMax = Math.max.apply(null, Object.values(mCount2).concat([1]));
-  var seasonMonths = [8,9,10,11,12,1,2,3,4,5,6,7];
+  var sm0 = normalizeSeasonStartMonth(seasonStartMonth);
+  var seasonMonths = [];
+  for (var smi = 0; smi < 12; smi++) seasonMonths.push(((sm0 - 1 + smi) % 12) + 1);
   var peakCount = Math.max.apply(null, Object.values(mCount2).concat([0]));
-  var mHtml = seasonMonths.map(function(m) {
-    var cnt = mCount2[m]||0;
-    var h = cnt ? Math.max(6, Math.round(cnt/mMax*60)) : 3;
-    var cls = cnt ? (cnt === peakCount ? 'mc-bar pk' : 'mc-bar on') : 'mc-bar';
-    return '<div class="mc-col"><div class="' + cls + '" style="height:' + h + 'px;' + (cnt ? '' : 'opacity:0.4;') + '"></div><div class="mc-lbl">' + MONTH_NAMES[m-1] + '</div></div>';
-  }).join('');
-  _setHtml('month-chart', mHtml);
+  // ST2: an empty season shows the shared empty state, not 12 ghost stubs
+  // (a skeleton of a chart with no data behind it).
+  if (peakCount === 0) {
+    _setHtml('month-chart', '<div style="flex:1;align-self:center;">' + statsChartEmpty('No culls this season') + '</div>');
+    _setHtml('month-chart-note', '');
+  } else {
+    // A12: this chart had no axis, no values and an unexplained two-colour
+    // split, so a reader could see a shape but could not read a single number
+    // off it - and the gold bar looked like a category rather than a maximum.
+    // Every column now states its own count, and the note below names the unit
+    // and what gold means. One bar per month is few enough to label directly,
+    // which beats an axis at this size.
+    var mHtml = seasonMonths.map(function(m) {
+      var cnt = mCount2[m]||0;
+      var h = cnt ? Math.max(6, Math.round(cnt/mMax*60)) : 3;
+      var cls = cnt ? (cnt === peakCount ? 'mc-bar pk' : 'mc-bar on') : 'mc-bar';
+      return '<div class="mc-col" title="' + MONTH_NAMES[m-1] + ' \u00b7 ' + cnt + ' animal' + (cnt === 1 ? '' : 's') + '">'
+        + '<div class="mc-v' + (cnt ? '' : ' zero') + '">' + (cnt || '') + '</div>'
+        + '<div class="' + cls + '" style="height:' + h + 'px;' + (cnt ? '' : 'opacity:0.4;') + '"></div>'
+        + '<div class="mc-lbl">' + MONTH_NAMES[m-1] + '</div></div>';
+    }).join('');
+    _setHtml('month-chart', mHtml);
+    _setHtml('month-chart-note', 'Animals culled per month \u00b7 gold = busiest ('
+      + peakCount + ')');
+  }
+
+  // ST2: the collapsed "Charts & breakdowns" toggle's mini histogram is REAL
+  // now — one bar per month of the season (same order + counts as the Monthly
+  // chart above), peak month in gold. It was 11 bars with heights hardcoded
+  // in CSS: decoration masquerading as data on the statistics page. An empty
+  // season renders flat baseline stubs — honest emptiness.
+  var miniEl = document.getElementById('stats-more-mini-hist');
+  if (miniEl) {
+    miniEl.innerHTML = seasonMonths.map(function(m) {
+      var cnt = mCount2[m] || 0;
+      var h = cnt ? Math.max(18, Math.round(cnt / mMax * 100)) : 0;
+      var cls = (cnt && cnt === peakCount) ? ' class="pk"' : '';
+      return '<span' + cls + (h ? ' style="height:' + h + '%;"' : '') + '></span>';
+    }).join('');
+  }
 }

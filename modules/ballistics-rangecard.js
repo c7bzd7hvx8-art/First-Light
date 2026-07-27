@@ -17,13 +17,16 @@
 //
 //   state           — uses .conditions.{windMps, tempC, pressureHpa}
 //   solveProfileAt  — (profile, rangeM) → solution row | null
+//   wind            — describeWind() result for the current conditions. Its
+//                     .long is the footer's wind sentence. Required: without
+//                     it the footer cannot name the crosswind actually solved.
 // =============================================================================
 
 export const RANGE_CARD_RANGES_M = Object.freeze([100, 150, 200, 250, 300, 350, 400, 450]);
 
 export function renderRangeCard(profile, deps) {
   if (!profile) return '';
-  const { state, solveProfileAt } = deps;
+  const { state, solveProfileAt, wind } = deps;
   const showWind = state.conditions.windMps > 0;
   // Compute solver outputs for each sample range. If any fails (transonic
   // edge, etc), show '—' for that cell.
@@ -31,11 +34,12 @@ export function renderRangeCard(profile, deps) {
     const sol = solveProfileAt(profile, r);
     return { rangeM: r, sol };
   });
-  const headerCells = RANGE_CARD_RANGES_M.map(r => `<th>${r}m</th>`).join('');
+  const headerCells = RANGE_CARD_RANGES_M.map(r => `<th scope="col">${r}m</th>`).join('');
 
   const dropRow = rows.map(({ sol }) => {
     if (!sol) return '<td>—</td>';
-    // Display sign convention: positive = dial UP (matches Hold widget + dope card)
+    // Display sign convention (ammo-box): the number is the bullet's position
+    // relative to zero — negative = below zero (dial UP), positive = above (dial DOWN).
     const cm = -sol.dropCm;
     const sign = cm >= 0 ? '+' : '';
     return `<td>${sign}${cm.toFixed(0)} cm</td>`;
@@ -61,30 +65,44 @@ export function renderRangeCard(profile, deps) {
 
   const windRow = showWind ? rows.map(({ sol }) => {
     if (!sol) return '<td>—</td>';
-    return `<td>${sol.windDriftCm.toFixed(0)} cm</td>`;
+    // Magnitude + explicit drift direction, matching the HOLD card's left/right.
+    // windDriftCm > 0 = drift right, < 0 = left.
+    const dir = sol.windDriftCm > 0.5 ? ' R' : (sol.windDriftCm < -0.5 ? ' L' : '');
+    return `<td>${Math.abs(sol.windDriftCm).toFixed(0)} cm${dir}</td>`;
   }).join('') : '';
 
+  // The Wind row is solved with the crosswind COMPONENT, not the entered wind
+  // speed, so the footer must name the component (audit 2026-07-25, B7). deps
+  // supplies it pre-computed rather than this module importing back into
+  // ballistics-ui.js; the fallback keeps a missing dep from printing a wrong
+  // number rather than no number.
+  const windText = wind ? wind.long
+    : (showWind ? 'Wind is applied — see the conditions strip.' : 'No wind.');
+
   return `
-    <details class="bx-output-section bx-rc-section">
-      <summary class="bx-output-label bx-rc-summary">Range card · current conditions</summary>
-      <div class="bx-rc-tablewrap">
-        <table class="bx-rc-table">
-          <thead><tr><th></th>${headerCells}</tr></thead>
-          <tbody>
-            <tr><th>Drop</th>${dropRow}</tr>
-            <tr><th>MOA</th>${moaRow}</tr>
-            <tr><th>Energy</th>${energyRow}</tr>
-            <tr><th>Velocity</th>${velRow}</tr>
-            ${showWind ? `<tr><th>Wind</th>${windRow}</tr>` : ''}
-          </tbody>
-        </table>
-      </div>
-      <div class="bx-rc-foot">
-        Drop is dial-up (positive = scope dials up). Energy in ft-lb, velocity in fps.
-        Solved at ${state.conditions.tempC.toFixed(0)}°C, ${state.conditions.pressureHpa.toFixed(0)} hPa,
-        ${profile.zeroRangeM}m zero.
-        ${showWind ? `Wind ${state.conditions.windMps.toFixed(1)} m/s full crosswind.` : 'No wind.'}
-        Velocity gold = transonic, orange = subsonic.
+    <details class="bx-rc-section" id="bx-rc-details"${deps.open ? ' open' : ''}>
+      <summary class="bx-rc-summary"><span class="bx-rc-status" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><rect x="2.5" y="3.2" width="11" height="9.6" rx="1.6"/><line x1="2.5" y1="6.6" x2="13.5" y2="6.6"/><line x1="2.5" y1="9.6" x2="13.5" y2="9.6"/><line x1="6.4" y1="3.2" x2="6.4" y2="12.8"/></svg></span><span class="bx-rc-summary-title">Range card · current conditions</span></summary>
+      <div class="bx-rc-body">
+        <div class="bx-rc-tablewrap">
+          <table class="bx-rc-table">
+            <caption class="bx-visually-hidden">Range card: drop, come-up in MOA, retained energy, velocity${showWind ? ' and wind drift' : ''} at each listed range.</caption>
+            <thead><tr><th></th>${headerCells}</tr></thead>
+            <tbody>
+              <tr><th scope="row">Drop</th>${dropRow}</tr>
+              <tr><th scope="row">MOA</th>${moaRow}</tr>
+              <tr><th scope="row">Energy</th>${energyRow}</tr>
+              <tr><th scope="row">Velocity</th>${velRow}</tr>
+              ${showWind ? `<tr><th scope="row">Wind</th>${windRow}</tr>` : ''}
+            </tbody>
+          </table>
+        </div>
+        <div class="bx-rc-foot">
+          Drop is relative to zero — negative = below (dial up), positive = above (dial down). Energy in ft-lb, velocity in fps.
+          Solved at ${state.conditions.tempC.toFixed(0)}°C, ${state.conditions.pressureHpa.toFixed(0)} hPa,
+          ${profile.zeroRangeM}m zero.
+          ${windText}
+          Velocity gold = transonic, orange = subsonic.
+        </div>
       </div>
     </details>
   `;

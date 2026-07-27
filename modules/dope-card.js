@@ -27,15 +27,19 @@
 // gloved hands, possibly damp. Three priorities drive the layout:
 //   1. The drop table is the centre of the card. Other content compresses
 //      to make room.
-//   2. Each row shows distance, drop (cm + MOA), velocity, energy. Energy
-//      is colour-coded: a thin band along the row's right edge goes red
-//      where energy falls below the species threshold.
+//   2. Each row shows distance, drop (cm + MOA + MIL), a reference wind
+//      drift, velocity, energy. Energy is colour-coded: a thin band along
+//      the row's right edge goes red where energy falls below the species
+//      threshold.
 //   3. Conditions assumed (temp, pressure, zero) are stated at the top so
 //      the user can spot when the card is invalid (e.g. printed for
 //      summer, used in winter).
 //
+// The caller controls the ranges printed (the dropCurve rows it passes),
+// so custom / user-chosen reference distances "just work" — this module
+// renders whatever finite ranges it is given, sorted ascending.
+//
 // Out of scope for v1 (revisit if users ask):
-//   * Wind drift columns — too dependent on assumed conditions.
 //   * Multi-page tables for long-range loads.
 //   * Custom paper sizes or landscape.
 // =============================================================================
@@ -43,6 +47,139 @@
 import {
   getAnatomicalHold, AIM_POINTS, SPECIES_BODY,
 } from '../lib/fl-anatomy.js';
+
+/**
+ * Compact one-line rendering of a lib/fl-deer-law.js threshold record, for
+ * printing the statutory minimum on the card itself.
+ *
+ * The card previously printed the retained-energy figure and then said it was
+ * "not the legal test" without ever saying what the legal test is. This card
+ * is the thing in the rifle case at the moment a marginal shot is weighed, so
+ * the statutory numbers belong on it.
+ *
+ * Two nuances are carried through from the data rather than flattened:
+ *   * A null minCalibreInches beside real thresholds is stated out loud as
+ *     "no minimum calibre", because that is Scotland's actual position and
+ *     the assumption that every jurisdiction sets one is the single most
+ *     common misreading of UK deer law.
+ *   * Northern Ireland's Sch. 11 para. 8 offers bullet weight and expanding
+ *     construction as alternative limbs, flagged in the record as
+ *     bulletWeightAlternative — rendered as "or any expanding bullet" rather
+ *     than as a cumulative requirement.
+ *
+ * Returns '' when the record carries no numeric threshold at all (e.g.
+ * muntjac in Scotland); the caller prints its own sentence for that case.
+ */
+export function formatLegalMinima(lm) {
+  if (!lm) return '';
+  const withCommas = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const parts = [];
+  if (Number.isFinite(lm.minMuzzleEnergyFtLb)) {
+    parts.push(withCommas(lm.minMuzzleEnergyFtLb) + ' ft-lb muzzle energy');
+  }
+  if (Number.isFinite(lm.minMuzzleVelocityFps)) {
+    parts.push(withCommas(lm.minMuzzleVelocityFps) + ' fps muzzle velocity');
+  }
+  if (Number.isFinite(lm.minCalibreInches)) {
+    parts.push(lm.minCalibreInches.toFixed(3).replace(/^0/, '') + '" calibre');
+  } else if (parts.length) {
+    parts.push('no minimum calibre');
+  }
+  // Where the weight limb is an alternative to the expanding limb rather than
+  // cumulative with it, printing both as separate bullet points would read as
+  // two requirements. Fold it into the construction clause instead.
+  const weightAltExpanding = lm.bulletWeightAlternative === 'expanding';
+  if (Number.isFinite(lm.minBulletWeightGrains) && !weightAltExpanding) {
+    parts.push(lm.minBulletWeightGrains + ' gr bullet');
+  }
+  if (!parts.length) return '';
+  if (lm.expandingBulletRequired) {
+    parts.push('expanding bullet'
+      + (weightAltExpanding && Number.isFinite(lm.minBulletWeightGrains)
+        ? ' (satisfies the ' + lm.minBulletWeightGrains + ' gr limb)' : ''));
+  }
+  return parts.join('   ·   ');
+}
+
+/**
+ * B8: where the conditions came from, and how long ago.
+ *
+ * The calculator boots on the ICAO standard atmosphere because a solver needs
+ * numbers before the user has given it any. Those are placeholders, not
+ * weather — and until now the on-screen strip and the printed card stated
+ * them in exactly the same voice as a reading fetched from the user's own
+ * location five minutes earlier. "CONDITIONS ASSUMED  15 C - 1013 hPa -
+ * 50% RH" is not a false statement, but it reads as a measurement, and it is
+ * the one line on the card a stalker would use to decide whether the drop
+ * table still applies to the evening in front of them.
+ *
+ * So classify the set once, here, and let both surfaces render the same
+ * verdict — the screen and the print must not be able to disagree about
+ * whether the figures are real.
+ *
+ * Staleness is judged for 'auto' and deliberately not for 'manual'. A fetched
+ * reading decays because the weather moves on underneath it; a figure a person
+ * typed is a statement about what they saw, and the app has no standing to
+ * tell them it has expired. Six hours is the threshold: long enough that a
+ * fetch at the truck still covers the walk in, short enough that a dawn fetch
+ * cannot silently underwrite an evening sit.
+ *
+ * nowMs is a parameter rather than an internal Date.now() so the rule is
+ * testable, and so the card and the screen can be asked the same question
+ * about the same instant.
+ */
+export function conditionsProvenance(conditions, nowMs) {
+  const src = conditions && conditions.source;
+  const at = (conditions && typeof conditions.fetchedAt === 'number' && conditions.fetchedAt > 0)
+    ? conditions.fetchedAt : null;
+  // A clock that has gone backwards (timezone change, manual set, a restored
+  // backup from another device) must not produce "-3 h ago". Floor at zero and
+  // let it read as just now.
+  const minsSince = at == null ? null : Math.max(0, Math.round((nowMs - at) / 60000));
+
+  if (src === 'auto') {
+    if (minsSince == null) {
+      return {
+        kind: 'auto', stale: true,
+        chip: 'Fetched - time unknown',
+        sentence: 'Fetched for your location, but the time of the fetch was not recorded. Treat as unverified.',
+      };
+    }
+    const age = describeAge(minsSince);
+    const stale = minsSince >= 360;
+    return {
+      kind: 'auto', stale,
+      chip: 'Fetched ' + age,
+      sentence: 'Fetched for your location ' + age + '.'
+        + (stale ? ' More than six hours old - re-check before you rely on this table.' : ''),
+    };
+  }
+  if (src === 'manual') {
+    return {
+      kind: 'manual', stale: false,
+      chip: minsSince == null ? 'Entered by hand' : 'Entered ' + describeAge(minsSince),
+      sentence: 'Entered by hand' + (minsSince == null ? '' : ' ' + describeAge(minsSince)) + '.',
+    };
+  }
+  return {
+    kind: 'default', stale: true,
+    chip: 'Standard atmosphere — not measured',
+    sentence: 'Not measured - the calculator\'s standard-atmosphere defaults, not conditions at your location.',
+  };
+}
+
+/**
+ * Coarse relative age. Deliberately coarse: the difference between 41 and 47
+ * minutes changes nothing a stalker would do, and a precise-looking figure
+ * invites more trust than a cached render deserves.
+ */
+function describeAge(mins) {
+  if (mins < 2) return 'just now';
+  if (mins < 60) return mins + ' min ago';
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return hours + ' h ago';
+  return Math.round(hours / 24) + ' d ago';
+}
 
 const A6_MM = { w: 105, h: 148 };
 const A4_MM = { w: 210, h: 297 };
@@ -72,15 +209,21 @@ const COLOURS = Object.freeze({
  *                                            humidityPct }
  * @param {Array}  args.dropCurve         — [{ rangeM, dropCm, velocityFps,
  *                                              velocityMs, energyFtLbs,
- *                                              energyJ, dropMoa, dropMil }]
- *                                            Must be pre-sorted ascending
- *                                            by rangeM.
+ *                                              energyJ, dropMoa, dropMil,
+ *                                              windDriftCm }]
+ *                                            Any finite ranges; sorted here.
+ *                                            windDriftCm (optional) is the
+ *                                            drift at args.windRefMs.
+ * @param {number} [args.windRefMs]        — reference full-value crosswind
+ *                                            (m/s) the Wind column assumes;
+ *                                            omit / 0 to hide the column
  * @param {'A6'|'A4'} args.sizeName
  * @param {string} args.jurisdictionLabel — e.g. "England & Wales"
  * @param {string} args.speciesLabel      — e.g. "Fallow"
- * @param {number|null} args.thresholdFtLb— statutory minimum at impact
- *                                            for speciesLabel; rows below
- *                                            this are visually flagged
+ * @param {number|null} args.thresholdFtLb— ethical retained-energy floor
+ *                                            (the statutory MUZZLE minimum used
+ *                                            as a DSC guide, NOT a legal impact
+ *                                            limit); rows below are flagged
  * @returns {object} jsPDF document
  */
 export function buildDopeCardPDF(args) {
@@ -159,51 +302,105 @@ export function buildDopeCardPDF(args) {
     args.conditions.humidityPct.toFixed(0) + '% RH',
   ].join('  ·  ');
   doc.text(condLine, m, y);
-  y += isLarge ? 8 : 5;
+  y += isLarge ? 4.2 : 3;
 
-  // ── Threshold legend (if applicable) ────────────────────────────────
+  // B8: and where those three figures came from. The heading above says
+  // ASSUMED, which was doing all the honest work on its own; a printed card
+  // outlives the session that produced it, so it has to carry its own
+  // provenance rather than rely on the reader remembering.
+  //
+  // Wrapped and measured rather than advanced by a guessed constant - the
+  // stale variant of the sentence is markedly longer than the fresh one, and
+  // on A6 it wraps to three lines where the fresh one takes two.
+  const prov = conditionsProvenance(args.conditions, Date.now());
+  doc.setFontSize(isLarge ? 7.5 : 5.4);
+  doc.setTextColor(...(prov.stale ? COLOURS.redRGB : COLOURS.mutedRGB));
+  const provLines = doc.splitTextToSize(prov.sentence, size.w - m * 2);
+  doc.text(provLines, m, y);
+  y += provLines.length * (isLarge ? 3.4 : 2.4) + (isLarge ? 5 : 3);
+
+  // ── Energy guide, and the statutory minimum it is not ───────────────
+  // This block used to end at "Ethical floor, not the legal test — deer law
+  // sets a muzzle minimum", which raises the obvious question and then walks
+  // away from it. The statutory figures now print underneath, with the
+  // citation, so the card answers the question it asks.
+  //
+  // Line advance is measured rather than guessed. The old code advanced a
+  // hard-coded 9mm (A4) / 7mm (A6) for a block whose wrapped height depends
+  // on the species and jurisdiction names, so a long label could already
+  // have overlapped the table header before anything was added here.
+  const guideFs = isLarge ? 8 : 6;
+  const guideLh = guideFs * 0.3528 * 1.2;      // pt → mm, 1.2 line spacing
+  const guideW = size.w - 2 * m;
+  const guideBlock = (text, bold, rgb) => {
+    doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.setTextColor(...rgb);
+    doc.setFontSize(guideFs);
+    const lines = doc.splitTextToSize(text, guideW);
+    doc.text(lines, m, y);
+    y += lines.length * guideLh;
+  };
+
   if (args.thresholdFtLb && args.speciesLabel) {
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(...COLOURS.mutedRGB);
-    doc.setFontSize(isLarge ? 8 : 6);
-    doc.text(
-      'Energy minimum: ' + args.thresholdFtLb + ' ft-lb (' + args.speciesLabel + ', ' +
-      args.jurisdictionLabel + '). Rows below this are flagged.',
-      m, y, { maxWidth: size.w - 2 * m }
-    );
-    y += isLarge ? 6 : 4;
+    guideBlock('Retained-energy guide: ' + args.thresholdFtLb + ' ft-lb ('
+      + args.speciesLabel + ', ' + args.jurisdictionLabel
+      + ') — an ethical floor for the shot, not the legal test.',
+      false, COLOURS.mutedRGB);
   }
 
-  // ── Drop table ──────────────────────────────────────────────────────
-  // Column layout — relative weights, then computed absolute positions.
-  // Range / Drop / MOA / Velocity / Energy (5 cols). Optional energy band
-  // on the right.
+  if (args.legalMinima && args.speciesLabel) {
+    const minima = formatLegalMinima(args.legalMinima);
+    guideBlock('STATUTORY MINIMUM AT THE MUZZLE — ' + args.speciesLabel + ', '
+      + args.jurisdictionLabel, true, COLOURS.mossRGB);
+    guideBlock(minima
+      || 'No statutory threshold is specified for this species in this jurisdiction.',
+      false, COLOURS.barkRGB);
+    if (args.legalMinima.citation) {
+      guideBlock(args.legalMinima.citation, false, COLOURS.mutedRGB);
+    }
+  }
+
+  if (args.thresholdFtLb || args.legalMinima) y += isLarge ? 4 : 2.5;
+
+  // ── Drop table (data-driven columns) ────────────────────────────────
+  // Columns left→right. Units live in a caption below the table so seven
+  // columns still fit on A6. Drop/MOA/MIL use the industry sign convention
+  // (positive = above LoS, negative = below) — the solver's dropCm is
+  // positive-below-LoS, so we negate for display. Wind is the drift (cm) at
+  // a fixed reference crosswind, giving the card a usable wind hold.
   const tableX = m;
   const tableW = size.w - 2 * m;
-  const colW = isLarge
-    ? { range: 22, drop: 30, moa: 22, vel: 36, energy: 30 }
-    : { range: 14, drop: 18, moa: 14, vel: 22, energy: 18 };
-  // Anchor rightward — energy column gets pushed to the right.
-  let cx = tableX;
-  const colX = {
-    range:  cx, end_range: cx += colW.range,
-    drop:   cx, end_drop:  cx += colW.drop,
-    moa:    cx, end_moa:   cx += colW.moa,
-    vel:    cx, end_vel:   cx += colW.vel,
-    energy: cx,
-  };
-  // Row right-anchor for the energy band:
   const tableEndX = tableX + tableW;
+
+  const hasWind = Number.isFinite(args.windRefMs) && args.windRefMs > 0
+    && (args.dropCurve || []).some(r => Number.isFinite(r.windDriftCm));
+
+  const columns = [
+    { key: 'range',  head: 'Range',  wL: 20, wS: 11, bold: true, colour: COLOURS.forestRGB,
+      get: r => String(r.rangeM) },
+    { key: 'drop',   head: 'Drop',   wL: 26, wS: 15,
+      get: r => { const d = -r.dropCm; return (d >= 0 ? '+' : '-') + Math.abs(d).toFixed(1); } },
+    { key: 'moa',    head: 'MOA',    wL: 16, wS: 10,
+      get: r => { const v = r.dropMoa != null ? -r.dropMoa : 0; const t = v.toFixed(1); return t === '-0.0' ? '+0.0' : (v >= 0 ? '+' + t : t); } },
+    { key: 'mil',    head: 'MIL',    wL: 16, wS: 11,
+      get: r => { const v = r.dropMil != null ? -r.dropMil : 0; const t = v.toFixed(2); return t === '-0.00' ? '+0.00' : (v >= 0 ? '+' + t : t); } },
+    { key: 'wind',   head: 'Wind',   wL: 22, wS: 12, show: hasWind,
+      get: r => Number.isFinite(r.windDriftCm) ? String(Math.round(Math.abs(r.windDriftCm))) : '-' },
+    { key: 'vel',    head: 'Vel',    wL: 26, wS: 14,
+      get: r => String(Math.round(r.velocityFps)) },
+    { key: 'energy', head: 'Energy', wL: 28, wS: 13,
+      get: r => String(Math.round(r.energyFtLbs)) },
+  ].filter(c => c.show !== false);
+
+  // Assign x positions from the per-size column widths.
+  let cxp = tableX;
+  for (const c of columns) { c.x = cxp; cxp += (isLarge ? c.wL : c.wS); }
 
   // Header row
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(isLarge ? 9 : 7);
   doc.setTextColor(...COLOURS.forestRGB);
-  doc.text('Range', colX.range, y);
-  doc.text('Drop',  colX.drop,  y);
-  doc.text('MOA',   colX.moa,   y);
-  doc.text('Vel',   colX.vel,   y);
-  doc.text('Energy',colX.energy,y);
+  for (const c of columns) doc.text(c.head, c.x, y);
   y += 2;
   doc.setDrawColor(...COLOURS.mossRGB);
   doc.setLineWidth(0.4);
@@ -217,71 +414,74 @@ export function buildDopeCardPDF(args) {
   doc.setTextColor(...COLOURS.barkRGB);
   const rowH = isLarge ? 5.5 : 3.8;
 
-  // Decide which subset of the curve to render. The dropCurve sampling
-  // produced by the UI may be denser than makes sense on the card. For
-  // A6 we render every 25m; for A4 every 25m too but we may have more
-  // vertical space. Either way, filter to multiples of 25m within the
-  // card's printable region.
-  const rows = (args.dropCurve || []).filter(r =>
-    Number.isFinite(r.rangeM) && r.rangeM % 25 === 0 && r.rangeM <= 400
-  );
+  // Render whatever ranges the caller supplied (this is what enables
+  // custom / user-chosen reference ranges) — just drop non-finite ranges
+  // and sort ascending.
+  const rows = (args.dropCurve || [])
+    .filter(r => Number.isFinite(r.rangeM))
+    .slice()
+    .sort((a, b) => a.rangeM - b.rangeM);
 
-  // How many rows fit?
+  // How many rows fit above the footer budget?
   const bottomBudget = isLarge ? 32 : 18;     // leave room for footer
   const maxRows = Math.floor((size.h - m - bottomBudget - y) / rowH);
-  const rowsToRender = rows.slice(0, maxRows);
+  const rowsToRender = rows.slice(0, Math.max(0, maxRows));
 
+  let ri = 0;
   for (const r of rowsToRender) {
     // Light alternating row tint (cosmetic only on colour printers)
-    if (Math.round(r.rangeM / 25) % 2 === 0) {
+    if (ri % 2 === 0) {
       doc.setFillColor(248, 245, 238);
       doc.rect(tableX, y - rowH + 1, tableW, rowH, 'F');
     }
-
-    // Range
-    doc.setTextColor(...COLOURS.forestRGB);
-    doc.setFont('helvetica', 'bold');
-    doc.text(r.rangeM + ' m', colX.range, y);
-
-    // Drop — industry-standard sign convention: positive = above LoS,
-    // negative = below LoS. Matches the convention printed on Hornady,
-    // Federal, etc. ammo boxes (e.g. "300 yds  -6.4\"" means bullet is
-    // 6.4 inches below LoS at 300 yards). Solver's internal dropCm is
-    // positive-below-LoS, so we negate it here for display.
+    // Compare UNROUNDED energy (match the on-screen ethical check in ballistics-ui);
+    // rounding first let a 1749.6 ft-lb row escape a 1750 floor on the printed card.
+    const belowThreshold = args.thresholdFtLb && r.energyFtLbs < args.thresholdFtLb;
+    for (const c of columns) {
+      if (c.key === 'energy' && belowThreshold) {
+        doc.setTextColor(...COLOURS.redRGB);
+        doc.setFont('helvetica', 'bold');
+      } else if (c.bold) {
+        doc.setTextColor(...(c.colour || COLOURS.barkRGB));
+        doc.setFont('helvetica', 'bold');
+      } else {
+        doc.setTextColor(...COLOURS.barkRGB);
+        doc.setFont('helvetica', 'normal');
+      }
+      doc.text(c.get(r), c.x, y);
+    }
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...COLOURS.barkRGB);
-    const dispDropCm = -r.dropCm;
-    const dropSign = dispDropCm >= 0 ? '+' : '-';
-    const dropStr = dropSign + Math.abs(dispDropCm).toFixed(1) + ' cm';
-    doc.text(dropStr, colX.drop, y);
-
-    // MOA — same convention as drop. Negate the solver's dropMoa so
-    // positive = above LoS, negative = below.
-    const moa = r.dropMoa != null ? -r.dropMoa : 0;
-    const moaStr = (moa >= 0 ? '+' : '') + moa.toFixed(1);
-    doc.text(moaStr, colX.moa, y);
-
-    // Velocity (fps)
-    doc.text(Math.round(r.velocityFps) + ' fps', colX.vel, y);
-
-    // Energy (ft-lb), with red flag if below threshold
-    const e = Math.round(r.energyFtLbs);
-    const belowThreshold = args.thresholdFtLb && e < args.thresholdFtLb;
     if (belowThreshold) {
-      doc.setTextColor(...COLOURS.redRGB);
-      doc.setFont('helvetica', 'bold');
-    }
-    doc.text(e + ' ft-lb', colX.energy, y);
-    if (belowThreshold) {
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(...COLOURS.barkRGB);
       // Right-edge red band
       doc.setFillColor(...COLOURS.redRGB);
       doc.rect(tableEndX - 0.6, y - rowH + 1, 0.6, rowH, 'F');
     }
-
     y += rowH;
+    ri++;
   }
+
+  // If the table couldn't fit every requested range, say so explicitly — a
+  // field card that silently stops short looks complete but isn't (audit §2).
+  const omittedRows = rows.length - rowsToRender.length;
+  if (omittedRows > 0) {
+    const lastRangeM = rowsToRender.length ? Math.round(rowsToRender[rowsToRender.length - 1].rangeM) : 0;
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...COLOURS.redRGB);
+    doc.setFontSize(isLarge ? 7 : 5.5);
+    doc.text(`+${omittedRows} more range${omittedRows === 1 ? '' : 's'} past ${lastRangeM} m omitted — reduce the step or print A4.`,
+      tableX, y + (isLarge ? 1 : 0.5), { maxWidth: tableW });
+    y += isLarge ? 5 : 3.5;
+  }
+
+  // Units + wind caption beneath the table.
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...COLOURS.mutedRGB);
+  doc.setFontSize(isLarge ? 7 : 5);
+  let cap = 'Range m · Drop/Wind cm · Vel fps · Energy ft-lb';
+  if (hasWind) cap += `.  Wind = drift at ${args.windRefMs} m/s full-value crosswind — hold into it.`;
+  doc.text(cap, tableX, y + (isLarge ? 1 : 0.5), { maxWidth: tableW });
+  y += isLarge ? 5 : 3.5;
 
   // ── Anatomical hold reference (if enabled) ──────────────────────────
   // Picks three useful ranges from the dope curve (closest to 100/200/300m)

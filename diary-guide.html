@@ -2,11 +2,27 @@
 <html lang="en-GB">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; script-src https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://firstlightdeer.goatcounter.com; frame-ancestors 'self';">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; script-src https://gc.zgo.at; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://firstlightdeer.goatcounter.com; frame-ancestors 'self';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <title>Cull Diary Guide — First Light</title>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<meta name="description" content="Step-by-step guide to the First Light Cull Diary — recording a beast, photographs, grid references, larder weights, syndicate ground, season targets and exports.">
+<meta property="og:title" content="Cull Diary Guide — First Light">
+<meta property="og:description" content="Step-by-step guide to the First Light Cull Diary — recording a beast, photographs, grid references, syndicate ground, season targets and exports.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://firstlightdeer.co.uk/diary-guide.html">
+<meta property="og:image" content="https://firstlightdeer.co.uk/icon-512.png">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+<meta property="og:image:alt" content="First Light — UK deer stalking app icon showing a stag silhouette at dawn">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Cull Diary Guide — First Light">
+<meta name="twitter:description" content="Step-by-step guide to the First Light Cull Diary — recording a beast, grid references, syndicates, targets and exports.">
+<meta name="twitter:image" content="https://firstlightdeer.co.uk/icon-512.png">
+<link rel="canonical" href="https://firstlightdeer.co.uk/diary-guide.html">
+<meta name="theme-color" content="#1a2e1a">
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="fl-icons.css">
 <style>
 :root {
   --forest:#1a2e1a; --deep:#0e2a08; --moss:#5a7a30; --leaf:#7adf7a;
@@ -18,7 +34,11 @@
 body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,0.85);max-width:500px;margin:0 auto;padding:0 0 60px;}
 
 .guide-hdr{background:linear-gradient(135deg,#0f1e0a,#0a1506);padding:48px 20px 24px;border-bottom:1px solid rgba(200,168,75,0.15);}
-.guide-hdr a{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:rgba(200,168,75,0.7);text-decoration:none;margin-bottom:14px;font-weight:600;font-family:'DM Mono',monospace;}
+.guide-hdr a{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;font-size:11px;color:rgba(200,168,75,0.7);text-decoration:none;font-weight:600;font-family:'DM Mono',monospace;border-radius:8px;-webkit-tap-highlight-color:transparent;}
+.guide-hdr a:hover{color:rgba(200,168,75,0.95);background:rgba(200,168,75,0.07);}
+.guide-hdr-nav{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:-15px -12px 5px;}
+.guide-foot-link{display:inline-flex;align-items:center;justify-content:center;min-height:40px;margin-top:6px;padding:0 12px;border-radius:9px;font-size:12px;color:var(--gold);text-decoration:none;-webkit-tap-highlight-color:transparent;}
+.guide-foot-link:hover{background:rgba(200,168,75,0.08);}
 .guide-hdr h1{font-family:'Playfair Display',serif;font-size:26px;color:white;line-height:1.2;}
 .guide-hdr p{font-size:12px;color:rgba(200,168,75,0.6);margin-top:4px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;}
 
@@ -48,7 +68,7 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
 .m-sp-btn{padding:10px 6px;border-radius:10px;border:1.5px solid #e0dcd6;background:white;text-align:center;font-size:12px;font-weight:600;color:var(--bark);cursor:default;}
 .m-sp-btn.on{background:var(--forest);color:white;border-color:var(--forest);}
 .m-sp-lat{font-size:9px;color:#aaa;font-style:italic;margin-top:1px;}
-.m-sp-btn.on .m-sp-lat{color:rgba(255,255,255,0.5);}
+.m-sp-btn.on .m-sp-lat{color:rgba(255,255,255,0.6);}
 
 /* Sex buttons */
 .m-sx-row{display:flex;gap:8px;}
@@ -83,17 +103,17 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
 
 /* Nav bar */
 .m-nav{display:flex;background:#111a0b;border-radius:0 0 12px 12px;overflow:hidden;border-top:1px solid rgba(255,255,255,0.07);}
-.m-nav-item{flex:1;padding:10px 4px 12px;text-align:center;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.25);font-family:'DM Mono',monospace;}
+.m-nav-item{flex:1;padding:10px 4px 12px;text-align:center;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;}
 .m-nav-item.on{color:var(--leaf);}
 .m-nav-ico{display:flex;align-items:center;justify-content:center;margin-bottom:3px;color:var(--leaf);}
 .m-nav-ico svg{width:22px;height:22px;display:block;opacity:0.9;}
-.m-nav-item:not(.on) .m-nav-ico{color:rgba(255,255,255,0.35);}
+.m-nav-item:not(.on) .m-nav-ico{color:rgba(255,255,255,0.6);}
 
 /* Stats card (legacy mock — prefer .m-hstats-row for diary list) */
 .m-stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:rgba(255,255,255,0.07);border-radius:10px;overflow:hidden;margin:10px 0;}
 .m-stat{padding:12px;text-align:center;background:#111a0b;}
 .m-stat-n{font-size:22px;font-weight:700;color:var(--amber);font-variant-numeric:tabular-nums;}
-.m-stat-l{font-size:7px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.3);margin-top:2px;font-family:'DM Mono',monospace;}
+.m-stat-l{font-size:7px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.6);margin-top:2px;font-family:'DM Mono',monospace;}
 
 /* Diary list header mock — matches diary.css .hstats (3 columns, not 2×2) */
 .m-diary-list-mock{border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.35);margin:14px 0;}
@@ -112,7 +132,7 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
 .m-hs-cell{padding:8px 7px;text-align:center;min-width:0;flex:1;}
 .m-hs-cell + .m-hs-cell{border-left:1px solid rgba(255,255,255,0.07);}
 .m-hs-n{font-size:16px;font-weight:700;color:var(--amber);line-height:1;font-variant-numeric:tabular-nums;}
-.m-hs-l{font-size:6px;text-transform:uppercase;letter-spacing:0.4px;color:rgba(255,255,255,0.3);margin-top:2px;font-family:'DM Mono',monospace;}
+.m-hs-l{font-size:6px;text-transform:uppercase;letter-spacing:0.4px;color:rgba(255,255,255,0.6);margin-top:2px;font-family:'DM Mono',monospace;}
 .m-list-row2-m{display:flex;gap:6px;align-items:center;margin-top:12px;}
 .m-season-sel-mock{flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:7px 10px;color:rgba(255,255,255,0.85);font-size:11px;font-weight:600;font-family:'DM Sans',sans-serif;}
 .m-hdr-ico-m{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:7px 9px;min-height:34px;display:flex;align-items:center;justify-content:center;color:rgba(200,168,75,0.75);}
@@ -267,16 +287,27 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
 .m-tground-card-m{border:1.5px solid #ece8e2;border-radius:12px;padding:10px 12px;margin-bottom:10px;background:#faf8f4;}
 .m-tground-card-m .gh{display:flex;justify-content:space-between;font-weight:700;font-size:13px;color:var(--bark);}
 .m-tunass-m{border:1.5px dashed #c4c4b8;border-radius:12px;padding:10px 12px;font-size:12px;color:var(--muted);}
+
+/* iPhone standalone: keep content below the status bar; no-op elsewhere. */
+body { padding-top: env(safe-area-inset-top, 0px); }
 </style>
 </head>
 <body>
 
-<div class="guide-hdr">
-  <a href="diary.html">← Back to Cull Diary</a>
+<header class="guide-hdr">
+  <!-- Home audit: the guide only ever linked back to the diary, so the hub
+       was two hops away from a page reachable straight off the sign-in screen. -->
+  <nav class="guide-hdr-nav" aria-label="Back">
+    <a href="diary.html">← Back to Cull Diary</a>
+    <a href="index.html" title="First Light home — Field Guide, Ballistics &amp; Deer School">← First Light</a>
+  </nav>
   <h1>Cull Diary Guide</h1>
   <p>Step-by-step tutorial</p>
   <p style="font-size:11px;color:rgba(200,168,75,0.45);max-width:36em;line-height:1.55;margin-top:10px;font-family:'DM Sans',sans-serif;text-transform:none;letter-spacing:0;">Updated against the in-repo <strong style="color:rgba(200,168,75,0.65);">Cull Diary</strong> (<code>diary.html</code>). If controls look out of date, hard-refresh or wait for the service worker cache to update.</p>
-</div>
+  <p style="font-size:10px;color:rgba(200,168,75,0.4);margin-top:12px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;">Last updated 24 July 2026</p>
+</header>
+
+<main id="dg-main">
 
 <!-- Table of contents -->
 <div class="toc">
@@ -285,16 +316,22 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
   <a href="#s2"><span>02</span> The diary view</a>
   <a href="#s3"><span>03</span> Adding a new entry</a>
   <a href="#s3-blank"><span>03b</span> Blank day (outing, no shot)</a>
+  <a href="#s3-pests"><span>03c</span> Pest Control species</a>
+  <a href="#s3-sighting"><span>03d</span> Sightings — live deer seen</a>
   <a href="#s4"><span>04</span> Quick entry</a>
   <a href="#s5"><span>05</span> Viewing an entry</a>
   <a href="#s6"><span>06</span> Editing &amp; deleting</a>
   <a href="#s7"><span>07</span> Season &amp; ground management</a>
+  <a href="#s7-season-start"><span>07a</span> Season start month</a>
+  <a href="#s7-grounds"><span>07b</span> Mapping your grounds</a>
   <a href="#s8"><span>08</span> Cull targets &amp; season plan</a>
   <a href="#s8-locate"><span>08a</span> Season Plan card</a>
   <a href="#s8-season-total"><span>08b</span> Set targets · Season total</a>
   <a href="#s8-by-ground"><span>08c</span> Set targets · By ground</a>
   <a href="#s8-chips"><span>08d</span> Overview / ground chips</a>
   <a href="#s9"><span>09</span> Stats &amp; charts</a>
+  <a href="#s9-hero"><span>09a</span> Season progress hero</a>
+  <a href="#s9-map"><span>09b</span> The cull map</a>
   <a href="#s10"><span>10</span> Exporting data</a>
   <a href="#s10-declarations"><span>10a</span> Hunter declarations &amp; consignments</a>
   <a href="#s11"><span>11</span> Offline mode</a>
@@ -307,6 +344,9 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
   <a href="#s13-ground"><span>13e</span> Ground filter &amp; attribution</a>
   <a href="#s13-teamexp"><span>13f</span> Team exports (managers)</a>
   <a href="#s13-msg"><span>13g</span> Syndicate messaging</a>
+  <a href="#s14"><span>14</span> Stands &amp; deer forecast</a>
+  <a href="#s14-plan"><span>14a</span> Best seat this week</a>
+  <a href="#s14-facing"><span>14b</span> Facing, photos &amp; where it sits</a>
 </div>
 
 <!-- STEP 1 -->
@@ -325,7 +365,7 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
     <div class="m-ff"><label>Full name</label><input type="text" value="Your name" readonly></div>
     <div class="m-consent">
       <input type="checkbox" checked disabled>
-      <span>I agree to the <a href="privacy.html">Privacy Policy</a>. My email and diary data will be stored securely in Supabase.</span>
+      <span>I agree to the <a href="privacy.html">Privacy Policy</a> and <a href="terms.html">Terms of Use</a>. My email and diary data will be stored securely in Supabase.</span>
     </div>
     <div class="m-btn-save">Create Account →</div>
   </div>
@@ -356,15 +396,22 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
           <div class="m-diary-season-lbl">2025–26 Season</div>
         </div>
         <div class="m-hstats-row" aria-hidden="true">
-          <div class="m-hs-cell"><div class="m-hs-n">6</div><div class="m-hs-l">Total</div></div>
+          <div class="m-hs-cell"><div class="m-hs-n">6</div><div class="m-hs-l">Culls</div></div>
           <div class="m-hs-cell"><div class="m-hs-n">226</div><div class="m-hs-l">kg</div></div>
           <div class="m-hs-cell"><div class="m-hs-n">4</div><div class="m-hs-l">Species</div></div>
         </div>
       </div>
       <div class="m-list-row2-m">
         <div class="m-season-sel-mock">2025–26 Season ▾</div>
+        <div style="flex:1;" aria-hidden="true"></div>
         <div class="m-hdr-ico-m" title="Diary guide"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M8 7h8M8 11h6"/></svg></div>
-        <div class="m-hdr-ico-m" title="Stats"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="12" width="5" height="9" rx="1.5" fill="#c8a84b" opacity="0.9"/><rect x="9.5" y="7" width="5" height="14" rx="1.5" fill="white"/><rect x="17" y="16" width="5" height="5" rx="1.5" fill="#c8a84b" opacity="0.6"/></svg></div>
+        <div class="m-hdr-ico-m" title="Account &amp; settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding:9px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:10px;">
+        <span style="display:flex;flex-shrink:0;color:rgba(200,168,75,0.8);" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.2 10-6.2S22 12 22 12s-3.6 6.2-10 6.2S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg></span>
+        <span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.85);">Sightings</span>
+        <span style="font-size:10px;color:rgba(255,255,255,0.45);flex:1;">Log live deer you see</span>
+        <span style="color:rgba(255,255,255,0.4);font-weight:700;" aria-hidden="true">›</span>
       </div>
     </div>
     <div class="m-filter-cream">
@@ -377,6 +424,7 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
         <span style="padding:5px 13px;border-radius:20px;font-size:11px;font-weight:600;border:1.5px solid #e0d8ce;color:#888;background:white;white-space:nowrap;">Sika</span>
         <span style="padding:5px 13px;border-radius:20px;font-size:11px;font-weight:600;border:1.5px solid #e0d8ce;color:#888;background:white;white-space:nowrap;">Muntjac</span>
         <span style="padding:5px 13px;border-radius:20px;font-size:11px;font-weight:600;border:1.5px solid #e0d8ce;color:#888;background:white;white-space:nowrap;">CWD</span>
+        <span style="padding:5px 13px;border-radius:20px;font-size:11px;font-weight:600;border:1.5px solid #e0d8ce;color:#888;background:white;white-space:nowrap;">Pest ▸</span>
       </div>
     </div>
     <div class="m-fab-hint">
@@ -387,13 +435,15 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
     <div class="m-nav" style="border-radius:0;">
       <div class="m-nav-item on"><div class="m-nav-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2" y="5" width="13" height="16" rx="2" stroke="currentColor" stroke-width="1.8" fill="none"/><line x1="2" y1="5" x2="2" y2="21" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><line x1="6" y1="10" x2="11" y2="10" stroke="currentColor" stroke-width="1.3" opacity="0.7"/><line x1="6" y1="13" x2="11" y2="13" stroke="currentColor" stroke-width="1.3" opacity="0.5"/><circle cx="18.5" cy="5" r="3" stroke="#c8a84b" stroke-width="1.5" fill="none"/><circle cx="18.5" cy="5" r="1" fill="#c8a84b"/><line x1="18.5" y1="1.5" x2="18.5" y2="3" stroke="#c8a84b" stroke-width="1.2" stroke-linecap="round"/><line x1="18.5" y1="7" x2="18.5" y2="8.5" stroke="#c8a84b" stroke-width="1.2" stroke-linecap="round"/><line x1="15" y1="5" x2="16.5" y2="5" stroke="#c8a84b" stroke-width="1.2" stroke-linecap="round"/><line x1="20.5" y1="5" x2="22" y2="5" stroke="#c8a84b" stroke-width="1.2" stroke-linecap="round"/></svg></div>Diary</div>
       <div class="m-nav-item"><div class="m-nav-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>Add Entry</div>
+      <div class="m-nav-item"><div class="m-nav-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="6" y="4" width="12" height="5" rx="1" stroke="currentColor" stroke-width="1.8"/><line x1="8" y1="9" x2="8" y2="21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="16" y1="9" x2="16" y2="21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="8" y1="13" x2="16" y2="13" stroke="currentColor" stroke-width="1.3" opacity="0.7"/><line x1="8" y1="17" x2="16" y2="17" stroke="currentColor" stroke-width="1.3" opacity="0.5"/><circle cx="12" cy="6.5" r="1" fill="#c8a84b"/></svg></div>Stands</div>
       <div class="m-nav-item"><div class="m-nav-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2" y="12" width="5" height="9" rx="1.5" fill="#c8a84b" opacity="0.9"/><rect x="9.5" y="7" width="5" height="14" rx="1.5" fill="currentColor"/><rect x="17" y="16" width="5" height="5" rx="1.5" fill="#c8a84b" opacity="0.6"/></svg></div>Stats</div>
     </div>
   </div>
 
-  <p>The <strong>three headline numbers</strong> are <strong>Total</strong> (animals), combined carcass <strong>kg</strong>, and how many <strong>species</strong> you have recorded this season — one compact row, aligned with the app.</p>
-  <p>Use the <strong>season dropdown</strong> in the header row to switch seasons. The <strong>book</strong> icon opens this guide; the <strong>chart</strong> icon jumps to Stats.</p>
-  <p>After your first entry, you also get a <strong>search</strong> bar (species, ground, tag, <strong>blank day</strong>, notes…), optional <strong>ground</strong> filter when you use more than one permission, <strong>Newest / Oldest</strong> sort, and <strong>Select</strong> for bulk CSV, <strong>Dealer PDF</strong> (consignment declaration — see <a href="#s10-declarations" style="color:var(--gold);">step 10a</a>), or delete.</p>
+  <p>The <strong>three headline numbers</strong> are <strong>Culls</strong> (animals), combined carcass <strong>kg</strong>, and how many <strong>species</strong> you have recorded this season — one compact row, aligned with the app.</p>
+  <p>Use the <strong>season dropdown</strong> in the header row to switch seasons. Two icons sit to its right: the <strong>book</strong> opens this guide, and the <strong>gear</strong> opens <a href="#s12" style="color:var(--gold);">Account &amp; settings</a>. Below them, a full-width <strong>Sightings</strong> strip (<em>“Log live deer you see”</em>) opens your <a href="#s3-sighting" style="color:var(--gold);">Sightings</a> log (live deer seen). <strong>Stats</strong> is the fourth tab on the <strong>bottom nav</strong> — it is no longer a header icon. The First Light <strong>mark</strong> at the far left is the home button: one tap back to the Field Guide, Ballistics and Deer School hub.</p>
+  <p>Once you have entries, a row with <strong>Newest / Oldest</strong> sort and <strong>Select</strong> appears — for bulk CSV, <strong>Dealer PDF</strong> (consignment declaration — see <a href="#s10-declarations" style="color:var(--gold);">step 10a</a>), or delete — plus an optional <strong>ground</strong> filter when you use more than one permission. The <strong>search</strong> bar (species, ground, tag, <strong>blank day</strong>, notes…) joins it once your diary reaches <strong>eight entries</strong> — a handful of cards needs eyes, not a query.</p>
+  <p>The last chip on the species filter is <strong>Pest ▸</strong>. Tapping it shows <strong>all Pest Control entries</strong> at once and expands a second chip row (Fox, Rabbit, Grey Squirrel, Pigeon, Corvid, Wild Boar) to narrow further; tapping <strong>All</strong> or any deer chip collapses the pest row again. The cull map has a matching single <strong>Pests</strong> chip. See <a href="#s3-pests" style="color:var(--gold);">section 03c</a>.</p>
   <p>When an <strong>offline</strong> queue is building, a banner appears above the entry list with <strong>Sync now</strong> once you are back online. The <strong>Diary</strong> tab can show a small offline badge when something is pending.</p>
 </div>
 
@@ -401,7 +451,15 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
 <div class="step" id="s3">
   <div class="step-num">3</div>
   <h2>Adding a New Entry</h2>
-  <p>Tap the <strong>+</strong> button or the <strong>Add Entry</strong> tab to open the full entry form. The form has 7 sections:</p>
+  <p>Tap the <strong>+</strong> button or the <strong>Add Entry</strong> tab to open the full entry form. A <strong>Cull · Blank day · Sighting</strong> selector at the top chooses what you are logging (a helper line explains each), with <strong>Cull</strong> selected by default. A <strong>cull</strong> entry has an optional <strong>Photo</strong> then <strong>eight</strong> numbered sections — 1&nbsp;Species, 2&nbsp;Sex, 3&nbsp;Date&nbsp;&amp;&nbsp;Time, 4&nbsp;Location, 5&nbsp;Shot Details, 6&nbsp;Carcass, 7&nbsp;Larder inspection, 8&nbsp;Notes. <strong>Blank day</strong> and <strong>Sighting</strong> show fewer, tailored fields (see <a href="#s3-blank" style="color:var(--gold);">03b</a> and <a href="#s3-sighting" style="color:var(--gold);">03d</a>).</p>
+  <div class="mock">
+    <div class="mock-label">Entry mode</div>
+    <div class="m-tmode-row" style="border-color:#e0dcd6;">
+      <button type="button" class="m-tmode-btn on">Cull</button>
+      <button type="button" class="m-tmode-btn">Blank day</button>
+      <button type="button" class="m-tmode-btn">Sighting</button>
+    </div>
+  </div>
 
   <h3>Photo</h3>
   <p>Take a photo with your camera or pick one from your gallery. This is optional but useful for records.</p>
@@ -415,8 +473,23 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
     </div>
   </div>
 
+  <h3>Photo details from the image (EXIF)</h3>
+  <p>Most phone cameras stamp each photo with <strong>where</strong> and <strong>when</strong> it was taken. When the photo you add carries that data, a small <strong>Photo details found</strong> card appears under it — offering to fill the entry for you so you do not have to type it in.</p>
+  <div class="mock">
+    <div style="border:1.5px solid #c8d8a8;background:#f4faf0;border-radius:12px;padding:12px 14px;">
+      <div style="font-size:12px;font-weight:700;color:#3a6020;margin-bottom:8px;display:flex;align-items:center;gap:6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-4.35 7-11a7 7 0 1 0-14 0c0 6.65 7 11 7 11z"/><circle cx="12" cy="10" r="2.2" fill="currentColor" stroke="none"/></svg>Photo details found</div>
+      <div style="font-size:12px;color:var(--bark);line-height:1.75;">Location · 51.23456, -1.23456<br>Taken · 06:32 · 14 Jul 2026</div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <div class="m-btn" style="background:linear-gradient(135deg,var(--moss),var(--deep));color:white;justify-content:center;flex:1;">Use for this entry</div>
+        <div class="m-btn" style="background:#f0ece6;color:#888;justify-content:center;">Dismiss</div>
+      </div>
+    </div>
+  </div>
+  <p>Tap <strong>Use for this entry</strong> and the app fills your <strong>location</strong> (it drops the map pin and, when you are online, looks up a place name), the <strong>date</strong>, and the <strong>time</strong> — whichever the photo actually carries — then confirms with a toast such as <em>“✓ Photo location + date &amp; time applied”</em>. <strong>Dismiss</strong> hides the card and changes nothing. If the photo’s date differs from the date already on the entry, the card warns you that Use will update the date too.</p>
+  <div class="tip"><strong>When it shows:</strong> only when the image genuinely carries GPS and/or a capture time. A plain screenshot, a re-saved image, or a format that strips metadata simply won’t trigger the card — nothing is ever guessed, and everything it offers is optional.</div>
+
   <h3>① Species</h3>
-  <p>Tap the species you shot. All six UK deer species are available.</p>
+  <p>Tap the species you shot. All six UK deer species are available, and a collapsed <strong>Pest Control ▸</strong> button under them opens six more: fox, rabbit, grey squirrel, pigeon, corvids and wild boar (<a href="#s3-pests" style="color:var(--gold);">section 03c</a>).</p>
   <div class="mock">
     <div class="m-fsec-hdr"><div class="m-fsec-num">1</div><div class="m-fsec-title">Species</div></div>
     <div class="m-sp-grid">
@@ -474,19 +547,10 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
   </div>
   <div class="tip"><strong>Tip:</strong> Tap the ground field to see your saved grounds. You can manage grounds from the Stats tab → Season Plan → Edit.</div>
 
-  <h3>⑤ Carcass Weight</h3>
-  <p>Enter the carcass weight in kilograms.</p>
-  <div class="mock">
-    <div class="m-fsec-hdr"><div class="m-fsec-num">5</div><div class="m-fsec-title">Carcass Weight (kg)</div></div>
-    <div class="m-wt-row">
-      <div class="m-wt"><label>Weight</label><input type="text" value="45" readonly></div>
-    </div>
-  </div>
-
-  <h3>⑥ Shot Details</h3>
+  <h3>⑤ Shot Details</h3>
   <p>Record calibre (dropdown of common UK deer calibres or custom), distance, shot placement, age class, shooter name, and carcass destination.</p>
   <div class="mock">
-    <div class="m-fsec-hdr"><div class="m-fsec-num">6</div><div class="m-fsec-title">Shot Details</div></div>
+    <div class="m-fsec-hdr"><div class="m-fsec-num">5</div><div class="m-fsec-title">Shot Details</div></div>
     <div class="m-ff-row">
       <div class="m-ff"><label>Calibre</label><select><option>.243 Win</option></select></div>
       <div class="m-ff"><label>Distance (m)</label><input type="text" value="120" readonly></div>
@@ -502,35 +566,73 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
   <p>Destination options: Self / personal use, Game dealer, Friend / family, Stalking client, Estate / landowner, Left on hill, Condemned.</p>
   <p>The tag number links your diary entry to the physical carcass tag — useful for larder records, game dealer declarations, and DMG returns.</p>
 
-  <h3>⑦ Notes</h3>
+  <h3>⑥ Carcass</h3>
+  <p>Enter the carcass weight in kilograms.</p>
+  <div class="mock">
+    <div class="m-fsec-hdr"><div class="m-fsec-num">6</div><div class="m-fsec-title">Carcass</div></div>
+    <div class="m-wt-row">
+      <div class="m-wt"><label>Larder weight (kg)</label><input type="text" value="45" readonly></div>
+    </div>
+  </div>
+
+  <h3>⑦ Larder inspection</h3>
+  <p>An optional gralloch / larder checklist for the carcass — tick anything abnormal (or <strong>None observed</strong>), with a free-text box for anything else. What you record here flows into the <strong>trained hunter declaration</strong> (Game dealer PDF, <a href="#s10-declarations" style="color:var(--gold);">section 10a</a>), so it is worth capturing at the larder rather than from memory later. Deer only — it does not appear for pest species.</p>
+
+  <h3>⑧ Notes</h3>
   <p>Free text for wind direction, approach, behaviour, conditions — anything you want to remember.</p>
   <div class="mock">
-    <div class="m-fsec-hdr"><div class="m-fsec-num">7</div><div class="m-fsec-title">Notes</div></div>
+    <div class="m-fsec-hdr"><div class="m-fsec-num">8</div><div class="m-fsec-title">Notes</div></div>
     <div class="m-ff"><label>Conditions / observations</label>
       <div style="padding:10px 12px;border:1.5px solid var(--stone);border-radius:10px;font-size:13px;color:var(--bark);min-height:60px;line-height:1.5;">Light SW wind, approached from east along hedge line. Deer feeding on winter wheat. Clean heart/lung shot, dropped within 20m.</div>
     </div>
   </div>
 
   <h3>Save</h3>
-  <p>Tap <strong>Save to Cloud</strong> to sync your entry to Supabase. If you're offline, it queues automatically and syncs when signal returns.</p>
-  <p>On long forms, a small <strong>progress</strong> hint under the date (e.g. which section you are in) updates as you scroll — useful on a phone in the field.</p>
+  <p>Tap the green <strong>Save</strong> button to sync your entry to Supabase — its label follows the mode (<strong>Save cull</strong>, <strong>Save blank day</strong> or <strong>Save sighting</strong>). If you're offline, it queues automatically and syncs when signal returns.</p>
+  <p>On long forms, a slim <strong>progress bar</strong> in the header fills as you scroll through the sections — useful on a phone in the field.</p>
   <div class="mock">
-    <div class="m-btn-save"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h11a4 4 0 0 0 0-8 0h-.5A5.5 5.5 0 0 0 7 11a4 4 0 0 0 0 7z"/></svg>Save to Cloud</div>
+    <div class="m-btn-save"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h11a4 4 0 0 0 0-8h-.5A5.5 5.5 0 0 0 7 11a4 4 0 0 0 0 7z"/></svg>Save cull</div>
     <div style="font-size:11px;color:#a0988a;text-align:center;margin-top:6px;">Syncs to Supabase · Works offline</div>
   </div>
+
+  <h3>Undo a save</h3>
+  <p>Right after you save a <strong>new</strong> entry, the success toast carries a short-lived <strong>Undo</strong> — a <strong>6-second</strong> window to reverse a mistaken save (wrong species, an accidental double-tap) with a single tap. It appears on new <strong>culls</strong> and <strong>blank days</strong> saved <strong>online</strong>, from both the full form and Quick entry.</p>
+  <div class="mock" style="background:#14210c;">
+    <div style="display:flex;align-items:center;gap:12px;background:#1d2f12;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:12px 14px;">
+      <span style="font-size:13px;color:rgba(255,255,255,0.9);flex:1;">Red Deer saved</span>
+      <span style="font-size:12px;font-weight:700;color:var(--amber);border:1px solid rgba(240,200,112,0.4);border-radius:8px;padding:5px 14px;">Undo</span>
+    </div>
+  </div>
+  <p>Tap <strong>Undo</strong> and the entry is deleted again — photo and all — with a <em>“Entry removed”</em> confirmation. <strong>Editing</strong> an existing entry shows a plain <em>“Entry updated”</em> instead (there is nothing to undo), and entries <strong>queued offline</strong> keep their own sync toast. If the window lapses or the undo can’t reach the server, you’ll see <em>“Could not undo — the entry is saved”</em> — open the entry and delete it from there instead.</p>
 
   <h3 id="s3-blank">Blank day (outing, no shot)</h3>
   <p>When you have been out but <strong>did not take a shot</strong> — and still want a dated record on the right ground — use <strong>Blank day</strong> instead of a full cull. Open <strong>Add entry</strong>, then use the in-form control to switch to the blank-day flow (you will not pick species, sex, or carcass details).</p>
   <p>Log <strong>date &amp; time</strong>, <strong>location</strong> and <strong>ground</strong> as usual, and add <strong>notes</strong> if you like. <strong>Photos</strong> are not part of a blank day in the same way as a cull entry — the list uses a <strong>no shot</strong> / landscape motif so you can spot it quickly.</p>
   <p>In the <strong>diary list</strong>, the card title is <strong>Blank day</strong> with the ground and your note preview. <strong>Species</strong> filter must be on <strong>All</strong> — a blank day is not a deer species, so a species chip hides it. <strong>Search</strong> picks up <strong>blank</strong>, <strong>blank day</strong>, <strong>outing</strong>, and <strong>no shot</strong> in addition to your ground and notes.</p>
   <div class="tip"><strong>Stats:</strong> Cull/carcass and species KPIs on Stats focus on <strong>actual culls</strong>. Blank days are listed separately (outings without a shot) so your season numbers stay meaningful for the larder and returns.</div>
+
+  <h3 id="s3-pests">Pest Control species</h3>
+  <p>The species picker keeps its six deer buttons; below them sits a collapsed <strong>Pest Control ▸</strong> button. Tap it to reveal <strong>Fox, Rabbit, Grey Squirrel, Pigeon, Corvid</strong> and <strong>Wild Boar</strong>. If you never shoot pests, you never see them — the deer workflow is unchanged.</p>
+  <p>Picking a pest species <strong>slims the form down automatically</strong>:</p>
+  <p>• <strong>Fox</strong> — sex becomes <strong>♂ Dog / ♀ Vixen</strong>, and the age classes include <strong>Cub</strong>. No carcass weight, no tag number, no gralloch checklist.<br>
+  • <strong>Rabbit, grey squirrel, pigeon, corvid</strong> — <strong>count-only</strong>: no sex, no age, no weight, no tag, no gralloch. Date, location, shot details and notes still apply — a pest entry can be saved in seconds.</p>
+  <p>For those four, a <strong>How many</strong> stepper appears (section 2). Type the number shot in one outing — tap the figure to key it straight in (e.g. <strong>200</strong> pigeons) rather than logging them one by one; it defaults to 1. That count flows into your diary <strong>Total</strong>, Stats, CSV and PDFs, and into <strong>syndicate tallies</strong>. Fox and wild boar are sexed, so they are logged one entry each.</p>
+  <p>Pest entries appear in the diary list and cull map with their own colours, count in your Stats, and can be attributed to a syndicate like any cull. They are <strong>excluded from larder and game-dealer documents</strong> (deer-only paperwork — <a href="#s10-declarations" style="color:var(--gold);">section 10a</a>) and have <strong>no cull targets</strong> — they are counts, not plan species.</p>
+  <div class="tip"><strong>Legal:</strong> pigeons and corvids are shot under <strong>general licences</strong> that change annually and differ by UK country (England, Wales, Scotland, NI). Read the current licence for your country before you shoot — this app quotes no licence numbers, as they go stale.</div>
+
+  <h3 id="s3-sighting">Sightings — live deer seen</h3>
+  <p>A <strong>sighting</strong> records deer you <strong>saw but did not shoot</strong> — it builds a picture of what is using your ground. In <strong>Add entry</strong>, switch the top selector to <strong>Sighting</strong>. Sightings are <strong>deer only</strong> and kept in your own <strong>private</strong> log — never shared with a syndicate, never counted as culls, and never in targets or dealer paperwork.</p>
+  <p>A sighting captures: <strong>Species</strong>, a <strong>How many seen</strong> composition (bucks / does / young / unknown steppers — at least one), optional <strong>Behaviour</strong> chips, <strong>Location</strong> (pin / GPS / ground), date &amp; time, an optional <strong>photo</strong>, and notes. No sex, carcass, calibre or larder fields.</p>
+  <p>Open your log from the <strong>Sightings</strong> strip in the diary header (it also opens after you save one). The <strong>Sightings view</strong> lists them with species chips and a <strong>newest / oldest</strong> sort, plus a <strong>List / Trends</strong> toggle — Trends shows totals, a bucks-to-does ratio, animals by month, and a by-species breakdown. The <strong>hotspot map</strong> in List view can be narrowed by <strong>time of day</strong> (dawn / day / dusk / night — judged against sunrise and sunset at the pin) and by <strong>month</strong>. <strong>CSV</strong> and <strong>PDF</strong> buttons export a sightings report. Tap a card to <strong>open</strong> it, then <strong>Edit</strong> or <strong>Delete</strong> from the detail view; a small thumbnail shows when you attached a photo.</p>
+  <p>On the <strong>Stats cull map</strong>, a <strong>Culls / Sightings / Both</strong> toggle overlays sightings as <strong>density circles</strong> (green→red, sized by animals seen) so you can see which areas are getting the most deer activity. On <strong>Stands</strong>, each stand shows a <strong>Seen here</strong> card, and the <strong>Season Plan</strong> shows <strong>seen vs culled</strong> per species this season.</p>
+  <div class="tip"><strong>Sightings vs blank days:</strong> a <strong>blank day</strong> records an outing where you took no shot (for hours-stalked returns); a <strong>sighting</strong> records deer you watched. They are separate logs — use whichever fits.</div>
 </div>
 
 <!-- STEP 4 -->
 <div class="step" id="s4">
   <div class="step-num">4</div>
   <h2>Quick Entry</h2>
-  <p>For speed in the field, tap the <strong>Quick</strong> pill (lightning icon) above the + button. This opens a streamlined bottom sheet — just pick species, sex, and optionally enter weight. Everything else can be added later by editing.</p>
+  <p>For speed in the field, tap the <strong>Quick</strong> pill (lightning icon) above the + button. This opens a streamlined bottom sheet — just pick species, sex, and optionally enter a weight or tag number. Everything else can be added later by editing.</p>
 
   <div class="mock">
     <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--bark);margin-bottom:10px;">Quick Entry</div>
@@ -540,6 +642,8 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
       <span class="m-qs-pill">Roe</span>
       <span class="m-qs-pill">Fallow</span>
       <span class="m-qs-pill">Sika</span>
+      <span class="m-qs-pill">Muntjac</span>
+      <span class="m-qs-pill">CWD</span>
     </div>
     <div class="mock-label">Sex</div>
     <div class="m-sx-row" style="margin-bottom:12px;">
@@ -552,7 +656,7 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
       <input type="text" value="45" readonly style="width:72px;padding:8px 10px;border:1.5px solid var(--stone);border-radius:8px;font-size:14px;text-align:right;color:var(--bark);">
       <span style="font-size:12px;color:#a0988a;">kg</span>
     </div>
-    <div class="m-btn-save"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h11a4 4 0 0 0 0-8 0h-.5A5.5 5.5 0 0 0 7 11a4 4 0 0 0 0 7z"/></svg>Save to Cloud</div>
+    <div class="m-btn-save"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h11a4 4 0 0 0 0-8h-.5A5.5 5.5 0 0 0 7 11a4 4 0 0 0 0 7z"/></svg>Log cull</div>
     <div style="font-size:12px;color:#a0988a;text-align:center;margin-top:8px;">+ Add full details</div>
   </div>
   <div class="tip"><strong>Tip:</strong> Quick entries auto-fill the date, time, and GPS location. Tap "+ Add full details" to switch to the full form.</div>
@@ -562,12 +666,12 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
 <div class="step" id="s5">
   <div class="step-num">5</div>
   <h2>Viewing an Entry</h2>
-  <p>Tap any entry card to open <strong>detail</strong>: a photo hero (species and chips), then <strong>cards</strong> on a cream background — photo thumbnail (tap for full size), when/where, weights and distance, shot and stalking, notes, and weather when saved. <strong>Edit entry</strong> sits beside the thumbnail.</p>
+  <p>Tap any entry card to open <strong>detail</strong>. If the entry has a photo, that photo <em>is</em> the hero — tap it for full size, or use the <strong>⤢</strong> expand button top-right — with the species and chips over it. Below sit <strong>cards</strong> on a cream background: a <strong>Where</strong> map, <strong>When &amp; where</strong>, weights and distance, shot and stalking, notes, <strong>larder inspection</strong> (when you recorded anything), and weather when saved. There is no separate photo card, and <strong>Edit</strong> lives in the action bar at the bottom — not beside the image.</p>
   <p>At the bottom, the action bar is <strong>Edit</strong>, <strong>PDF</strong> (a simple diary-style PDF for that cull), <strong>Game dealer PDF</strong> (a <strong>trained hunter declaration</strong> for game dealers and UK wild-game food-safety paperwork), then <strong>Delete</strong>. See also step <a href="#s10-declarations" style="color:var(--gold);">10a — Hunter declarations &amp; consignments</a>.</p>
 
   <div class="mock" style="padding:0;overflow:hidden;">
     <div class="m-detail-hero">
-      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;opacity:0.45;color:rgba(255,255,255,0.5);"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2"/><line x1="5" y1="19" x2="19" y2="7"/></svg><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-top:4px;">No photo</div></div>
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;opacity:0.45;color:rgba(255,255,255,0.6);"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2"/><line x1="5" y1="19" x2="19" y2="7"/></svg><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-top:4px;">No photo</div></div>
       <div class="m-detail-species">Red Deer Stag</div>
       <div class="m-detail-chips">
         <span class="m-dchip m-dc-m">♂ Stag · 2–4 years</span>
@@ -576,16 +680,6 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
       </div>
     </div>
     <div class="m-detail-dash">
-      <div class="m-detail-dash-card">
-        <div class="m-detail-dash-l">Photo</div>
-        <div class="m-detail-photo-row">
-          <div>
-            <div class="m-detail-thumb" aria-hidden="true"></div>
-            <div class="m-detail-hint">Tap to expand</div>
-          </div>
-          <div class="m-btn" style="flex:0 1 auto;background:#e8f5e0;color:#3a6020;justify-content:center;padding:6px 10px;font-size:10px;border-radius:8px;border:1px solid #c8d8a8;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>Edit entry</div>
-        </div>
-      </div>
       <div class="m-detail-dash-card">
         <div class="m-detail-dash-l">When &amp; where</div>
         <div class="m-detail-kv"><span class="m-detail-k">Date</span><span class="m-detail-v">Sat 6 Apr</span></div>
@@ -606,6 +700,27 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
       </div>
     </div>
   </div>
+
+  <h3>“Where” — the entry on the map</h3>
+  <p>When an entry has a saved pin, its detail view includes a small <strong>Where</strong> card: a <strong>satellite</strong> mini-map centred on the shot, with an <strong>Open map ›</strong> link. The bright pin is this cull in its species colour; faded dots are your <strong>other culls within 300&nbsp;m</strong>, and a little legend names them.</p>
+  <div class="mock" style="padding:0;overflow:hidden;">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px 8px;background:#fff;">
+      <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--moss);font-family:'DM Mono',monospace;">Where</span>
+      <span style="font-size:11px;font-weight:700;color:var(--gold);">Open map ›</span>
+    </div>
+    <div style="position:relative;height:120px;background:linear-gradient(135deg,#4a5a3a,#2e3a24);">
+      <div style="position:absolute;bottom:8px;left:10px;font-size:9px;font-weight:700;color:rgba(255,255,255,0.78);background:rgba(0,0,0,0.35);padding:2px 7px;border-radius:6px;font-family:'DM Mono',monospace;">Satellite ⤢</div>
+      <span style="position:absolute;top:52px;left:48%;transform:translate(-50%,-100%);color:#bf360c;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.5));"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s7-4.35 7-11a7 7 0 1 0-14 0c0 6.65 7 11 7 11z"/><circle cx="12" cy="10" r="2.4" fill="#fff"/></svg></span>
+      <span style="position:absolute;top:64px;left:33%;width:9px;height:9px;border-radius:50%;background:rgba(196,165,116,0.85);border:1px solid rgba(255,255,255,0.6);"></span>
+      <span style="position:absolute;top:80px;left:62%;width:9px;height:9px;border-radius:50%;background:rgba(196,165,116,0.85);border:1px solid rgba(255,255,255,0.6);"></span>
+    </div>
+    <div style="display:flex;gap:14px;padding:8px 14px 10px;background:#fff;font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;">
+      <span style="display:flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:#bf360c;"></span>This cull</span>
+      <span style="display:flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:#C4A574;"></span>Fallow · 2</span>
+    </div>
+  </div>
+  <p>Tap the card (or <strong>Open map ›</strong>) to blow it up to a <strong>full-screen, pan-and-zoom</strong> map; close it with <strong>✕</strong>, the <strong>Escape</strong> key, or your phone’s <strong>back</strong> gesture. The full-screen view also carries an <strong>All culls ›</strong> link through to the whole-season cull map on Stats.</p>
+  <div class="tip"><strong>Note:</strong> the exact <strong>Coordinates</strong> (to four decimals) sit in the <strong>When &amp; where</strong> card just above — the map card is the picture, the coordinates row is the number.</div>
 </div>
 
 <!-- STEP 6 -->
@@ -621,12 +736,93 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
 <div class="step" id="s7">
   <div class="step-num">7</div>
   <h2>Season &amp; Ground Management</h2>
-  <p>The diary organises entries by <strong>stalking season</strong> (August–July). Use the season dropdown in the diary header to switch between seasons.</p>
+  <p>The diary organises entries by <strong>stalking season</strong> — by default <strong>August–July</strong>, or twelve months from your own chosen start month (see <a href="#s7-season-start">Season start month</a> below). Use the season dropdown in the diary header to switch between seasons.</p>
   <p><strong>Grounds</strong> (permissions / estates) let you tag entries by where you stalk. To add or review saved grounds:</p>
   <p>1. Open <strong>Stats</strong> → on the Season Plan card tap <strong>Set targets</strong> or <strong>Edit</strong> (wording depends on whether you already have targets).<br>
   2. Open the <strong>By ground</strong> tab and use <strong>Add ground</strong> to name a permission.<br>
   3. Saved grounds then appear as tappable options in the entry form’s <strong>Permission / Ground</strong> field.</p>
-  <div class="tip"><strong>Tip:</strong> Grounds persist across seasons. You can remove a ground from the targets sheet when you no longer need it in the list.</div>
+  <div class="tip"><strong>Tip:</strong> Grounds persist across seasons, and you can remove one from the targets sheet when you no longer need it. Beyond a name, a ground can also be <strong>drawn on a map</strong> — boundary, no-shoot zones, tracks and markers — see <a href="#s7-grounds" style="color:var(--gold);">Mapping your grounds</a> below.</div>
+
+  <h3 id="s7-season-start">Season start month</h3>
+  <p>By default the diary year runs <strong>August–July</strong>, so “2025–2026 Season” means Aug 2025 – Jul 2026. If your ground runs a different year — many Deer Management Groups plan <strong>April–March</strong> — set your own start month via the <strong>gear icon</strong> in the header → <strong>Profile → Season starts → Edit</strong>. Your entries re-sort into the new seasons instantly and losslessly, and you can change the setting back at any time — nothing about the entries themselves changes, only how they are grouped into seasons.</p>
+  <p><strong>Targets caveat:</strong> cull targets keep their season <em>names</em> (e.g. “2025-26”) but count against the <strong>new dates</strong> after a change — a target you set for Aug–Jul becomes a target for Apr–Mar, so progress against it can shift. The app shows the old and new dates in a warning before anything is applied.</p>
+  <p><strong>Syndicates are separate:</strong> each syndicate has its <strong>own</strong> season start month, which its managers set from the syndicate Manage sheet. Your personal setting drives your diary list, stats, targets and personal exports; syndicate cards, team targets, allocations and team exports follow that syndicate’s setting. The same cull can therefore legitimately sit in a differently-dated “2025-26” in the two places — that is correct, not a bug.</p>
+  <p>With a <strong>January</strong> start, seasons are single calendar years and are labelled that way (“2026 Season”).</p>
+
+  <h3 id="s7-grounds">Mapping your grounds</h3>
+  <p>A ground can be more than a name in a list — you can <strong>draw it on a map</strong>: its boundary and acreage, <strong>no-shoot zones</strong>, tracks and rides, and point markers for the things that matter (trail cams, gates, the larder, a wallow). Mapped grounds power the acreage figures, the <strong>cull-density-per-100&nbsp;ha</strong> note on Stats, and auto-suggest the right ground when you drop a pin.</p>
+
+  <p><strong>Two ways in.</strong> Either open <strong>Account &amp; settings</strong> (the gear) → the <strong>Grounds</strong> card → <strong>Manage</strong> (its line reads e.g. <em>“3 grounds · 2 mapped”</em>), which opens the <strong>My grounds</strong> sheet; or, on the <strong>Stands</strong> map, use the floating bar’s <strong>Grounds</strong> button. Before you have drawn anything, the map shows a <strong>Draw your ground boundary →</strong> invite.</p>
+
+  <div class="mock-label">Mock — floating map bar &amp; the ＋ menu</div>
+  <div class="mock" style="background:#14210c;">
+    <div style="display:flex;gap:8px;justify-content:center;margin-bottom:12px;">
+      <div class="m-btn" style="background:#1d2f12;border:1px solid rgba(200,168,75,0.3);color:var(--amber);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15"/></svg>Grounds</div>
+      <div class="m-btn" style="background:linear-gradient(135deg,var(--moss),var(--deep));color:white;font-size:16px;padding:8px 16px;">＋</div>
+      <div class="m-btn" style="background:#1d2f12;border:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.8);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>Locate</div>
+    </div>
+    <div style="max-width:220px;margin:0 auto;background:#1a2610;border:1px solid rgba(255,255,255,0.1);border-radius:12px;overflow:hidden;font-size:12px;color:rgba(255,255,255,0.85);">
+      <div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.06);">New stand</div>
+      <div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.06);">Draw boundary</div>
+      <div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.06);">No-shoot zone</div>
+      <div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.06);">Draw line</div>
+      <div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.06);">Add marker</div>
+      <div style="padding:10px 14px;">Measure</div>
+    </div>
+  </div>
+
+  <p><strong>Drawing a boundary.</strong> Choose <strong>Draw boundary</strong>, line the crosshair up on each corner of the ground in turn and tap <strong>✚ Add point</strong>; <strong>Close ring</strong> joins the last corner to the first and shows the enclosed <strong>area</strong>. Drag a corner to nudge it, or tap it twice to remove it. Prefer to walk it? The <strong>boots</strong> button drops a corner roughly every <strong>15&nbsp;m</strong> as you walk the line — keep the screen awake. A boundary can hold up to <strong>500</strong> points; if it crosses itself the app still saves but warns you to check the corners.</p>
+
+  <p><strong>The other shapes.</strong> The same editor also draws:</p>
+  <p>• <strong>No-shoot zones</strong> — ground you never take a shot toward (a road, houses, a footpath), drawn as its own outline.<br>
+  • <strong>Lines</strong> — routes typed as <strong>Ride, Track, Footpath</strong> or <strong>Compartment</strong> (or a plain line); each shows its length.<br>
+  • <strong>Markers</strong> — a single point typed as <strong>Trail cam, Parking, Structure, Gate, Larder</strong> or <strong>Wallow</strong> (or a plain marker). Pan the map, tap <strong>Place marker</strong>, then drag the dot to fine-tune.</p>
+  <div class="mock-label">Mock — draw tools</div>
+  <div class="mock" style="background:#14210c;">
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(200,168,75,0.6);font-family:'DM Mono',monospace;margin-bottom:8px;">Shape</div>
+    <div style="display:flex;border:1.5px solid rgba(255,255,255,0.14);border-radius:10px;overflow:hidden;margin-bottom:14px;">
+      <span style="flex:1;text-align:center;padding:9px 4px;font-size:12px;font-weight:700;background:var(--moss);color:white;">Boundary</span>
+      <span style="flex:1;text-align:center;padding:9px 4px;font-size:12px;font-weight:700;color:rgba(255,255,255,0.6);">No-shoot</span>
+      <span style="flex:1;text-align:center;padding:9px 4px;font-size:12px;font-weight:700;color:rgba(255,255,255,0.6);">Line</span>
+    </div>
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(200,168,75,0.6);font-family:'DM Mono',monospace;margin-bottom:8px;">Marker type</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+      <span style="padding:6px 11px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(200,168,75,0.15);border:1px solid rgba(200,168,75,0.35);color:var(--amber);">Trail cam</span>
+      <span style="padding:6px 11px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid rgba(255,255,255,0.14);color:rgba(255,255,255,0.6);">Parking</span>
+      <span style="padding:6px 11px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid rgba(255,255,255,0.14);color:rgba(255,255,255,0.6);">Gate</span>
+      <span style="padding:6px 11px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid rgba(255,255,255,0.14);color:rgba(255,255,255,0.6);">Larder</span>
+      <span style="padding:6px 11px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid rgba(255,255,255,0.14);color:rgba(255,255,255,0.6);">Wallow</span>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <span style="flex:1;text-align:center;padding:11px;border-radius:10px;font-size:12px;font-weight:700;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.75);">✚ Add point</span>
+      <span style="flex:1;text-align:center;padding:11px;border-radius:10px;font-size:12px;font-weight:700;background:linear-gradient(135deg,var(--moss),var(--deep));color:white;">✓ Save boundary</span>
+    </div>
+  </div>
+  <p>Every shape can carry an optional <strong>name</strong> and <strong>note</strong> and belongs to one ground. Saving confirms with the shape and its size — e.g. <em>“✓ Boundary saved — 100 ha · 247 acres”</em> or <em>“✓ Track saved — 1.2 km”</em>.</p>
+
+  <div class="mock-label">Mock — Grounds switcher</div>
+  <div class="mock" style="background:#14210c;">
+    <div style="background:#1a2610;border:1px solid rgba(255,255,255,0.1);border-radius:12px;overflow:hidden;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.06);"><span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(200,168,75,0.7);font-family:'DM Mono',monospace;">Your grounds</span><span style="font-size:11px;color:var(--amber);font-weight:700;">Edit</span></div>
+      <div style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid rgba(255,255,255,0.05);">
+        <span style="width:11px;height:11px;border-radius:50%;background:#7aa845;flex-shrink:0;"></span>
+        <div style="flex:1;min-width:0;"><div style="font-size:13px;color:rgba(255,255,255,0.9);font-weight:600;">Woodland Block</div><div style="font-size:10px;color:rgba(255,255,255,0.45);font-family:'DM Mono',monospace;">100 ha · 247 acres</div></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid rgba(255,255,255,0.05);">
+        <span style="width:11px;height:11px;border-radius:50%;background:#c86b45;flex-shrink:0;"></span>
+        <div style="flex:1;min-width:0;"><div style="font-size:13px;color:rgba(255,255,255,0.9);font-weight:600;">Soignée Wood</div><div style="font-size:10px;color:rgba(255,255,255,0.4);font-style:italic;">not mapped yet — tap to draw</div></div>
+      </div>
+      <div style="padding:11px 14px;font-size:12px;font-weight:700;color:var(--amber);text-align:center;">Manage grounds</div>
+    </div>
+  </div>
+
+  <p><strong>Switching &amp; managing.</strong> The <strong>Grounds</strong> button lists each ground with a <strong>colour dot</strong> and its acreage (or <em>“not mapped yet — tap to draw”</em>); tap one to fly the map to it. <strong>Manage grounds</strong> (or the <strong>Edit</strong> link) turns on a rename and a delete icon per ground — deleting asks first (<strong>Cancel</strong> / <strong>Delete anyway</strong>) and, importantly, <strong>keeps your high seats and diary entries</strong>; they simply lose the ground tag. Individual parcels, zones, lines and markers each have <strong>Edit</strong> and a <strong>✕</strong> that needs a second <strong>Sure?</strong> tap.</p>
+
+  <p><strong>Measure without saving.</strong> The <strong>Measure</strong> tool (the ＋ menu, or <strong>Measure distance &amp; area</strong> in the sheet) is a scratch pad — tap corners (or walk them with the boots button) for a live distance along the path, then <strong>Close for area</strong> to flip the readout to acreage and perimeter. Nothing is saved, and it works fully <strong>offline</strong>.</p>
+
+  <p><strong>Import &amp; export.</strong> In the <strong>My grounds</strong> sheet, <strong>Import KML/GPX</strong> brings a boundary in from another mapping tool (it arrives as its own new ground, named from the file); <strong>Export GeoJSON</strong> and <strong>Export GPX</strong> download all your shapes — with your high seats riding along as points/waypoints — as <code>first-light-grounds.geojson</code> / <code>.gpx</code>.</p>
+
+  <div class="warn"><strong>Online for edits:</strong> drawing, importing and renaming grounds need a live connection (<em>“Still offline — … needs signal”</em>). Once synced, your boundaries stay <strong>viewable offline</strong> on every map in the app.</div>
 </div>
 
 <!-- STEP 8 -->
@@ -670,7 +866,7 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
         </div>
       </div>
       <div class="m-tgt-body">
-        <div class="m-tgt-copy-btn">📋 Copy from previous season</div>
+        <div class="m-tgt-copy-btn"><span class="fl-ic fl-notes"></span> Copy from previous season</div>
         <div class="m-tmode-row">
           <button type="button" class="m-tmode-btn on">Season total</button>
           <button type="button" class="m-tmode-btn">By ground</button>
@@ -687,11 +883,11 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
           <div class="m-tstep-m"><button type="button">−</button><input type="text" value="12" readonly><button type="button">+</button></div>
         </div>
         <div class="m-tgt-footer-m">
-          <div class="r"><span>Total bucks</span><span>8</span></div>
-          <div class="r"><span>Total does</span><span>27</span></div>
+          <div class="r"><span>Stag / buck total</span><span>8</span></div>
+          <div class="r"><span>Hind / doe total</span><span>27</span></div>
           <div class="grand"><span>Season total</span><span>35</span></div>
         </div>
-        <button type="button" class="m-tgt-save-m">💾 Save targets</button>
+        <button type="button" class="m-tgt-save-m"><span class="fl-ic fl-save"></span> Save targets</button>
         <p class="m-tgt-note-m">Targets are optional — use what fits your ground.</p>
       </div>
     </div>
@@ -721,7 +917,7 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
           <div style="font-size:11px;color:var(--muted);margin-top:6px;">Red, Fallow — set bucks/does per species here</div>
         </div>
         <div class="m-tunass-m"><strong>Unassigned buffer</strong> — spare head not yet on a named ground</div>
-        <button type="button" class="m-tgt-save-m">💾 Save targets</button>
+        <button type="button" class="m-tgt-save-m"><span class="fl-ic fl-save"></span> Save targets</button>
       </div>
     </div>
   </div>
@@ -751,14 +947,62 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
 <div class="step" id="s9">
   <div class="step-num">9</div>
   <h2>Stats &amp; Charts</h2>
-  <p>The <strong>Stats</strong> tab shows season totals, the cull map, your plan card, and deeper breakdowns. The <strong>season</strong> selector on Stats matches your diary season.</p>
+  <p>The <strong>Stats</strong> tab opens on an adaptive <strong>season progress hero</strong>, then the cull map, your plan card, and deeper breakdowns. The <strong>season</strong> selector on Stats matches your diary season.</p>
 
-  <h3>Cull map</h3>
-  <p>Every entry with a pin appears on the <strong>interactive map</strong>. Use <strong>Map</strong> / <strong>Satellite</strong> to change the base layer. Under the map, the <strong>species chips</strong> control which pins are shown <em>and</em> they rebuild <strong>all stats and charts below</strong> for that species (or <strong>All</strong>). Those chips are separate from the <strong>Diary</strong> tab species filter, which only narrows the entry list — choose the same species under the map if you want stats to match what you were viewing in the list.</p>
+  <h3 id="s9-hero">Season progress hero</h3>
+  <p>The top of Stats is a single <strong>headline</strong> that adapts to where your season stands, with a <strong>quiet strip</strong> of four secondary figures beneath it. It has three faces.</p>
+  <p><strong>1 · You have a target.</strong> The label reads <strong>Season progress</strong>, the big number shows culls <strong>against target</strong> (e.g. <strong>12 / 40</strong>), and a <strong>pace bar</strong> fills underneath with a small <strong>on pace</strong> marker at where a steady season would sit today. The caption pairs <em>“30% of target”</em> with an honest pace word: <strong>on pace</strong>, <strong>+3 ahead of pace</strong>, <strong>5 behind pace</strong>, <strong>target met</strong>, <strong>+2 over target</strong>, <strong>3 short of target</strong>, or <strong>opens in N days</strong> before the season starts.</p>
+  <div class="mock" style="background:#14210c;">
+    <div style="background:#1a2610;border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px;">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(200,168,75,0.6);font-family:'DM Mono',monospace;margin-bottom:8px;">Season progress</div>
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:14px;"><span style="font-size:34px;font-weight:800;color:white;font-variant-numeric:tabular-nums;line-height:1;">12</span><span style="font-size:18px;color:rgba(255,255,255,0.5);font-weight:700;">/ 40</span><span style="font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;align-self:flex-end;">culled</span></div>
+      <div style="position:relative;height:8px;border-radius:5px;background:rgba(255,255,255,0.08);margin-bottom:9px;">
+        <div style="position:absolute;left:0;top:0;bottom:0;width:30%;border-radius:5px;background:linear-gradient(90deg,var(--moss),#8fbf4f);"></div>
+        <div style="position:absolute;left:38%;top:-4px;bottom:-4px;width:2px;background:var(--amber);"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;"><span style="color:rgba(255,255,255,0.5);">30% of target</span><span style="color:#e0a94a;font-weight:700;">5 behind pace</span></div>
+    </div>
+    <div style="display:flex;gap:1px;background:rgba(255,255,255,0.06);border-radius:10px;overflow:hidden;margin-top:10px;">
+      <div style="flex:1;padding:10px 4px;text-align:center;background:#1a2610;"><div style="font-size:16px;font-weight:700;color:var(--amber);">18</div><div style="font-size:7px;text-transform:uppercase;letter-spacing:0.4px;color:rgba(255,255,255,0.5);font-family:'DM Mono',monospace;margin-top:2px;">Outings</div></div>
+      <div style="flex:1;padding:10px 4px;text-align:center;background:#1a2610;"><div style="font-size:16px;font-weight:700;color:var(--amber);">4</div><div style="font-size:7px;text-transform:uppercase;letter-spacing:0.4px;color:rgba(255,255,255,0.5);font-family:'DM Mono',monospace;margin-top:2px;">Species</div></div>
+      <div style="flex:1;padding:10px 4px;text-align:center;background:#1a2610;"><div style="font-size:16px;font-weight:700;color:var(--amber);">118 m</div><div style="font-size:7px;text-transform:uppercase;letter-spacing:0.4px;color:rgba(255,255,255,0.5);font-family:'DM Mono',monospace;margin-top:2px;">Avg dist</div></div>
+      <div style="flex:1;padding:10px 4px;text-align:center;background:#1a2610;"><div style="font-size:16px;font-weight:700;color:var(--amber);">6</div><div style="font-size:7px;text-transform:uppercase;letter-spacing:0.4px;color:rgba(255,255,255,0.5);font-family:'DM Mono',monospace;margin-top:2px;">Blank days</div></div>
+    </div>
+  </div>
+  <p><strong>2 · Culls, but no target.</strong> The label is <strong>This season</strong>, the bar becomes a <strong>species split</strong> (one coloured segment per species, with a small legend), and a <strong>＋ Set a season target — track your pace</strong> button offers to switch pacing on.</p>
+  <p><strong>3 · Nothing logged yet.</strong> The label is <strong>This season</strong>, the number is <strong>0</strong>, the track is empty, and the caption reads <em>“Nothing logged yet — your first cull will show here.”</em></p>
+  <p>The <strong>quiet strip</strong> underneath always shows four figures: <strong>Outings</strong> (every diary entry, including blank days), <strong>Species</strong>, <strong>Avg dist</strong> (average shot distance), and <strong>Blank days</strong>.</p>
+  <div class="tip"><strong>Note:</strong> the gold <strong>progress ring</strong> you may spot elsewhere belongs to the <a href="#s8-locate" style="color:var(--gold);">Season Plan</a> card’s total row — the hero itself uses the horizontal pace bar shown above.</div>
+
+  <h3 id="s9-map">The cull map</h3>
+  <p>Every entry with a pin appears on the <strong>interactive map</strong>. Three control groups sit with it:</p>
+  <p>• <strong>Map / Satellite</strong> — the base layer (your choice is remembered).<br>
+  • <strong>Culls / Sightings / Both</strong> — which layer you are looking at.<br>
+  • <strong>Pins / Heat</strong> — show culls as individual <strong>pins</strong>, or as a <strong>heat</strong> map of density (this toggle steps aside when you are viewing Sightings only).</p>
+  <p><strong>Pins are branded.</strong> Each cull is a teardrop in its <strong>species colour</strong> with a <strong>♂ / ♀</strong> glyph, so colour <em>and</em> shape carry the meaning. Zoom out and nearby pins <strong>cluster</strong> into a count tinted by the dominant species; when you have culls on more than one date, earlier ones <strong>fade</strong> so the freshest read brightest (the caption notes <em>“fainter = earlier”</em>). Tap a pin for a little popup — species, sex, date, weight, tag, placement, location — with an <strong>Open entry ›</strong> link straight into that record.</p>
+  <div class="mock-label">Mock — map controls &amp; a pin popup</div>
+  <div class="mock" style="background:#14210c;">
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+      <div style="display:flex;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,0.12);"><span style="padding:6px 11px;font-size:10px;font-weight:700;background:var(--moss);color:white;">Culls</span><span style="padding:6px 11px;font-size:10px;font-weight:700;color:rgba(255,255,255,0.55);">Sightings</span><span style="padding:6px 11px;font-size:10px;font-weight:700;color:rgba(255,255,255,0.55);">Both</span></div>
+      <div style="display:flex;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,0.12);"><span style="padding:6px 11px;font-size:10px;font-weight:700;background:var(--moss);color:white;">Pins</span><span style="padding:6px 11px;font-size:10px;font-weight:700;color:rgba(255,255,255,0.55);">Heat</span></div>
+    </div>
+    <div style="max-width:220px;background:#fff;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.4);overflow:hidden;">
+      <div style="padding:10px 12px;">
+        <div style="font-size:13px;font-weight:700;color:var(--bark);">Red Deer ♂</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">Sat 6 Apr · 06:45 · 45 kg</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:1px;">Heart / Lung · Thetford Forest</div>
+      </div>
+      <div style="padding:9px 12px;background:#f4faf0;border-top:1px solid #e4ecd8;font-size:11px;font-weight:700;color:#2d5a1a;">Open entry ›</div>
+    </div>
+  </div>
+  <p><strong>Reading the heat map.</strong> In Heat mode the caption tells you what warmth means: <em>“Denser = where you cull most”</em> for culls, <em>“Warmer &amp; larger = more deer seen”</em> for sightings, and <em>“Warmer &amp; denser = more activity here”</em> when both layers are on together.</p>
+  <p><strong>Species chips</strong> under the map do double duty: they choose which pins show <em>and</em> they rebuild <strong>all the stats and charts below</strong> for that species (or <strong>All</strong>). They are separate from the <strong>Diary</strong> tab’s species filter (which only narrows the list) — set the same species here if you want the numbers to match what you were reading in the list.</p>
+  <p><strong>Missing a pin?</strong> If some entries were saved without GPS, the map’s <strong>No GPS</strong> figure becomes tappable and opens a <strong>recovery</strong> sheet listing them. Tap <strong>Place</strong> on a row, drop the pin where it belongs, and it saves back to the entry (<em>“Location saved”</em>) — the same flow works for sightings, and it is the quickest way to backfill locations onto older records.</p>
+  <p><strong>Fullscreen.</strong> The expand button opens the map full-screen and slides the layer toggles and species chips into an on-map <strong>tray</strong> so you keep every control; tap it again to drop back to the card. When nothing is pinned yet the map shows <em>“No mapped locations yet”</em> with a nudge to use Pin or GPS as you log.</p>
 
   <h3>Charts &amp; breakdowns</h3>
   <p>Below the plan / exports area, open <strong>Charts &amp; breakdowns</strong> to reveal sections such as:</p>
-  <p>• <strong>Monthly cull</strong> — activity through the season<br>
+  <p>• <strong>Monthly cull</strong> — activity through the season; the twelve columns run in <strong>your season order</strong>, starting at your <a href="#s7-season-start" style="color:var(--gold);">season start month</a> (Aug → Jul by default)<br>
   • <strong>Cull by ground</strong> — when you use grounds<br>
   • <strong>Species</strong> and <strong>sex</strong> splits<br>
   • <strong>Age class</strong>, <strong>shooter</strong>, <strong>carcass destination</strong><br>
@@ -766,7 +1010,7 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
   <p>Each block respects your current season on Stats and the <strong>map species chip</strong> (see above). Empty sections show a short “no data” message.</p>
 
   <h3>Always visible on Stats</h3>
-  <p>• <strong>Headline counters</strong> (animals, kg, etc.) — follow the <strong>map species chip</strong> once you change it from <strong>All</strong><br>
+  <p>• <strong>Season progress hero</strong> — the adaptive headline and quiet strip described above; its figures follow the <strong>map species chip</strong> once you change it from <strong>All</strong><br>
   • <strong>Season Plan</strong> — targets vs actuals; the <strong>Overview / ground</strong> chips above the plan choose which permission’s entries count as “actual” (separate from the map species filter)<br>
   • <strong>Syndicates</strong> card — shared team targets when you belong to a syndicate (see step 13)<br>
   • <strong>Exports</strong> — personal CSV / PDF / Summary / Larder; dealer declarations (step <a href="#s10-declarations" style="color:var(--gold);">10a</a>)</p>
@@ -793,7 +1037,7 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
   </div>
 
   <h3>How each export works</h3>
-  <p><strong>CSV</strong>, <strong>PDF</strong>, and <strong>Larder Book</strong> open the same <strong>bottom sheet</strong>: <strong>Season</strong>, <strong>Permission / Ground</strong>, then <strong>Entries matching selection</strong> (live count) before you generate. <em>All Seasons</em> appears when your history is loaded. UTF-8 CSV opens cleanly in Excel; PDF is a simple formatted list; <strong>Larder Book</strong> is a dedicated PDF for larder / game-handling style records (entries marked <em>Left on hill</em> are not included).</p>
+  <p><strong>CSV</strong>, <strong>PDF</strong>, and <strong>Larder Book</strong> open the same <strong>bottom sheet</strong>: <strong>Season</strong>, <strong>Permission / Ground</strong>, then <strong>Entries matching selection</strong> (live count) before you generate. <em>All Seasons</em> appears when your history is loaded. UTF-8 CSV opens cleanly in Excel; PDF is a simple formatted list; <strong>Larder Book</strong> is a dedicated PDF for larder / game-handling style records (entries marked <em>Left on hill</em> are not included, and <strong>Pest Control entries never are</strong> — the Larder Book covers deer only).</p>
   <p>The CSV includes <strong>Latitude</strong> / <strong>Longitude</strong> columns (populated when you saved a GPS pin or used the GPS button on Location) and <strong>Outing start</strong> / <strong>Outing finish</strong> times — useful for DMG and government funding reports that need GPS evidence or hours-stalked figures. The single-entry PDF and the diary PDF list the outing window in each entry's meta line; other PDFs (Larder, Game Dealer, Consignment, Season Summary) are deliberately unchanged.</p>
   <p><strong>Summary</strong> opens a <strong>different</strong> sheet (same season + ground idea) to build the <strong>Season Summary PDF</strong> — header stats, species breakdown, plan progress, and a full entry table — good for estates or DMGs.</p>
 
@@ -806,6 +1050,7 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
   <p>These are <strong>not</strong> the same as the big <strong>Stats</strong> exports above — they are legal-style PDFs built from your entries for game dealers and food-safety traceability.</p>
   <p><strong>One carcass — trained hunter declaration.</strong> Open any entry → <strong>Game dealer PDF</strong>. That downloads a <strong>trained hunter declaration</strong> for that single cull, using the details you saved (species, shot, destination, tag, abnormalities, etc.). The plain <strong>PDF</strong> button next to it is only a simple diary record of the same entry — useful for your files, but different in purpose.</p>
   <p><strong>Many carcasses, one delivery — consignment declaration.</strong> On the diary list, tap <strong>Select</strong>, tick every entry that is leaving in the <strong>same consignment</strong> to the game dealer, then <strong>Dealer PDF</strong>. The app produces <strong>one PDF covering the whole batch</strong> (one declaration block and signature line for the delivery). This matches how assimilated <strong>Reg.&nbsp;(EC) No&nbsp;853/2004</strong> paperwork often expects <em>one</em> declaration per consignment rather than one PDF per carcass. Entries marked <strong>Left on hill</strong> are excluded; if none of your selection qualify, the app will tell you.</p>
+  <p><strong>Pest entries are excluded.</strong> Declarations and consignments are wild-game (deer) documents: pest entries show no <strong>Game dealer PDF</strong> button, and any pests ticked in a selection are left out of the consignment — if nothing else qualifies, the app tells you.</p>
   <p>These PDFs support your records workflow — they do not replace professional legal or food-business advice.</p>
 
   <div class="tip"><strong>Tip:</strong> If you are offline, exports that need a full history may fall back to the season already loaded on the device — the app will say so in a toast.</div>
@@ -819,17 +1064,20 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
   <p>• New entries are saved to a <strong>local queue</strong> on your device<br>
   • A banner shows how many entries are queued and storage used<br>
   • When signal returns, entries sync automatically<br>
-  • If storage runs low, photos are stripped to save space (you'll be notified on sync)</p>
-  <div class="warn"><strong>Note:</strong> Photos are large. If you're offline for extended periods, the app may need to strip photos from queued entries to stay within browser storage limits. Entries themselves are always preserved.</div>
+  • If storage runs low, photos are stripped from queued entries first to save space (you're told at the time)</p>
+  <div class="warn"><strong>Note:</strong> Photos are large. If you're offline for a long stretch and browser storage runs tight, the app strips photos from queued entries first; if that still isn't enough it will drop the <strong>oldest queued entries</strong> (telling you how many), and in the worst case clear the queue — so sync back up when you can rather than banking a big backlog offline.</div>
 </div>
 
 <!-- STEP 12 -->
 <div class="step" id="s12">
   <div class="step-num">12</div>
   <h2>Account &amp; Privacy</h2>
-  <p>Your diary data is stored securely in Supabase with row-level security — only you can access your entries. No one else, including the developer, can see your data.</p>
-  <p>From the Stats tab, scroll to the bottom to find:</p>
-  <p>• <strong>Sign out</strong> — signs you out on this device<br>
+  <p>Your diary data is stored securely in Supabase with row-level security, so no other user or syndicate member can see your entries. The site operator can access data only where necessary to run the service, fix a problem, or meet a legal obligation.</p>
+  <p>Tap the <strong>gear icon</strong> in the header of the Diary or Stats tab (or the <strong>Account &amp; settings</strong> button at the bottom of Stats) to open the settings sheet:</p>
+  <p>• <strong>Profile</strong> — edit your <strong>display name</strong> (used on your account card, PDF signatures, and in syndicates), change your <strong>password</strong>, set your <strong>season start month</strong> (see <a href="#s7-season-start" style="color:var(--gold);">section 07a</a>), and choose the <strong>deer on your ground</strong> (which species to surface)<br>
+  • <strong>Grounds</strong> — <strong>Manage</strong> your permissions and their boundaries (see <a href="#s7-grounds" style="color:var(--gold);">Mapping your grounds</a>)<br>
+  • <strong>App</strong> — the version you are running with a <strong>Check</strong> button for updates, and your <strong>offline sync</strong> status (entries saved without signal) with a manual <strong>Sync now</strong><br>
+  • <strong>Sign out</strong> — signs you out on this device<br>
   • <strong>Delete account</strong> — permanently removes your account and all diary data</p>
   <p>For full details, read the <a href="privacy.html" style="color:var(--gold);">Privacy Policy</a>.</p>
 </div>
@@ -851,7 +1099,6 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
         <span class="m-syn-toggle-h">Group targets · invite only</span>
         <span class="m-syn-toggle-cta">Tap to show ▾</span>
       </div>
-      <span style="font-size:20px;opacity:0.35;" aria-hidden="true">👥</span>
     </div>
     <div class="m-syn-expanded">
       <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
@@ -893,14 +1140,16 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
   </div>
 
   <h3 id="s13-manage">Manage: members, targets &amp; invites</h3>
-  <p>Open a syndicate from the list → sheet title shows the <strong>syndicate name</strong>; subtitle shows <strong>Manager</strong> or <strong>Member</strong> and the current season.</p>
+  <p>Open a syndicate from the list → sheet title shows the <strong>syndicate name</strong>; subtitle shows <strong>Manager</strong> or <strong>Member</strong> and <strong>that syndicate’s</strong> current season.</p>
   <p><strong>Managers</strong> see:</p>
   <p>• <strong>Members</strong> — each active member with role; <strong>Promote</strong> / <strong>Remove</strong> (demote another manager only if there are two or more managers). You cannot remove the sole manager. <strong>Leave</strong> at the bottom if you are a member; managers must <strong>promote someone else</strong> before leaving.<br>
   • <strong>Group targets</strong> — species/sex steppers for the <strong>current season</strong> + <strong>Save targets</strong> (group mode).<br>
   • <strong>Per-member allocations</strong> — choose a member, set their allocation grid, <strong>Save allocations for member</strong> (individual mode).<br>
+  • <strong>Season start month</strong> — sets the <strong>syndicate’s own</strong> stalking year (default August). It applies to <strong>every member’s</strong> syndicate cards, team targets, allocations and team exports, and is separate from each member’s personal setting (<a href="#s7-season-start" style="color:var(--gold);">section 07a</a>). A warning shows the old and new season dates before the change applies; it is reversible.<br>
   • <strong>Invite link</strong> — <strong>Generate new invite link</strong>; copy URL; list of <strong>active invites</strong> with uses left, expiry, <strong>Copy</strong> / <strong>Revoke</strong>.<br>
-  • <strong>Manager · culled by member</strong> — read-only log of team culls for oversight.<br>
+  • <strong>Manager · culled by member</strong> — read-only log of team culls for oversight. Pest entries appear here too — foxes as <strong>Dog / Vixen</strong>, the sex-less pests with no sex label.<br>
   • <strong>Delete syndicate</strong> (destructive).</p>
+  <p><strong>Pests in syndicates:</strong> pest entries attributed to the syndicate count in member tallies, the manager log and team exports — but <strong>group targets and allocations stay deer-only</strong> (pests are counts, not plan species).</p>
   <p><strong>Members</strong> (non-managers) see progress copy and can <strong>Leave</strong> — they do not edit team targets.</p>
   <div class="mock-label">Mock — manage sheet fragments</div>
   <div class="m-tsheet-mock">
@@ -940,12 +1189,12 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
   • The ground dropdown groups <strong>Syndicate permissions</strong> vs <strong>My permissions</strong> so you can see which labels match a team filter. If the text does not match the syndicate’s filter <strong>exactly</strong>, the cull may not count toward the team.</p>
 
   <h3 id="s13-teamexp">Team exports (managers only)</h3>
-  <p>If you are a <strong>manager</strong>, a second block appears under your personal exports: <strong>Syndicate exports (managers)</strong> — <strong>Team CSV</strong>, <strong>Team PDF</strong>, <strong>Team Summary</strong>, <strong>Team Larder</strong>. These pull <strong>team-wide</strong> diary data (every member), not just your rows.</p>
+  <p>If you are a <strong>manager</strong>, a second block appears under your personal exports: <strong>Syndicate exports (managers)</strong> — <strong>Team CSV</strong>, <strong>Team PDF</strong>, <strong>Team Summary</strong>, <strong>Team Larder</strong>. These pull <strong>team-wide</strong> diary data (every member), not just your rows. Attributed pest entries are included — except in <strong>Team Larder</strong>, which stays deer-only (pests carry no weights).</p>
   <p>Tapping one opens a modal: pick <strong>Syndicate</strong>, <strong>Season</strong>, and (for CSV/PDF list) <strong>This season only</strong> vs <strong>All seasons</strong>. Summary follows the season shown.</p>
   <div class="mock-label">Mock — syndicate export modal</div>
   <div class="m-syn-modal-mock">
     <div style="font-family:'DM Sans',sans-serif;font-size:17px;font-weight:700;color:white;margin-bottom:4px;">Syndicate export</div>
-    <div class="di-modal-lede di-modal-lede--tight" style="color:rgba(255,255,255,0.55);font-size:12px;">Choose syndicate and scope.</div>
+    <div class="di-modal-lede di-modal-lede--tight" style="color:rgba(255,255,255,0.6);font-size:12px;">Choose syndicate and scope.</div>
     <label for="mock-syn-x">Syndicate</label>
     <select id="mock-syn-x" aria-hidden="true"><option>North Block</option></select>
     <label for="mock-syn-sea">Season</label>
@@ -960,23 +1209,132 @@ body{background:#080f08;font-family:'DM Sans',sans-serif;color:rgba(255,255,255,
   <h3 id="s13-msg">Syndicate messaging</h3>
   <p>Each syndicate has a single <strong>rolling thread</strong> for team chat — manager announcements and member discussion mixed together. Useful for "I'm out at North Wood today", "saw a roe doe by the larch", weekend plans, and so on. The thread is <strong>polled</strong>, not real-time — the app refreshes when you open the manage sheet or the Stats card.</p>
 
-  <p><strong>Where to find it</strong> — open a syndicate from the Stats card, then look for the <strong>Messages</strong> section in the manage sheet. The syndicate row on Stats shows an <strong>unread chip</strong> next to the team name — <strong>red</strong> when there are new messages since you last looked, <strong>green</strong> once you are caught up. Tap the chip directly to jump straight to the thread.</p>
+  <p><strong>Where to find it</strong> — open a syndicate from the Stats card, then look for the <strong>Messages</strong> section in the manage sheet. The syndicate row on Stats shows a <strong>moss-green unread chip</strong> next to the team name <strong>only when there are new messages</strong> since you last looked; once you are caught up the chip simply disappears. Tap the chip directly to jump straight to the thread.</p>
 
   <p><strong>Posting</strong> — type into the box and tap <strong>Post</strong>. Messages are <strong>500 characters max</strong>, <strong>cannot be edited</strong> after posting (write twice, post once), and are stamped with your member name and role at the time of posting (so a future role change does not rewrite history).</p>
 
-  <p><strong>Pinned messages</strong> — managers can <strong>pin up to 3 messages</strong> at once (a 📌 indicator marks them). Useful for stuck-at-the-top notices like "weekend cull plan" or "ground rules". Soft-deleting a pinned message auto-unpins it. Members cannot pin or unpin.</p>
+  <p><strong>Pinned messages</strong> — managers can <strong>pin up to 3 messages</strong> at once (a <span class="fl-ic fl-pin"></span> indicator marks them). Useful for stuck-at-the-top notices like "weekend cull plan" or "ground rules". Soft-deleting a pinned message auto-unpins it. Members cannot pin or unpin.</p>
 
   <p><strong>Soft delete</strong> — your own messages can be removed; managers can remove anyone's. Removed messages no longer render but stay in the database with a deletion stamp, so the audit trail is preserved.</p>
 
   <p><strong>What you see</strong> — the thread fetches the most recent <strong>30 messages</strong> in a fixed scroll region. Older messages remain in the database for audit but are not shown in the UI, to keep the sheet quick on mobile.</p>
 
-  <div class="tip"><strong>Tip:</strong> The unread chip clears once you've opened and scrolled the thread, and turns red again when a new message lands.</div>
+  <div class="tip"><strong>Tip:</strong> The unread chip clears once you've opened and scrolled the thread, and reappears when a new message lands.</div>
+</div>
+
+<!-- STEP 14 -->
+<div class="step" id="s14">
+  <div class="step-num">14</div>
+  <h2>Stands &amp; Deer Forecast</h2>
+  <p>The <strong>Stands</strong> tab (third button on the bottom bar) stores your high seats and stalking spots — on one ground or on grounds counties apart — and scores each one's <strong>dawn and dusk windows for the next 7 days</strong> using weather, moon, rut and season, fetched fresh for <strong>that stand's exact location</strong>.</p>
+
+  <h3>Adding a stand</h3>
+  <p>Tap <strong>+ Add stand</strong>. Give it a <strong>name</strong>, optionally link it to a saved <strong>ground</strong>, and set its <strong>location</strong> with the pin map or GPS — the same pin flow as a cull entry. Up to <strong>60 stands</strong>; adding and editing need a connection (scores are cached for offline viewing). As you set the location, a small <strong>map preview</strong> shows the seat (<strong>Tap to adjust</strong>). You can also record the way it faces and add photos — see <a href="#s14-facing" style="color:var(--gold);">Facing, photos &amp; where it sits</a> below.</p>
+  <p><strong>Bad winds</strong> is the important part: tap the compass directions that blow your scent <strong>from the stand toward where the deer come from</strong>. When the forecast wind blows from one of those directions during a window, that window's score is cut. Two seats 400&nbsp;m apart share the same weather — <strong>bad winds are what make them score differently</strong>.</p>
+
+  <h3>Reading the list</h3>
+  <p>Stands group by ground. Each card shows a <strong>wind rose</strong> (red arc = your bad winds; gold arrow = today's forecast wind — arrow in the red arc means scent trouble), today's best window, and your cull count there. Above the list, a <strong>“Your next sit”</strong> hero calls out the <strong>single best upcoming window</strong> across all your stands — e.g. <em>“Your next sit · tonight”</em> with the seat, the time it opens, an activity read (High / Moderate / Low) and a wind / moon pill — the "which seat, tonight?" answer at a glance. For the whole week, switch to <a href="#s14-plan" style="color:var(--gold);">Plan week</a>.</p>
+  <p><strong>Sorting &amp; filtering.</strong> Sort by <strong>Ground</strong> (grouped) or <strong>Best</strong> (today’s top score first), switch between <strong>Cards</strong> and a tighter <strong>Compact</strong> density, and — once you have a few seats — open <strong>Filter seats</strong> to show only a chosen ground or marker type, or to hide seat / marker names on the map.</p>
+  <p><strong>Wind evidence.</strong> Once a stand has enough history, its card can back the theory with fact — e.g. <em>“23 of 31 culls here came on a SW wind · today: SW ✓”</em> — drawn from your own culls (or sightings) at that seat. It only appears when the record is solid enough to mean something.</p>
+
+  <h3 id="s14-plan">Best seat this week</h3>
+  <p>With two or more stands and a live forecast, a <strong>List / Plan week</strong> toggle appears. <strong>Plan week</strong> lays your seats against the <strong>next 7 days</strong> in a grid and rings the <strong>best seat for each day</strong> in gold — the fastest way to answer “which seat, which evening?”. A <strong>Best / Dawn / Dusk</strong> lens narrows it to the window you care about; each cell is a deer-activity score with its dawn/dusk tag, and tapping a day opens it.</p>
+  <div class="mock-label">Mock — Plan week grid</div>
+  <div class="mock" style="background:#14210c;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.85);">Best seat this week</span>
+      <span style="font-size:10px;font-weight:700;color:#2d5a1a;background:#dff0cf;border-radius:8px;padding:4px 10px;">Share plan</span>
+    </div>
+    <div style="display:grid;grid-template-columns:auto repeat(4,1fr);gap:5px;align-items:center;font-family:'DM Mono',monospace;">
+      <span></span>
+      <span style="text-align:center;font-size:8px;color:rgba(255,255,255,0.5);">TDY</span>
+      <span style="text-align:center;font-size:8px;color:rgba(255,255,255,0.5);">T</span>
+      <span style="text-align:center;font-size:8px;color:rgba(255,255,255,0.5);">F</span>
+      <span style="text-align:center;font-size:8px;color:rgba(255,255,255,0.5);">S</span>
+      <span style="font-size:10px;color:rgba(255,255,255,0.8);">Beech Ride</span>
+      <span style="text-align:center;font-size:11px;font-weight:700;color:#12280a;background:var(--amber);border:2px solid #f0d68a;border-radius:8px;padding:5px 0;">82</span>
+      <span style="text-align:center;font-size:11px;font-weight:700;color:rgba(255,255,255,0.85);background:rgba(255,255,255,0.08);border-radius:8px;padding:5px 0;">64</span>
+      <span style="text-align:center;font-size:11px;font-weight:700;color:rgba(255,255,255,0.55);background:rgba(255,255,255,0.05);border-radius:8px;padding:5px 0;">—</span>
+      <span style="text-align:center;font-size:11px;font-weight:700;color:rgba(255,255,255,0.85);background:rgba(255,255,255,0.08);border-radius:8px;padding:5px 0;">71</span>
+      <span style="font-size:10px;color:rgba(255,255,255,0.8);">North Larch</span>
+      <span style="text-align:center;font-size:11px;font-weight:700;color:rgba(255,255,255,0.85);background:rgba(255,255,255,0.08);border-radius:8px;padding:5px 0;">70</span>
+      <span style="text-align:center;font-size:11px;font-weight:700;color:#12280a;background:var(--amber);border:2px solid #f0d68a;border-radius:8px;padding:5px 0;">78</span>
+      <span style="text-align:center;font-size:11px;font-weight:700;color:rgba(255,255,255,0.85);background:rgba(255,255,255,0.08);border-radius:8px;padding:5px 0;">66</span>
+      <span style="text-align:center;font-size:11px;font-weight:700;color:#12280a;background:var(--amber);border:2px solid #f0d68a;border-radius:8px;padding:5px 0;">80</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;font-size:8px;color:rgba(255,255,255,0.55);font-family:'DM Mono',monospace;">
+      <span>◍ best seat that day</span><span>wind clear</span><span>marginal</span><span>wrong wind</span>
+    </div>
+  </div>
+  <p><strong>Share plan</strong> copies (or opens the share sheet for) a tidy text summary — one line per day naming the seat, window and score — ending with the app’s address, handy for a message to whoever you stalk with.</p>
+
+  <h3>Scent cones on the map</h3>
+  <p>Switch the Stands view to the <strong>map</strong> and turn on <strong>Scent cones</strong> to draw a downwind wedge from each stand — the rough patch of ground where a deer could catch your scent on that day's forecast wind. Each cone is coloured by whether the wind betrays you there: <strong>green</strong> (clear — the wind is in your favour), <strong>amber</strong> (marginal), <strong>red</strong> (busted — your scent blows toward where the deer come from) or <strong>grey</strong> (too calm to call). A <strong>day stepper</strong> (Today … +6) scrubs the cones across the week so you can pick the evening the wind sits right, and a small legend under the map names the colours. The cones read from the same forecast wind and bad-wind settings as the window scores, so they broadly track each stand's dawn/dusk ratings (they reflect one representative hour, so at the margins a cone and a score can differ).</p>
+
+  <h3>Stand detail</h3>
+  <p>Tap a card for the <strong>7-day table</strong> — dawn and dusk scored separately, ⚠ marking windows penalised for bad wind — plus <strong>today's sunrise, sunset and legal light (±1&nbsp;hour)</strong> calculated for that stand's coordinates, and <strong>Your record here</strong>: culls, blank days, species and dawn-vs-dusk split from this season's entries within 300&nbsp;m of the stand.</p>
+  <p><strong>＋ Add entry here</strong> opens a new cull entry with the stand's pin, name and ground already filled. <strong>Edit</strong> changes any detail; <strong>Delete</strong> asks for a second tap to confirm.</p>
+
+  <h3 id="s14-facing">Facing, photos &amp; where it sits</h3>
+  <p><strong>Looks towards.</strong> Separate from bad winds, you can record the way a seat <strong>faces</strong> — a pure memory aid that changes no scores. Tap one of the eight compass points (<strong>N, NE, E, SE, S, SW, W, NW</strong>), or use <strong>Point on map</strong> for an exact bearing; it reads back as e.g. <em>“Looks 205° (SW)”</em> and shows as a pointer and a view cone on the map. Tap the lit direction again to clear it.</p>
+  <div class="mock-label">Mock — Looks towards</div>
+  <div class="mock" style="background:#14210c;">
+    <div style="max-width:180px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center;">
+      <span style="padding:9px 0;border-radius:8px;font-size:11px;font-weight:700;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);">NW</span>
+      <span style="padding:9px 0;border-radius:8px;font-size:11px;font-weight:700;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);">N</span>
+      <span style="padding:9px 0;border-radius:8px;font-size:11px;font-weight:700;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);">NE</span>
+      <span style="padding:9px 0;border-radius:8px;font-size:11px;font-weight:700;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);">W</span>
+      <span style="padding:9px 0;border-radius:8px;font-size:10px;color:rgba(255,255,255,0.4);">◉</span>
+      <span style="padding:9px 0;border-radius:8px;font-size:11px;font-weight:700;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);">E</span>
+      <span style="padding:9px 0;border-radius:8px;font-size:11px;font-weight:700;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);">SW</span>
+      <span style="padding:9px 0;border-radius:8px;font-size:11px;font-weight:700;background:linear-gradient(135deg,var(--moss),var(--deep));color:white;border:1px solid var(--amber);">S</span>
+      <span style="padding:9px 0;border-radius:8px;font-size:11px;font-weight:700;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);">SE</span>
+    </div>
+    <div style="text-align:center;font-size:11px;color:var(--amber);font-weight:700;margin-top:10px;font-family:'DM Mono',monospace;">Looks 205° (SW)</div>
+  </div>
+  <p><strong>Photos.</strong> Add up to <strong>3 photos</strong> per stand — the seat and the view from it — so you can find it again in the dark or hand it to a guest.</p>
+  <div class="mock" style="display:flex;gap:8px;">
+    <div style="flex:1;height:66px;border-radius:10px;background:linear-gradient(150deg,#6b7a4e,#33401f);"></div>
+    <div style="flex:1;height:66px;border-radius:10px;background:linear-gradient(150deg,#7a6a52,#3f3120);"></div>
+    <div style="flex:1;height:66px;border-radius:10px;border:2px dashed #d8d0c6;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#b8b0a4;font-size:14px;font-weight:700;">＋<span style="font-size:9px;">Add</span></div>
+  </div>
+  <p><strong>Where it sits.</strong> A stand’s detail carries its own satellite <strong>mini-map</strong>: a <strong>gold seat pin</strong>, a gold <strong>facing cone</strong> (when you have set one), a dashed <strong>300&nbsp;m ring</strong>, and your nearby culls, with a legend naming the seat, the direction it looks, and each species within range. Tap it to open full-screen (pan and zoom; close with ✕, Escape or back).</p>
+  <div class="mock-label">Mock — a stand's “Where it sits”</div>
+  <div class="mock" style="padding:0;overflow:hidden;">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px 8px;background:#fff;">
+      <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--moss);font-family:'DM Mono',monospace;">Where it sits</span>
+      <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">Beech Ride · looks SW</span>
+    </div>
+    <div style="position:relative;line-height:0;">
+      <svg viewBox="0 0 300 140" width="100%" style="display:block;">
+        <defs><radialGradient id="stsat" cx="50%" cy="45%" r="75%"><stop offset="0%" stop-color="#55643f"/><stop offset="100%" stop-color="#2a3420"/></radialGradient></defs>
+        <rect width="300" height="140" fill="url(#stsat)"/>
+        <circle cx="150" cy="72" r="50" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" stroke-dasharray="4 6"/>
+        <path d="M150 72 L100 95 L127 121 Z" fill="rgba(216,176,84,0.30)"/>
+        <circle cx="120" cy="54" r="4" fill="#bf360c" stroke="#fff" stroke-width="1"/>
+        <circle cx="188" cy="94" r="4" fill="#C4A574" stroke="#fff" stroke-width="1"/>
+        <circle cx="150" cy="72" r="7" fill="#d8b054" stroke="#12280a" stroke-width="1.5"/>
+        <circle cx="150" cy="72" r="2.6" fill="#12280a"/>
+      </svg>
+      <div style="position:absolute;bottom:8px;left:10px;font-size:9px;font-weight:700;color:rgba(255,255,255,0.8);background:rgba(0,0,0,0.35);padding:2px 7px;border-radius:6px;font-family:'DM Mono',monospace;">Satellite ⤢</div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;padding:8px 14px 10px;background:#fff;font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;">
+      <span style="display:flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:#d8b054;"></span>This seat</span>
+      <span style="display:flex;align-items:center;gap:4px;"><span style="width:9px;height:9px;background:rgba(216,176,84,0.55);"></span>Looks SW</span>
+      <span style="display:flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:#bf360c;"></span>Red · 1</span>
+    </div>
+  </div>
+
+  <div class="tip"><strong>Honest note:</strong> scores are guidance, not gospel — a 78 is a nudge, not a promise. Stands are <strong>private to your account</strong>: syndicate members never see them.</div>
 </div>
 
 <div style="text-align:center;padding:30px 20px;border-top:1px solid rgba(255,255,255,0.06);">
-  <p style="font-size:11px;color:rgba(255,255,255,0.2);">© 2025–2026 Sohaib Mengal · First Light · All rights reserved</p>
-  <a href="diary.html" style="display:inline-block;margin-top:10px;font-size:12px;color:var(--gold);text-decoration:none;">← Back to Cull Diary</a>
+  <p style="font-size:11px;color:rgba(255,255,255,0.6);">© 2025–2026 Sohaib Mengal · First Light · All rights reserved</p>
+  <a href="diary.html" class="guide-foot-link">← Back to Cull Diary</a>
+  <a href="index.html" class="guide-foot-link" title="First Light home — Field Guide, Ballistics &amp; Deer School">← First Light</a>
 </div>
+
+</main>
 
 <script data-goatcounter="https://firstlightdeer.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </body>

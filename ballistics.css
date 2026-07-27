@@ -1,56 +1,184 @@
 :root {
   --forest:#1a3a0e; --deep:#0e2a08; --moss:#5a7a30; --leaf:#7adf7a;
-  --gold:#c8a84b; --amber:#f0c870; --cream:#f2efe9; --stone:#ede9e2;
+  --gold:#d8b054; --amber:#f0cc74; --cream:#f2efe9; --stone:#ede9e2;
   --bark:#3d2b1f; --muted:#a0988a; --red:#c62828; --blue:#1a4aaa;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{background:#080f08;color:rgba(255,255,255,0.85);font-family:'DM Sans',sans-serif;}
-body{max-width:520px;margin:0 auto;padding:0 0 80px;min-height:100vh;}
+body{max-width:520px;margin:0 auto;padding:env(safe-area-inset-top,0px) 0 80px;min-height:100vh;}
 
 /* ── Header ─────────────────────────────────────────────────────── */
-.bx-hdr{background:linear-gradient(135deg,#0f1e0a,#0a1506);padding:48px 20px 22px;border-bottom:1px solid rgba(200,168,75,0.15);}
-.bx-hdr-back{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:rgba(200,168,75,0.7);text-decoration:none;margin-bottom:14px;font-weight:600;font-family:'DM Mono',monospace;}
+.bx-hdr{background:linear-gradient(135deg,#0f1e0a,#0a1506);padding:48px 20px 22px;border-bottom:1px solid rgba(216,176,84,0.15);}
+/* The only route back to the hub used to be an 85x14 tap target. The box is
+   now 44 tall with the negative margins cancelling the extra, so the label
+   sits exactly where it always did and nothing below it moves. */
+.bx-hdr-back{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;margin:-15px -12px -1px;font-size:11px;color:rgba(216,176,84,0.7);text-decoration:none;font-weight:600;font-family:'DM Mono',monospace;border-radius:8px;-webkit-tap-highlight-color:transparent;}
+.bx-hdr-back:hover{color:rgba(216,176,84,0.95);background:rgba(216,176,84,0.07);}
 .bx-hdr h1{font-family:'Playfair Display',serif;font-size:26px;color:white;line-height:1.2;font-weight:700;}
-.bx-hdr-version{display:inline-block;font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:#c8a84b;background:rgba(200,168,75,0.12);border:1px solid rgba(200,168,75,0.28);padding:2px 8px;border-radius:6px;letter-spacing:0.5px;text-transform:uppercase;vertical-align:middle;margin-left:6px;position:relative;top:-3px;}
-.bx-hdr .bx-hdr-sub{font-size:12px;color:rgba(200,168,75,0.6);margin-top:4px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;}
+.bx-hdr-version{display:inline-block;font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:#d8b054;background:rgba(216,176,84,0.12);border:1px solid rgba(216,176,84,0.28);padding:2px 8px;border-radius:6px;letter-spacing:0.5px;text-transform:uppercase;vertical-align:middle;margin-left:6px;position:relative;top:-3px;}
+.bx-hdr .bx-hdr-sub{font-size:12px;color:rgba(216,176,84,0.6);margin-top:4px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;}
+.bx-hdr{position:relative;}
+.bx-night-toggle{position:absolute;top:14px;right:16px;background:rgba(216,176,84,0.1);border:1px solid rgba(216,176,84,0.3);color:#d8b054;font-size:11px;font-weight:600;font-family:'DM Mono',monospace;padding:6px 10px;min-height:34px;border-radius:8px;cursor:pointer;letter-spacing:0.5px;}
+.bx-night-toggle[aria-pressed="true"]{background:rgba(220,80,60,0.18);border-color:rgba(220,80,60,0.5);color:#e8a090;}
+/* Night / low-light field mode: recolour the whole page (including the deer
+   SVG and drop-curve canvas) to a dimmed red that protects dark adaptation.
+   A single root filter is deliberate — it can't miss an element the way a
+   hand-tuned per-colour theme could. */
+html.bx-night{filter:grayscale(1) sepia(1) hue-rotate(-34deg) saturate(5) brightness(0.72) contrast(1.03);background:#000;}
+
+/* ── Night-mode status legibility (design-audit QW #3, safety) ──────
+   The red-wash filter above flattens every hue to one red, so the Legal-
+   compliance / Ethical pass·fail·check colour coding (border + tint) collapses.
+   Re-establish it with non-hue cues (border weight, dashed style, a diagonal
+   hatch) that survive the filter — the legal/ethical verdict must stay readable
+   at a glance at dusk. Night mode only; day keeps its colour, this only adds
+   shape, never replaces hue. */
+html.bx-night .bx-compliance-row-pass{ border-left-width:3px; }
+html.bx-night .bx-compliance-row-unknown{ border-left-style:dashed; border-left-width:4px; }
+html.bx-night .bx-compliance-row-fail{
+  border-left-width:6px;
+  background-image:repeating-linear-gradient(45deg,transparent 0,transparent 7px,rgba(255,255,255,0.10) 7px,rgba(255,255,255,0.10) 9px);
+}
+html.bx-night .bx-eth-row-fail{
+  background-image:repeating-linear-gradient(45deg,transparent 0,transparent 7px,rgba(255,255,255,0.10) 7px,rgba(255,255,255,0.10) 9px);
+}
+html.bx-night .bx-compliance-badge.bx-compliance-fail{ border-width:2px; font-weight:800; }
+html.bx-night .bx-compliance-badge.bx-compliance-unknown{ border-style:dashed; }
+
+/* Night-mode aim diagram (QW#3 pt.2): the red filter flattens the vital
+   zone's hue to near-invisible, so at night the kill zone is drawn as a
+   bright DASHED boundary (pattern + luminance survive desaturation) and the
+   impact dot gets a bright ring. Day is untouched. */
+html.bx-night .bx-anat-vital{ fill:rgba(255,255,255,0.06); stroke:#ffffff; stroke-width:1.5; stroke-dasharray:4,2.5; }
+html.bx-night .bx-anat-impact{ stroke:#ffffff; stroke-width:1.4; }
+html.bx-night .bx-anat-cross circle{ stroke-width:1.9; }
+html.bx-night .bx-anat-cross line{ stroke-width:1.5; }
 
 /* ── Pre-release banner ─────────────────────────────────────────── */
 #bx-law-banner{display:none;background:rgba(198,40,40,0.10);border-bottom:1px solid rgba(198,40,40,0.25);padding:10px 20px;font-size:11px;color:#ffb0b0;line-height:1.5;}
 #bx-law-banner strong{color:#ff6060;font-weight:700;}
 
 /* ── Profile bar ────────────────────────────────────────────────── */
-#bx-profile-bar{padding:14px 20px 12px;background:rgba(255,255,255,0.02);border-bottom:1px solid rgba(255,255,255,0.04);display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;}
-.bx-profile-name{font-family:'Playfair Display',serif;font-size:18px;color:white;font-weight:600;}
-.bx-profile-summary{font-size:11px;color:rgba(255,255,255,0.55);font-family:'DM Mono',monospace;flex-basis:100%;}
+#bx-profile-bar{margin:14px 20px 2px;padding:15px 16px;background:linear-gradient(150deg,#1c2f16,#0f1f0b);border:1px solid rgba(216,176,84,0.2);border-radius:16px;box-shadow:0 5px 20px rgba(0,0,0,0.28);}
+.bx-profile-head{display:flex;align-items:center;justify-content:space-between;gap:4px 12px;flex-wrap:wrap;}
+.bx-profile-name{font-family:'Playfair Display',serif;font-size:20px;color:#f3ead4;font-weight:600;letter-spacing:0.2px;}
+.bx-profile-scope{color:var(--gold);vertical-align:middle;margin-right:8px;position:relative;top:-1px;opacity:0.92;}
+.bx-profile-summary{font-size:11.5px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;margin-top:8px;line-height:1.5;}
+.bx-profile-zero{color:#d8b054;font-weight:500;white-space:nowrap;}
 .bx-profile-chrono{display:inline-block;margin-left:8px;padding:2px 8px;background:rgba(120,200,140,0.12);border:1px solid rgba(120,200,140,0.3);border-radius:6px;font-size:10px;font-family:'DM Mono',monospace;color:#88d49c;font-weight:500;letter-spacing:0;text-transform:none;vertical-align:middle;}
-.bx-profile-chrono-stale{background:rgba(240,200,112,0.12);border-color:rgba(240,200,112,0.3);color:#f0c870;}
-.bx-profile-notes{font-size:11px;color:rgba(255,255,255,0.45);font-style:italic;flex-basis:100%;margin-top:4px;line-height:1.4;}
-.bx-profile-actions{display:flex;gap:10px;margin-left:auto;}
-.bx-profile-empty{background:rgba(200,168,75,0.12);border:1px solid rgba(200,168,75,0.3);color:var(--gold);padding:8px 14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;}
-.bx-link{background:none;border:none;color:var(--gold);font-size:11px;font-weight:600;cursor:pointer;padding:4px 6px;text-transform:uppercase;letter-spacing:0.5px;font-family:'DM Mono',monospace;}
+.bx-profile-chrono-stale{background:rgba(240,204,116,0.12);border-color:rgba(240,204,116,0.3);color:#f0cc74;}
+.bx-profile-trued{display:inline-block;margin-left:8px;padding:2px 8px;background:rgba(216,176,84,0.16);border:1px solid rgba(216,176,84,0.4);border-radius:6px;font-size:10px;font-family:'DM Mono',monospace;color:#d8b054;font-weight:600;letter-spacing:0;text-transform:none;vertical-align:middle;}
+.bx-profile-notes{font-size:11px;color:rgba(255,255,255,0.6);font-style:italic;flex-basis:100%;margin-top:4px;line-height:1.4;}
+.bx-zero-bar{flex-basis:100%;display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;}
+.bx-zero-label{font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;}
+.bx-zero-chip{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.16);color:rgba(255,255,255,0.75);border-radius:8px;padding:5px 11px;min-height:34px;font-size:12px;font-family:'DM Mono',monospace;font-weight:500;cursor:pointer;}
+.bx-zero-chip.on{background:rgba(216,176,84,0.16);border-color:rgba(216,176,84,0.5);color:var(--gold);font-weight:600;}
+.bx-zero-list{display:flex;flex-direction:column;gap:8px;margin-top:6px;}
+.bx-zero-row{display:flex;align-items:center;gap:8px;}
+.bx-zero-activate{flex:1;text-align:left;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.14);color:rgba(255,255,255,0.85);border-radius:8px;padding:10px 12px;min-height:44px;font-size:13px;cursor:pointer;}
+.bx-zero-row.on .bx-zero-activate{background:rgba(216,176,84,0.14);border-color:rgba(216,176,84,0.45);color:var(--gold);font-weight:600;}
+.bx-zero-remove{background:none;border:1px solid rgba(255,255,255,0.14);color:rgba(255,255,255,0.6);border-radius:8px;width:44px;min-height:44px;font-size:14px;cursor:pointer;}
+.bx-trued-current{margin-top:10px;padding:8px 11px;background:rgba(216,176,84,0.1);border:1px solid rgba(216,176,84,0.26);border-radius:8px;font-size:12px;color:rgba(255,255,255,0.82);line-height:1.5;}
+.bx-true-result{margin-top:12px;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.5;}
+.bx-true-result.bx-true-ok{background:rgba(120,200,140,0.1);border:1px solid rgba(120,200,140,0.3);}
+.bx-true-result.bx-true-warn{background:rgba(240,180,100,0.1);border:1px solid rgba(240,180,100,0.32);color:#f0c087;}
+.bx-true-mv{font-size:14px;color:#fff;}
+.bx-true-mv strong{color:var(--gold);}
+.bx-true-delta{font-family:'DM Mono',monospace;font-size:11px;color:rgba(255,255,255,0.6);margin-left:2px;}
+.bx-true-detail{margin-top:6px;color:rgba(255,255,255,0.66);font-size:11px;}
+.bx-stab-result{margin-top:12px;padding:11px 13px;border-radius:8px;font-size:12px;line-height:1.5;}
+.bx-stab-result.bx-stab-ok{background:rgba(120,200,140,0.1);border:1px solid rgba(120,200,140,0.32);}
+.bx-stab-result.bx-stab-marginal{background:rgba(240,204,116,0.1);border:1px solid rgba(240,204,116,0.34);}
+.bx-stab-result.bx-stab-danger{background:rgba(220,80,60,0.12);border:1px solid rgba(220,80,60,0.4);}
+.bx-stab-result.bx-stab-warn{background:rgba(240,180,100,0.1);border:1px solid rgba(240,180,100,0.32);color:#f0c087;}
+.bx-stab-sg{font-size:15px;color:#fff;}
+.bx-stab-sg strong{font-size:20px;color:var(--gold);}
+.bx-stab-verdict{text-transform:uppercase;font-size:10px;letter-spacing:0.6px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.6);margin-left:4px;}
+.bx-stab-detail{margin-top:6px;color:rgba(255,255,255,0.75);font-size:12px;}
+.bx-stab-sub{color:rgba(255,255,255,0.6);font-size:11px;font-family:'DM Mono',monospace;}
+.bx-reticle-details{margin:10px 0 0;}
+.bx-reticle-details[open] #bx-reticle-body{border:1px solid rgba(216,176,84,0.3);border-top:none;border-radius:0 0 12px 12px;background:rgba(216,176,84,0.03);padding:10px 13px 12px;}
+.bx-reticle-target{font-size:11px;color:rgba(216,176,84,0.75);font-family:'DM Mono',monospace;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.bx-reticle-scope{max-width:280px;margin:0 auto;}
+.bx-reticle-scope svg{width:100%;height:auto;display:block;}
+.bx-reticle-hold{font-size:15px;color:#fff;text-align:center;margin-top:10px;}
+.bx-reticle-hold strong{color:var(--gold);}
+.bx-reticle-callout{font-size:12px;color:rgba(255,255,255,0.75);text-align:center;margin-top:5px;font-family:'DM Mono',monospace;}
+.bx-reticle-note{font-size:10px;color:rgba(255,255,255,0.6);margin-top:10px;line-height:1.5;font-family:'DM Mono',monospace;}
+.bx-profile-actions{display:flex;gap:5px;flex-wrap:wrap;align-items:center;}
+.bx-profile-actions .bx-link{border:1px solid rgba(216,176,84,0.22);background:rgba(216,176,84,0.06);border-radius:8px;padding:0 8px;min-height:34px;font-size:10px;letter-spacing:0.3px;}
+.bx-profile-actions .bx-link:hover{background:rgba(216,176,84,0.13);border-color:rgba(216,176,84,0.42);}
+.bx-link-tools{border:1px solid rgba(216,176,84,0.28);border-radius:8px;}
+/* Lead-free feature CTA — a prominent, inviting button (not a text link),
+   since it's a headline feature ahead of the 2029 UK lead restriction. */
+.bx-leadfree-cta{display:flex;align-items:center;gap:11px;width:100%;margin-top:14px;padding:11px 16px;background:linear-gradient(135deg,#2f7d4e,#1c5836);border:1px solid rgba(170,235,193,0.34);border-radius:24px;cursor:pointer;text-align:left;transition:background 0.15s,border-color 0.15s,transform 0.05s;box-shadow:0 2px 10px rgba(0,0,0,0.2);}
+.bx-leadfree-cta:hover{background:linear-gradient(135deg,#358c59,#236a40);border-color:rgba(170,235,193,0.55);}
+.bx-leadfree-cta:active{transform:scale(0.995);}
+.bx-leadfree-cta-icon{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;color:#eafff2;}
+.bx-leadfree-cta-body{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0;}
+.bx-leadfree-cta-title{color:#f4fff8;font-size:13px;font-weight:600;font-family:'DM Sans',sans-serif;letter-spacing:0.2px;line-height:1.35;}
+.bx-leadfree-cta-sub{color:rgba(255,255,255,0.62);font-size:11px;font-family:'DM Mono',monospace;line-height:1.4;}
+.bx-leadfree-cta-arrow{color:#dcffe9;font-size:18px;flex-shrink:0;}
+.bx-link-tools::after{content:'▾';margin-left:5px;font-size:9px;display:inline-block;transition:transform 0.15s;}
+.bx-link-tools[aria-expanded="true"]::after{transform:rotate(180deg);}
+.bx-profile-tools{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.08);}
+.bx-profile-tools[hidden]{display:none;}
+.bx-profile-empty{background:rgba(216,176,84,0.12);border:1px solid rgba(216,176,84,0.3);color:var(--gold);padding:8px 14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;}
+.bx-link{background:none;border:none;color:var(--gold);font-size:11px;font-weight:600;cursor:pointer;padding:8px 8px;min-height:40px;display:inline-flex;align-items:center;text-transform:uppercase;letter-spacing:0.5px;font-family:'DM Mono',monospace;}
 .bx-link:hover{color:var(--amber);}
 
 /* ── Range control ──────────────────────────────────────────────── */
 .bx-range{padding:24px 20px 18px;}
 #bx-range-display{text-align:center;font-family:'DM Mono',monospace;color:white;}
 .bx-range-num{font-size:54px;font-weight:500;letter-spacing:-1px;}
+/* The hero number is an editable field — reset input chrome but keep the big
+   look; a subtle gold underline hints it's tappable, brightening on focus. */
+#bx-range-hero{font-family:'DM Mono',monospace;color:#fff;background:transparent;border:none;outline:none;text-align:center;width:3.4ch;padding:0 2px 2px;border-bottom:2px solid rgba(216,176,84,0.35);border-radius:2px;caret-color:var(--gold);}
+#bx-range-hero:focus{border-bottom-color:var(--gold);background:rgba(216,176,84,0.08);}
 .bx-range-unit{font-size:18px;color:var(--gold);margin-left:4px;}
-#bx-range-slider{width:100%;-webkit-appearance:none;appearance:none;height:8px;background:rgba(255,255,255,0.18);border-radius:4px;outline:none;margin-top:14px;}
-#bx-range-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:24px;height:24px;background:var(--gold);border-radius:50%;cursor:pointer;border:3px solid #1a2e1a;box-shadow:0 0 0 1px var(--gold);}
+#bx-range-slider{width:100%;-webkit-appearance:none;appearance:none;height:44px;background:transparent;outline:none;margin-top:14px;}
+/* 44px tap band (design-audit QW #6): the input is 44px tall so it's easy to
+   grab one-handed/gloved, but the visible 8px track + 24px knob are unchanged. */
+#bx-range-slider::-webkit-slider-runnable-track{height:8px;background:rgba(255,255,255,0.18);border-radius:4px;}
+#bx-range-slider::-moz-range-track{height:8px;background:rgba(255,255,255,0.18);border-radius:4px;}
+#bx-range-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:24px;height:24px;background:var(--gold);border-radius:50%;cursor:pointer;border:3px solid #1a2e1a;box-shadow:0 0 0 1px var(--gold);margin-top:-8px;}
 #bx-range-slider::-moz-range-thumb{width:24px;height:24px;background:var(--gold);border-radius:50%;cursor:pointer;border:3px solid #1a2e1a;box-shadow:0 0 0 1px var(--gold);}
-.bx-range-tools{text-align:center;margin-top:10px;}
+.bx-range-tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px;margin-top:12px;}
+.bx-range-input{width:78px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:8px 8px;border-radius:8px;font-size:15px;font-family:'DM Mono',monospace;text-align:center;min-height:40px;}
+/* Hidden for launch: the yards conversion is incomplete and initBallisticsUi forces metric. Restore inline-flex when yards are wired through everywhere (audit §2). */
+.bx-units-toggle{display:none;border:1px solid rgba(255,255,255,0.12);border-radius:8px;overflow:hidden;}
+.bx-units-btn{background:rgba(255,255,255,0.04);border:none;color:rgba(255,255,255,0.6);padding:8px 12px;font-size:12px;font-weight:600;font-family:'DM Mono',monospace;cursor:pointer;min-height:40px;min-width:42px;}
+.bx-units-btn.on{background:var(--gold);color:#1a2e1a;}
+.bx-wind-presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.bx-wind-preset{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.75);padding:6px 12px;border-radius:16px;font-size:12px;font-family:'DM Mono',monospace;cursor:pointer;min-height:36px;}
 
 /* ── Conditions strip ───────────────────────────────────────────── */
 .bx-cond-row{padding:8px 20px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
 #bx-conditions-strip{font-size:12px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;flex:1;}
 #bx-conditions-strip strong{color:var(--gold);font-weight:500;}
-#bx-conditions-strip .bx-sep{color:rgba(255,255,255,0.2);margin:0 6px;}
+#bx-conditions-strip .bx-sep{color:rgba(255,255,255,0.6);margin:0 6px;}
+
+/* B8: conditions provenance chip. Its own line under the readings, because it
+   is a statement ABOUT the numbers rather than a fourth number — dropped inline
+   after the wind it would be read as one more measurement. Colour carries the
+   verdict: gold for hand-entered, green for a fresh fetch, red for anything the
+   card should not be trusted on (defaults, or a fetch gone stale). */
+.bx-prov{display:block;width:max-content;max-width:100%;margin-top:6px;padding:2px 9px;border-radius:999px;font-family:'DM Mono',monospace;font-size:10.5px;font-weight:600;letter-spacing:0.02em;line-height:1.5;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);}
+.bx-prov--auto{background:rgba(126,180,110,0.15);color:#a9d59b;}
+.bx-prov--manual{background:rgba(216,176,84,0.15);color:var(--gold);}
+.bx-prov--default,.bx-prov--stale{background:rgba(198,40,40,0.16);color:#e8a29a;}
 #bx-conditions-edit{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.7);padding:9px 14px;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:0.5px;min-height:44px;display:inline-flex;align-items:center;}
 
 /* ── Output card ────────────────────────────────────────────────── */
-#bx-output{padding:0 20px;}
-.bx-output-empty{background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.1);border-radius:14px;padding:32px 16px;text-align:center;color:rgba(255,255,255,0.45);font-size:13px;}
-.bx-output-card{background:linear-gradient(135deg,#1a2e1a,#0e1e0a);border-radius:18px;padding:18px 18px 6px;border:1px solid rgba(200,168,75,0.18);box-shadow:0 4px 20px rgba(0,0,0,0.3);}
+.bx-results-card{margin:0 20px;background:linear-gradient(135deg,#1a2e1a,#0e1e0a);border:1px solid rgba(216,176,84,0.18);border-radius:18px;box-shadow:0 4px 20px rgba(0,0,0,0.3);padding:16px 16px 14px;}
+#bx-output{padding:0;}
+.bx-output-empty{background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.1);border-radius:14px;padding:32px 16px;text-align:center;color:rgba(255,255,255,0.6);font-size:13px;}
+/* Screen-reader-only live region for the result announcement (audit C2). */
+.bx-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
+/* Yard toggle hidden for launch — conversion is incomplete, units forced metric
+   in ballistics-ui.js init (audit §2). Remove this rule when yards are wired through. */
+.bx-range-tools{display:none;}
+.bx-output-card{padding:0;}
 .bx-output-section{padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.05);}
 .bx-output-section:last-child{border-bottom:none;}
 /* Ethical max range section */
@@ -60,18 +188,24 @@ body{max-width:520px;margin:0 auto;padding:0 0 80px;min-height:100vh;}
 .bx-eth-species{font-size:13px;color:white;font-weight:500;}
 .bx-eth-range{font-size:13px;color:#88d49c;font-family:'DM Mono',monospace;font-weight:600;}
 .bx-eth-row-fail .bx-eth-range{color:#e07a5f;}
-.bx-eth-na{color:rgba(255,255,255,0.4);font-weight:400;font-style:italic;}
-.bx-eth-threshold{font-size:11px;color:rgba(255,255,255,0.45);font-weight:400;}
-.bx-eth-disclosure{font-size:11px;color:rgba(255,255,255,0.55);line-height:1.5;background:rgba(200,168,75,0.04);border:1px solid rgba(200,168,75,0.12);border-radius:6px;padding:8px 10px;}
+.bx-eth-na{color:rgba(255,255,255,0.6);font-weight:400;font-style:italic;}
+.bx-eth-threshold{font-size:11px;color:rgba(255,255,255,0.6);font-weight:400;}
+.bx-eth-disclosure{font-size:11px;color:rgba(255,255,255,0.6);line-height:1.5;background:rgba(216,176,84,0.04);border:1px solid rgba(216,176,84,0.12);border-radius:6px;padding:8px 10px;}
 .bx-eth-disclosure strong{color:rgba(255,255,255,0.85);}
-/* Range card section */
-.bx-rc-summary{cursor:pointer;list-style:none;-webkit-appearance:none;outline:none;}
+/* Range card section — styled as the same tappable pill as the reference
+   disclosure (bordered, gold-tinted, with a Show ▾ / Hide ▴ affordance). */
+.bx-rc-section{margin-top:10px;}
+.bx-rc-summary{display:flex;align-items:center;gap:9px;cursor:pointer;list-style:none;-webkit-appearance:none;outline:none;padding:11px 13px;min-height:48px;background:rgba(216,176,84,0.07);border:1px solid rgba(216,176,84,0.3);border-radius:12px;color:var(--cream);font-family:'DM Mono',monospace;font-size:12.5px;transition:background 0.15s,border-color 0.15s;}
 .bx-rc-summary::-webkit-details-marker{display:none;}
-.bx-rc-summary::before{content:'▸ ';color:rgba(200,168,75,0.7);transition:transform 0.15s;display:inline-block;}
-details[open] .bx-rc-summary::before{content:'▾ ';}
+.bx-rc-summary:hover{background:rgba(216,176,84,0.13);border-color:rgba(216,176,84,0.5);}
+.bx-rc-summary-title{flex:1;letter-spacing:0.2px;}
+.bx-rc-summary::after{content:'Show \25BE';color:var(--gold);font-size:10.5px;text-transform:uppercase;letter-spacing:0.6px;font-weight:600;white-space:nowrap;}
+.bx-rc-section[open] > .bx-rc-summary, .bx-reticle-details[open] > .bx-rc-summary{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom-color:transparent;background:rgba(216,176,84,0.11);}
+details[open] > .bx-rc-summary::after{content:'Hide \25B4';}
+.bx-rc-body{border:1px solid rgba(216,176,84,0.3);border-top:none;border-radius:0 0 12px 12px;padding:6px 13px 8px;background:rgba(216,176,84,0.03);}
 .bx-rc-tablewrap{overflow-x:auto;margin:8px 0;-webkit-overflow-scrolling:touch;}
 .bx-rc-table{width:100%;border-collapse:collapse;font-size:12px;font-family:'DM Mono',monospace;min-width:460px;}
-.bx-rc-table thead th{padding:6px 8px;text-align:right;color:rgba(200,168,75,0.7);border-bottom:1px solid rgba(255,255,255,0.1);font-weight:500;font-size:11px;}
+.bx-rc-table thead th{padding:6px 8px;text-align:right;color:rgba(216,176,84,0.7);border-bottom:1px solid rgba(255,255,255,0.1);font-weight:500;font-size:11px;}
 .bx-rc-table thead th:first-child{text-align:left;}
 .bx-rc-table tbody th{padding:8px;text-align:left;color:rgba(255,255,255,0.6);font-weight:500;font-size:11px;}
 .bx-rc-table tbody td{padding:8px;text-align:right;color:rgba(255,255,255,0.85);}
@@ -88,16 +222,16 @@ details[open] .bx-rc-summary::before{content:'▾ ';}
    *current* range is at/past transonic — these cells just mark which range
    buckets fall there in the wider table. Selectors made specific enough to
    beat .bx-rc-table tbody td without needing !important. */
-.bx-rc-table tbody td.bx-rc-transonic{color:rgba(200,168,75,0.7);}
+.bx-rc-table tbody td.bx-rc-transonic{color:rgba(216,176,84,0.7);}
 .bx-rc-table tbody td.bx-rc-subsonic{color:rgba(224,122,95,0.65);}
-.bx-rc-foot{font-size:10px;color:rgba(255,255,255,0.4);line-height:1.5;margin-top:4px;font-style:italic;}
+.bx-rc-foot{font-size:10px;color:rgba(255,255,255,0.6);line-height:1.5;margin-top:4px;font-style:italic;}
 /* Wind direction compass picker */
 .bx-wind-compass{position:relative;width:160px;height:160px;margin:8px auto 6px;border:1px dashed rgba(255,255,255,0.15);border-radius:50%;}
-.bx-wind-bullet{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:rgba(200,168,75,0.5);border-radius:50%;font-size:0;}
-.bx-wind-center{position:absolute;left:50%;top:14px;transform:translateX(-50%);font-size:14px;color:rgba(200,168,75,0.7);}
+.bx-wind-bullet{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:rgba(216,176,84,0.5);border-radius:50%;font-size:0;}
+.bx-wind-center{position:absolute;left:50%;top:14px;transform:translateX(-50%);font-size:14px;color:rgba(216,176,84,0.7);}
 .bx-wind-dir{position:absolute;width:34px;height:34px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.6);border-radius:50%;font-size:14px;font-family:'DM Sans',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;}
-.bx-wind-dir:hover{background:rgba(200,168,75,0.12);border-color:rgba(200,168,75,0.3);}
-.bx-wind-dir.on{background:rgba(200,168,75,0.25);border-color:#c8a84b;color:white;font-weight:600;}
+.bx-wind-dir:hover{background:rgba(216,176,84,0.12);border-color:rgba(216,176,84,0.3);}
+.bx-wind-dir.on{background:rgba(216,176,84,0.25);border-color:#d8b054;color:white;font-weight:600;}
 .bx-wind-dir-12{left:50%;top:0;transform:translateX(-50%);}
 .bx-wind-dir-1_5{right:8px;top:14%;}
 .bx-wind-dir-3{right:0;top:50%;transform:translateY(-50%);}
@@ -112,15 +246,15 @@ details[open] .bx-rc-summary::before{content:'▾ ';}
 .bx-longrange-list{margin:0 0 8px 18px;padding:0;list-style:disc;}
 .bx-longrange-list li{margin-bottom:6px;font-size:12px;color:rgba(255,255,255,0.7);line-height:1.5;}
 .bx-longrange-list strong{color:rgba(120,170,200,0.95);}
-.bx-longrange-foot{font-size:11px;color:rgba(255,255,255,0.5);line-height:1.5;font-style:italic;}
-.bx-output-label{font-size:10px;font-weight:700;color:rgba(200,168,75,0.55);text-transform:uppercase;letter-spacing:1px;font-family:'DM Mono',monospace;margin-bottom:6px;}
+.bx-longrange-foot{font-size:11px;color:rgba(255,255,255,0.6);line-height:1.5;font-style:italic;}
+.bx-output-label{font-size:10px;font-weight:700;color:rgba(216,176,84,0.72);text-transform:uppercase;letter-spacing:1px;font-family:'DM Mono',monospace;margin-bottom:6px;}
 .bx-output-hold,.bx-output-energy,.bx-output-vel{display:flex;align-items:baseline;gap:6px;}
 .bx-output-arrow{font-size:32px;color:var(--gold);font-weight:300;line-height:1;width:24px;display:inline-block;text-align:center;}
 .bx-output-bignum{font-family:'DM Mono',monospace;font-size:36px;font-weight:500;color:white;letter-spacing:-1px;line-height:1;}
-.bx-output-bigunit{font-size:14px;color:rgba(255,255,255,0.45);font-family:'DM Mono',monospace;margin-left:2px;}
-.bx-output-secondary{font-size:11px;color:rgba(255,255,255,0.4);font-family:'DM Mono',monospace;margin-left:auto;}
-.bx-output-sub{font-size:12px;color:rgba(255,255,255,0.55);font-family:'DM Mono',monospace;margin-top:6px;}
-.bx-output-sub .bx-sep{color:rgba(255,255,255,0.2);margin:0 6px;}
+.bx-output-bigunit{font-size:14px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;margin-left:2px;}
+.bx-output-secondary{font-size:11px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;margin-left:auto;}
+.bx-output-sub{font-size:12px;color:rgba(255,255,255,0.7);font-family:'DM Mono',monospace;margin-top:6px;}
+.bx-output-sub .bx-sep{color:rgba(255,255,255,0.6);margin:0 6px;}
 /* Calculator-reliability caveats (transonic / subsonic-after-supersonic).
    Genuinely useful — solver predictions degrade through Mach 0.8-1.2 — but
    purely informational, not a legal/ethical alarm. Toned to a neutral pale
@@ -129,14 +263,22 @@ details[open] .bx-rc-summary::before{content:'▾ ';}
 .bx-output-warn{font-size:11px;color:rgba(255,255,255,0.7);background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 12px;margin-top:8px;line-height:1.5;}
 .bx-output-warn strong{color:inherit;font-weight:500;}
 .bx-output-note{font-size:11px;color:rgba(255,255,255,0.6);background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 12px;margin-top:8px;line-height:1.5;}
-.bx-output-tinynote{font-size:10px;color:rgba(255,255,255,0.4);margin-top:6px;line-height:1.4;font-style:italic;}
-.bx-output-citation{font-size:10px;color:rgba(255,255,255,0.35);margin-top:6px;font-family:'DM Mono',monospace;}
+.bx-subsonic-panel{margin-top:8px;padding:11px 13px;background:rgba(120,160,220,0.08);border:1px solid rgba(120,160,220,0.28);border-radius:8px;}
+.bx-subsonic-head{font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:#9bc0e8;font-weight:600;margin-bottom:6px;}
+.bx-subsonic-main{font-size:14px;color:#fff;line-height:1.5;}
+.bx-subsonic-main strong{color:#9bc0e8;}
+.bx-subsonic-main.bx-subsonic-danger{color:#f0b0a0;}
+.bx-subsonic-main.bx-subsonic-danger strong{color:#f0b0a0;}
+.bx-subsonic-sub{font-size:11px;color:rgba(255,255,255,0.62);font-family:'DM Mono',monospace;line-height:1.5;margin-top:2px;display:block;}
+.bx-subsonic-note{font-size:11px;color:rgba(255,255,255,0.6);margin-top:8px;line-height:1.5;}
+.bx-output-tinynote{font-size:10px;color:rgba(255,255,255,0.6);margin-top:6px;line-height:1.4;font-style:italic;}
+.bx-output-citation{font-size:10px;color:rgba(255,255,255,0.6);margin-top:6px;font-family:'DM Mono',monospace;}
 
 /* ── Anatomical hold panel ──────────────────────────────────────── */
-.bx-anatomy-section{background:linear-gradient(180deg,rgba(200,168,75,0.04),transparent);border-left:3px solid rgba(200,168,75,0.4);padding-left:12px !important;border-radius:6px 0 0 6px;}
+.bx-anatomy-section{background:linear-gradient(180deg,rgba(216,176,84,0.04),transparent);border-left:3px solid rgba(216,176,84,0.4);padding-left:12px !important;border-radius:6px 0 0 6px;}
 .bx-anatomy-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
-.bx-anatomy-target{font-size:11px;color:rgba(200,168,75,0.7);font-family:'DM Mono',monospace;margin-bottom:8px;}
-.bx-anatomy-target .bx-sep{color:rgba(255,255,255,0.2);margin:0 6px;}
+.bx-anatomy-target{font-size:11px;color:rgba(216,176,84,0.7);font-family:'DM Mono',monospace;margin-bottom:8px;}
+.bx-anatomy-target .bx-sep{color:rgba(255,255,255,0.6);margin:0 6px;}
 .bx-anatomy-text{font-family:'Playfair Display',serif;font-size:17px;color:white;line-height:1.35;font-weight:500;}
 /* The injected ↑/↓ glyph in the "Hold X cm high" line. Playfair Display
    either lacks U+2191/U+2193 or renders them with serif flourishes that
@@ -145,36 +287,81 @@ details[open] .bx-rc-summary::before{content:'▾ ';}
    big HOLD card's arrow. */
 .bx-anat-arrow{font-family:'DM Mono',monospace;font-weight:600;color:var(--gold);}
 .bx-anatomy-warn{font-size:11px;color:#ffb0b0;background:rgba(198,40,40,0.10);border:1px solid rgba(198,40,40,0.25);border-radius:6px;padding:6px 10px;margin-top:8px;line-height:1.4;}
-.bx-anatomy-disclaimer{font-size:10px;color:rgba(255,255,255,0.35);margin-top:8px;font-family:'DM Mono',monospace;line-height:1.4;}
+.bx-anatomy-viewnote{font-size:10px;color:rgba(255,255,255,0.6);font-style:italic;margin-top:4px;margin-bottom:2px;line-height:1.4;}
+/* Wind caveat on the anatomy silhouette (drop-only picture). Gold-accented so it
+   reads as important info, not an alarm. Shown only when wind drift is material. */
+.bx-anatomy-windnote{font-size:11px;color:rgba(240,204,116,0.8);background:rgba(216,176,84,0.07);border-left:2px solid rgba(216,176,84,0.45);border-radius:0 6px 6px 0;padding:6px 10px;margin-top:8px;line-height:1.4;}
+.bx-anatomy-quarter{font-size:12px;color:rgba(255,255,255,0.82);background:rgba(216,176,84,0.08);border:1px solid rgba(216,176,84,0.24);border-radius:6px;padding:8px 11px;margin-top:8px;line-height:1.5;}
+.bx-anatomy-quarter-tag{display:inline-block;font-size:9px;text-transform:uppercase;letter-spacing:0.6px;color:var(--gold);font-weight:700;font-family:'DM Mono',monospace;margin-right:6px;vertical-align:1px;}
+.bx-anatomy-quarter-warn{font-size:11px;color:#ffc9a0;margin-top:6px;line-height:1.45;}
+.bx-anatomy-disclaimer{font-size:10px;color:rgba(255,255,255,0.6);margin-top:8px;font-family:'DM Mono',monospace;line-height:1.4;}
 .bx-anatomy-silhouette{display:flex;justify-content:center;margin:8px 0 10px 0;padding:6px;background:rgba(0,0,0,0.25);border-radius:6px;}
 .bx-anatomy-silhouette svg{display:block;width:100%;max-width:440px;height:auto;}
 .bx-checkbox-row{display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.85);line-height:1.4;}
 .bx-checkbox-row input{margin-top:2px;flex-shrink:0;}
 .bx-radio-row{display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.85);padding:6px 0;line-height:1.4;}
 .bx-radio-row input{margin-top:3px;flex-shrink:0;}
-.bx-radio-row strong{color:#c8a84b;font-weight:600;}
+.bx-radio-row strong{color:#d8b054;font-weight:600;}
 .bx-toggle{display:flex;align-items:center;gap:10px;cursor:pointer;color:rgba(255,255,255,0.85);font-size:13px;}
 .bx-toggle input{accent-color:var(--gold);width:18px;height:18px;cursor:pointer;}
 /* Subtle "−X% from muzzle" note alongside the retained energy value. The
    statutory test is judged at muzzle, in the Legal compliance section —
    this card is purely informational, no traffic-light colour. */
-.bx-energy-drop{color:rgba(255,255,255,0.45);font-family:'DM Mono',monospace;}
+.bx-energy-drop{color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;}
+.bx-target-section{opacity:0.92;}
+/* Collapsible reference disclosure (legal / ethical range / dead-hold).
+   Styled as an obviously tappable row: bordered, gold-tinted, with a
+   "Show ▾ / Hide ▴" affordance so it doesn't read as a static status line. */
+.bx-ref{margin-top:10px;}
+.bx-ref-toggle{display:flex;align-items:center;gap:9px;width:100%;cursor:pointer;padding:11px 13px;min-height:48px;background:rgba(216,176,84,0.07);border:1px solid rgba(216,176,84,0.3);border-radius:12px;color:var(--cream);font-family:'DM Mono',monospace;font-size:12.5px;text-align:left;transition:background 0.15s,border-color 0.15s;}
+.bx-ref-toggle:hover{background:rgba(216,176,84,0.13);border-color:rgba(216,176,84,0.5);}
+.bx-ref-toggle:active{background:rgba(216,176,84,0.17);}
+.bx-ref-toggle.open{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom-color:transparent;background:rgba(216,176,84,0.11);}
+.bx-ref-status{font-weight:700;font-size:14px;display:inline-flex;align-items:center;justify-content:center;width:15px;flex:none;}
+.bx-rc-status{display:inline-flex;align-items:center;justify-content:center;width:15px;flex:none;color:rgba(216,176,84,0.62);}
+.bx-ref-status.bx-ref-ok{color:#7fd39a;}
+.bx-ref-status.bx-ref-warn{color:#f0a04a;}
+.bx-ref-status.bx-ref-unk{color:rgba(255,255,255,0.6);}
+.bx-ref-title{flex:1;letter-spacing:0.2px;}
+.bx-ref-more{display:inline-flex;align-items:center;gap:5px;color:var(--gold);font-size:10.5px;text-transform:uppercase;letter-spacing:0.6px;font-weight:600;white-space:nowrap;}
+.bx-ref-caret{font-size:11px;transition:transform 0.18s;}
+.bx-ref-toggle.open .bx-ref-caret{transform:rotate(180deg);}
+.bx-ref-panel{margin:0;border:1px solid rgba(216,176,84,0.3);border-top:none;border-radius:0 0 12px 12px;padding:4px 13px 2px;background:rgba(216,176,84,0.03);}
+.bx-ref-panel[hidden]{display:none;}
+.bx-target-compact{font-size:13px;color:rgba(255,255,255,0.74);font-family:'DM Mono',monospace;line-height:1.5;}
+.bx-target-num{color:rgba(255,255,255,0.85);font-weight:500;font-size:15px;}
+.bx-target-compact .bx-sep{color:rgba(255,255,255,0.6);margin:0 6px;}
+.bx-target-note{font-size:11px;color:rgba(255,255,255,0.6);line-height:1.5;margin-top:6px;}
+.bx-target-note strong{color:rgba(255,255,255,0.65);font-weight:600;}
+.bx-still{border-radius:10px;padding:10px 12px;margin:10px 0 2px;border-left:3px solid;}
+.bx-still-ok{background:rgba(122,223,122,0.06);border-left-color:rgba(122,223,122,0.5);}
+.bx-still-warn{background:rgba(200,150,0,0.08);border-left-color:rgba(200,150,0,0.6);}
+.bx-still-line{font-size:13px;color:#fff;}
+.bx-still-ok .bx-still-line{color:#9be89b;}
+.bx-still-warn .bx-still-line{color:#f0cc74;}
+.bx-still-sub{font-size:11px;color:rgba(255,255,255,0.62);font-family:'DM Mono',monospace;margin-top:4px;line-height:1.5;}
+.bx-mpbr-main{font-size:14px;color:#fff;}
+.bx-mpbr-main strong{color:var(--gold);}
+.bx-mpbr-sub{font-size:11px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;margin-top:5px;line-height:1.5;}
 
 /* ── Drop chart ─────────────────────────────────────────────────── */
-.bx-chart-wrap{padding:18px 20px 0;}
-.bx-chart-label{font-size:10px;font-weight:700;color:rgba(200,168,75,0.55);text-transform:uppercase;letter-spacing:1px;font-family:'DM Mono',monospace;margin-bottom:8px;}
+.bx-chart-wrap{padding:0;margin-top:10px;}
+.bx-chart-label{font-size:10px;font-weight:700;color:rgba(216,176,84,0.55);text-transform:uppercase;letter-spacing:1px;font-family:'DM Mono',monospace;margin-bottom:8px;}
 #bx-drop-chart{width:100%;display:none;background:rgba(255,255,255,0.02);border-radius:10px;border:1px solid rgba(255,255,255,0.04);}
 
 /* ── Bottom controls ────────────────────────────────────────────── */
-.bx-bottom{padding:24px 20px 16px;display:flex;flex-wrap:wrap;gap:10px;}
+.bx-setup-card{margin:14px 20px 0;border:1px solid rgba(216,176,84,0.14);border-radius:16px;background:rgba(255,255,255,0.015);padding:2px 0;}
+.bx-bottom{padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px;}
 .bx-bottom .bx-field{flex:1;min-width:140px;}
-.bx-bottom select{width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:white;padding:10px 12px;border-radius:8px;font-size:13px;font-family:'DM Sans',sans-serif;}
-.bx-bottom label{font-size:10px;font-weight:700;color:rgba(200,168,75,0.55);text-transform:uppercase;letter-spacing:1px;font-family:'DM Mono',monospace;display:block;margin-bottom:6px;}
+.bx-bottom select,.bx-bottom .bx-btn-secondary{width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:11px 12px;border-radius:8px;font-size:13px;font-family:'DM Sans',sans-serif;min-height:44px;box-sizing:border-box;}
+.bx-bottom .bx-btn-secondary{text-align:left;font-weight:500;color:rgba(255,255,255,0.82);}
+.bx-bottom .bx-btn-secondary:hover{background:rgba(255,255,255,0.07);}
+.bx-bottom label{font-size:10px;font-weight:700;color:rgba(216,176,84,0.55);text-transform:uppercase;letter-spacing:1px;font-family:'DM Mono',monospace;display:block;margin-bottom:6px;}
 
 /* ── Modal ──────────────────────────────────────────────────────── */
 #bx-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;justify-content:center;align-items:flex-end;padding:0;}
 @media(min-width:600px){#bx-modal{align-items:center;padding:20px;}}
-.bx-modal-card{background:linear-gradient(180deg,#1a2e1a,#0e1e0a);border:1px solid rgba(200,168,75,0.18);border-radius:18px 18px 0 0;width:100%;max-width:520px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;}
+.bx-modal-card{background:linear-gradient(180deg,#1a2e1a,#0e1e0a);border:1px solid rgba(216,176,84,0.18);border-radius:18px 18px 0 0;width:100%;max-width:520px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;}
 @media(min-width:600px){.bx-modal-card{border-radius:18px;}}
 .bx-modal-title{font-family:'Playfair Display',serif;font-size:20px;color:white;font-weight:600;padding:18px 20px 12px;border-bottom:1px solid rgba(255,255,255,0.05);}
 .bx-modal-body{padding:18px 20px;overflow-y:auto;flex:1;}
@@ -182,10 +369,11 @@ details[open] .bx-rc-summary::before{content:'▾ ';}
 
 /* ── Form fields ────────────────────────────────────────────────── */
 .bx-field{margin-bottom:14px;}
-.bx-field label{display:block;font-size:11px;font-weight:600;color:rgba(200,168,75,0.7);text-transform:uppercase;letter-spacing:0.5px;font-family:'DM Mono',monospace;margin-bottom:6px;}
-.bx-field-hint-inline{color:rgba(255,255,255,0.35);text-transform:none;letter-spacing:0;font-weight:400;}
+.bx-field label{display:block;font-size:11px;font-weight:600;color:rgba(216,176,84,0.7);text-transform:uppercase;letter-spacing:0.5px;font-family:'DM Mono',monospace;margin-bottom:6px;}
+.bx-field-hint-inline{color:rgba(255,255,255,0.6);text-transform:none;letter-spacing:0;font-weight:400;}
 .bx-field input[type=text],.bx-field input[type=number],.bx-field input[type=date],.bx-field select,.bx-field textarea{width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);color:white;padding:10px 12px;border-radius:8px;font-size:14px;font-family:'DM Sans',sans-serif;}
 .bx-field textarea{font-family:'DM Sans',sans-serif;resize:vertical;min-height:60px;line-height:1.4;}
+.bx-modal-body input[type=file]{width:100%;color:rgba(255,255,255,0.75);font-size:12px;font-family:'DM Sans',sans-serif;padding:8px 0;}
 /* Native <select> popup options. Without explicit styling, options inherit
    color:white from the parent select but fall back to the OS default
    background (white on Windows / macOS light theme), making the open dropdown
@@ -196,8 +384,8 @@ details[open] .bx-rc-summary::before{content:'▾ ';}
   background-color: #1a2e1a;
   color: white;
 }
-.bx-field-section-label{font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:rgba(200,168,75,0.7);font-weight:600;margin:18px 0 10px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.06);}
-.bx-field-hint{font-size:11px;color:rgba(255,255,255,0.4);margin-top:4px;font-family:'DM Mono',monospace;white-space:pre-line;}
+.bx-field-section-label{font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:rgba(216,176,84,0.7);font-weight:600;margin:18px 0 10px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.06);}
+.bx-field-hint{font-size:11px;color:rgba(255,255,255,0.6);margin-top:4px;font-family:'DM Mono',monospace;white-space:pre-line;}
 .bx-field-hint-warn{color:#ff8080 !important;}
 .bx-field-actions{display:flex;align-items:flex-end;}
 .bx-row-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
@@ -205,19 +393,19 @@ details[open] .bx-rc-summary::before{content:'▾ ';}
 /* Tabs (factory vs manual) */
 .bx-tabs{display:flex;background:rgba(255,255,255,0.04);border-radius:8px;padding:3px;margin-bottom:12px;}
 .bx-tab{flex:1;background:none;border:none;color:rgba(255,255,255,0.6);padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;border-radius:6px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:0.5px;}
-.bx-tab.on{background:rgba(200,168,75,0.15);color:var(--gold);}
+.bx-tab.on{background:rgba(216,176,84,0.15);color:var(--gold);}
 
 /* Species chips */
 .bx-species-grid{display:flex;flex-wrap:wrap;gap:6px;}
 .bx-species-chip{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);padding:6px 12px;border-radius:14px;font-size:12px;color:rgba(255,255,255,0.7);cursor:pointer;}
-.bx-species-chip:has(input:checked){background:rgba(200,168,75,0.15);border-color:rgba(200,168,75,0.4);color:var(--gold);}
+.bx-species-chip:has(input:checked){background:rgba(216,176,84,0.15);border-color:rgba(216,176,84,0.4);color:var(--gold);}
 .bx-species-chip input{accent-color:var(--gold);}
 
 /* Profile rows in switcher */
 .bx-profile-row{width:100%;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.05);border-radius:10px;padding:12px 14px;text-align:left;cursor:pointer;color:white;margin-bottom:8px;}
-.bx-profile-row.on{background:rgba(200,168,75,0.10);border-color:rgba(200,168,75,0.3);}
+.bx-profile-row.on{background:rgba(216,176,84,0.10);border-color:rgba(216,176,84,0.3);}
 .bx-profile-row-name{font-family:'Playfair Display',serif;font-size:15px;color:white;font-weight:600;}
-.bx-profile-row-summary{font-size:11px;color:rgba(255,255,255,0.5);margin-top:2px;font-family:'DM Mono',monospace;}
+.bx-profile-row-summary{font-size:11px;color:rgba(255,255,255,0.6);margin-top:2px;font-family:'DM Mono',monospace;}
 
 /* Buttons */
 .bx-btn{background:var(--moss);border:none;color:white;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;}
@@ -228,13 +416,13 @@ details[open] .bx-rc-summary::before{content:'▾ ';}
 .bx-btn-danger:hover{background:rgba(198,40,40,0.25);}
 
 /* Toast */
-.bx-toast{display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(20,30,15,0.95);color:white;padding:10px 20px;border-radius:24px;font-size:12px;z-index:1500;border:1px solid rgba(200,168,75,0.3);font-family:'DM Mono',monospace;}
+.bx-toast{display:none;position:fixed;bottom:calc(24px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:rgba(20,30,15,0.95);color:white;padding:10px 20px;border-radius:24px;font-size:12px;z-index:1500;border:1px solid rgba(216,176,84,0.3);font-family:'DM Mono',monospace;}
 .bx-toast-ok{border-color:rgba(122,223,122,0.5);}
-.bx-toast-warn{border-color:rgba(240,200,112,0.5);color:#f0c870;}
+.bx-toast-warn{border-color:rgba(240,204,116,0.5);color:#f0cc74;}
 
 /* ── Export buttons ─────────────────────────────────────────────── */
-.bx-export{padding:18px 20px 4px;text-align:center;}
-.bx-export-label{font-size:11px;color:rgba(255,255,255,0.5);font-family:'DM Mono',monospace;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px;}
+.bx-export{padding:4px 16px 10px;text-align:center;}
+.bx-export-label{font-size:11px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px;}
 .bx-export-buttons{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
 .bx-export-buttons .bx-btn{flex:1;max-width:180px;}
 
@@ -254,85 +442,122 @@ details[open] .bx-rc-summary::before{content:'▾ ';}
 .bx-compliance-shared-citation{margin-top:10px;padding-left:12px;border-left:1px solid rgba(255,255,255,0.06);}
 .bx-compliance-row-pass{border-left-color:rgba(122,223,122,0.5);}
 .bx-compliance-row-fail{border-left-color:rgba(198,40,40,0.7);background:rgba(198,40,40,0.06);}
-.bx-compliance-row-unknown{border-left-color:rgba(240,200,112,0.6);background:rgba(240,200,112,0.04);}
+.bx-compliance-row-unknown{border-left-color:rgba(240,204,116,0.6);background:rgba(240,204,116,0.04);}
 .bx-compliance-row-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
 .bx-compliance-species{font-family:'Playfair Display',serif;font-size:14px;color:white;font-weight:600;}
 .bx-compliance-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:0.5px;}
 .bx-compliance-pass{background:rgba(122,223,122,0.15);color:#7adf7a;border:1px solid rgba(122,223,122,0.3);}
 .bx-compliance-fail{background:rgba(198,40,40,0.15);color:#ff8080;border:1px solid rgba(198,40,40,0.3);}
-.bx-compliance-unknown{background:rgba(240,200,112,0.15);color:#f0c870;border:1px solid rgba(240,200,112,0.3);}
+.bx-compliance-unknown{background:rgba(240,204,116,0.15);color:#f0cc74;border:1px solid rgba(240,204,116,0.3);}
 .bx-compliance-checks{display:flex;flex-direction:column;gap:4px;}
 .bx-compliance-check{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.7);}
 .bx-compliance-icon{font-size:11px;font-weight:700;width:14px;display:inline-block;text-align:center;flex-shrink:0;}
 .bx-compliance-check-pass .bx-compliance-icon{color:#7adf7a;}
 .bx-compliance-check-fail .bx-compliance-icon{color:#ff8080;}
-.bx-compliance-check-unknown .bx-compliance-icon{color:#f0c870;}
-.bx-compliance-check-na .bx-compliance-icon{color:rgba(255,255,255,0.3);}
-.bx-compliance-check-label{color:rgba(255,255,255,0.5);font-weight:500;}
+.bx-compliance-check-unknown .bx-compliance-icon{color:#f0cc74;}
+.bx-compliance-check-na .bx-compliance-icon{color:rgba(255,255,255,0.6);}
+.bx-compliance-check-label{color:rgba(255,255,255,0.6);font-weight:500;}
 .bx-compliance-check-value{color:white;font-weight:500;}
 .bx-compliance-check-fail .bx-compliance-check-value{color:#ff8080;}
-.bx-compliance-check-detail{flex-basis:100%;padding-left:20px;font-size:10px;color:rgba(255,255,255,0.45);font-style:italic;}
+.bx-compliance-check-detail{flex-basis:100%;padding-left:20px;font-size:10px;color:rgba(255,255,255,0.6);font-style:italic;}
 .bx-compliance-check-fail .bx-compliance-check-detail{color:#ff8080;}
 
 /* ── First-run acceptance gate ─────────────────────────────────── */
 .bx-acceptance-card{max-width:520px;}
-.bx-acceptance-title{font-size:16px;font-weight:600;color:white;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid rgba(200,168,75,0.25);}
-.bx-acceptance-version{display:inline-block;font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:#c8a84b;background:rgba(200,168,75,0.12);border:1px solid rgba(200,168,75,0.28);padding:2px 8px;border-radius:6px;letter-spacing:0.5px;text-transform:uppercase;vertical-align:middle;margin-left:8px;}
-.bx-version-strip{padding:14px 20px 0;font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.4);letter-spacing:0.3px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center;}
-.bx-version-strip strong{color:rgba(200,168,75,0.85);font-weight:600;}
-.bx-version-strip .bx-sep{color:rgba(255,255,255,0.2);}
+.bx-acceptance-title{font-size:16px;font-weight:600;color:white;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid rgba(216,176,84,0.25);}
+.bx-acceptance-version{display:inline-block;font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:#d8b054;background:rgba(216,176,84,0.12);border:1px solid rgba(216,176,84,0.28);padding:2px 8px;border-radius:6px;letter-spacing:0.5px;text-transform:uppercase;vertical-align:middle;margin-left:8px;}
+.bx-version-strip{margin-top:16px;padding:16px 20px 0;border-top:1px solid rgba(255,255,255,0.08);font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.6);letter-spacing:0.3px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center;}
+.bx-version-strip strong{color:rgba(216,176,84,0.85);font-weight:600;}
+.bx-version-strip .bx-sep{color:rgba(255,255,255,0.6);}
 .bx-acceptance-body{color:rgba(255,255,255,0.75);font-size:13px;line-height:1.55;}
 .bx-acceptance-body p{margin-bottom:10px;}
 .bx-acceptance-body strong{color:white;}
 .bx-acceptance-body ul{margin:10px 0 12px 22px;padding:0;}
 .bx-acceptance-body li{margin-bottom:6px;color:rgba(255,255,255,0.75);}
 /* ── Disclaimer block ───────────────────────────────────────────── */
-.bx-disclaimer{padding:24px 20px;color:rgba(255,255,255,0.6);font-size:12px;line-height:1.6;text-align:left;border-top:2px solid rgba(200,168,75,0.18);margin-top:24px;background:rgba(200,168,75,0.03);}
+.bx-disclaimer{padding:2px 20px 24px;color:rgba(255,255,255,0.6);font-size:12px;line-height:1.6;text-align:left;margin-top:0;background:none;}
+.bx-footer-summary{cursor:pointer;list-style:none;font-size:10px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:0.8px;padding:2px 0 8px;text-align:center;}
+.bx-footer-summary::-webkit-details-marker{display:none;}
+.bx-footer-summary::after{content:' \25BE';color:rgba(255,255,255,0.6);}
+.bx-disclaimer[open] .bx-footer-summary::after{content:' \25B4';}
 .bx-disclaimer p{margin-bottom:10px;}
 .bx-disclaimer p:last-child{margin-bottom:0;}
 .bx-disclaimer strong{color:rgba(255,255,255,0.85);}
-.bx-disclaimer-title{font-size:11px;text-transform:uppercase;letter-spacing:0.8px;color:rgba(200,168,75,0.85);font-weight:600;margin-bottom:10px;}
+.bx-disclaimer-title{font-size:11px;text-transform:uppercase;letter-spacing:0.8px;color:rgba(216,176,84,0.85);font-weight:600;margin-bottom:10px;}
 
 /* ── Lead-free matcher modal ────────────────────────────────────── */
 .bx-modal-wide{max-width:680px;}
-.bx-lf-source{background:rgba(200,168,75,0.06);border:1px solid rgba(200,168,75,0.15);border-radius:10px;padding:12px 14px;margin-bottom:16px;}
-.bx-lf-source-label{font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:rgba(200,168,75,0.7);font-weight:600;margin-bottom:4px;}
+.bx-lf-source{background:rgba(216,176,84,0.06);border:1px solid rgba(216,176,84,0.15);border-radius:10px;padding:12px 14px;margin-bottom:16px;}
+.bx-lf-source-label{font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:rgba(216,176,84,0.7);font-weight:600;margin-bottom:4px;}
 .bx-lf-source-name{font-size:14px;color:white;font-weight:600;margin-bottom:2px;}
-.bx-lf-source-meta{font-size:11px;color:rgba(255,255,255,0.55);}
+.bx-lf-source-meta{font-size:11px;color:rgba(255,255,255,0.6);}
 .bx-lf-msg{color:rgba(255,255,255,0.7);font-size:12px;line-height:1.5;margin-bottom:10px;}
 .bx-lf-msg strong{color:white;}
-.bx-lf-matches-label{font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:rgba(200,168,75,0.7);font-weight:600;margin:18px 0 8px;}
+.bx-lf-matches-label{font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:rgba(216,176,84,0.7);font-weight:600;margin:18px 0 8px;}
 .bx-lf-match{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px;margin-bottom:10px;}
 .bx-lf-match-header{margin-bottom:10px;}
 .bx-lf-match-name{font-size:13px;color:white;font-weight:600;margin-bottom:2px;}
-.bx-lf-match-meta{font-size:11px;color:rgba(255,255,255,0.55);}
+.bx-lf-match-meta{font-size:11px;color:rgba(255,255,255,0.6);}
 .bx-lf-table{width:100%;border-collapse:collapse;font-size:11px;}
 .bx-lf-table th,.bx-lf-table td{padding:5px 8px;text-align:right;border-bottom:1px solid rgba(255,255,255,0.05);}
-.bx-lf-table thead th{color:rgba(200,168,75,0.7);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.4px;}
+.bx-lf-table thead th{color:rgba(216,176,84,0.7);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.4px;}
 .bx-lf-table tbody th{text-align:left;color:rgba(255,255,255,0.6);font-weight:500;}
 .bx-lf-table tbody td{color:white;font-variant-numeric:tabular-nums;}
 .bx-lf-source-table{margin-bottom:6px;}
 .bx-lf-good{color:#7fc97f !important;}
-.bx-lf-mid{color:#f0c870 !important;}
+.bx-lf-mid{color:#f0cc74 !important;}
 .bx-lf-poor{color:#e07a5f !important;}
-.bx-lf-disclosure{margin-top:14px;padding:12px 14px;background:rgba(200,168,75,0.05);border:1px solid rgba(200,168,75,0.18);border-radius:10px;font-size:11px;color:rgba(255,255,255,0.7);line-height:1.5;}
-.bx-lf-disclosure strong{color:#f0c870;}
+.bx-lf-disclosure{margin-top:14px;padding:12px 14px;background:rgba(216,176,84,0.05);border:1px solid rgba(216,176,84,0.18);border-radius:10px;font-size:11px;color:rgba(255,255,255,0.7);line-height:1.5;}
+.bx-lf-disclosure strong{color:#f0cc74;}
 /* Side-by-side load comparator */
 .bx-cmp-loads{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0 10px;}
 .bx-cmp-load{padding:10px 12px;border-radius:10px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);}
-.bx-cmp-load-a{border-color:rgba(200,168,75,0.3);}
+.bx-cmp-load-a{border-color:rgba(216,176,84,0.3);}
 .bx-cmp-load-b{border-color:rgba(120,170,200,0.3);}
 .bx-cmp-label{font-size:10px;text-transform:uppercase;letter-spacing:0.6px;font-weight:600;margin-bottom:3px;}
-.bx-cmp-load-a .bx-cmp-label{color:rgba(200,168,75,0.8);}
+.bx-cmp-load-a .bx-cmp-label{color:rgba(216,176,84,0.8);}
 .bx-cmp-load-b .bx-cmp-label{color:rgba(120,170,200,0.8);}
 .bx-cmp-name{font-size:13px;color:white;font-weight:600;margin-bottom:2px;}
-.bx-cmp-meta{font-size:11px;color:rgba(255,255,255,0.55);}
+.bx-cmp-meta{font-size:11px;color:rgba(255,255,255,0.6);}
 .bx-cmp-table{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px;}
 .bx-cmp-table th,.bx-cmp-table td{padding:6px 8px;text-align:right;color:rgba(255,255,255,0.85);}
-.bx-cmp-table thead th{font-weight:500;color:rgba(255,255,255,0.5);font-size:11px;border-bottom:1px solid rgba(255,255,255,0.1);}
+.bx-cmp-table thead th{font-weight:500;color:rgba(255,255,255,0.6);font-size:11px;border-bottom:1px solid rgba(255,255,255,0.1);}
 .bx-cmp-table tbody th{text-align:left;font-weight:500;color:rgba(255,255,255,0.6);}
-.bx-cmp-table tr.bx-cmp-section th{padding-top:12px;font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:rgba(200,168,75,0.7);font-weight:600;text-align:left;border-bottom:1px solid rgba(200,168,75,0.15);}
+.bx-cmp-table tr.bx-cmp-section th{padding-top:12px;font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:rgba(216,176,84,0.7);font-weight:600;text-align:left;border-bottom:1px solid rgba(216,176,84,0.15);}
 .bx-cmp-table tr.bx-cmp-delta{background:rgba(255,255,255,0.02);}
 .bx-cmp-table tr.bx-cmp-delta th,.bx-cmp-table tr.bx-cmp-delta td{font-weight:600;color:white;}
-.bx-cmp-disclosure{margin-top:14px;padding:12px 14px;background:rgba(200,168,75,0.05);border:1px solid rgba(200,168,75,0.18);border-radius:10px;font-size:11px;color:rgba(255,255,255,0.7);line-height:1.5;}
-.bx-cmp-disclosure strong{color:#f0c870;}
+.bx-cmp-disclosure{margin-top:14px;padding:12px 14px;background:rgba(216,176,84,0.05);border:1px solid rgba(216,176,84,0.18);border-radius:10px;font-size:11px;color:rgba(255,255,255,0.7);line-height:1.5;}
+.bx-cmp-disclosure strong{color:#f0cc74;}
+
+/* P2 audit: tabular figures + focus-visible on bare outline:none controls */
+.bx-anatomy-text,.bx-target-num,.bx-reticle-hold{font-variant-numeric:tabular-nums;}
+#bx-range-hero:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-bottom-color:var(--gold);}
+#bx-range-slider:focus-visible{outline:2px solid var(--gold);outline-offset:3px;}
+.bx-rc-summary:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+
+/* Suite audit: skip link (keyboard users bypass the header) + modal scroll lock. */
+.bx-skip-link{position:absolute;top:-48px;left:0;z-index:99999;background:#2a5a10;color:#fff;padding:8px 12px;border-radius:0 0 8px 0;font-size:13px;font-weight:600;text-decoration:none;transition:top 0.2s;}
+.bx-skip-link:focus{top:0;outline:2px solid #f0cc74;outline-offset:-2px;}
+#bx-main:focus{outline:none;}
+@media (prefers-reduced-motion: reduce){ .bx-skip-link{transition:none;} }
+body.bx-modal-open{overflow:hidden;}
+
+/* ── Footer ─────────────────────────────────────────────────────────
+   Home audit: the header's "← First Light" scrolls away after 155px and
+   this page is ~2,100px tall, so from the drop curve or the tool sheets
+   there was no way back to the hub at all — and no route to the legal
+   pages every other page in the suite carries. This is that route, put
+   where the scroll actually ends. */
+/* body reserves 80px at the end of the document so the fixed toast never
+   covers the last line. Before the footer existed that reserve was just
+   background; now it left the footer band floating 80px short of the page
+   bottom. The reserve is moved inside the footer instead — same content
+   position, same toast clearance, but the band ends where the page does. */
+.bx-footer{margin-top:28px;margin-bottom:-80px;padding:24px 20px calc(108px + env(safe-area-inset-bottom, 0px));border-top:1px solid rgba(216,176,84,0.15);background:linear-gradient(135deg,#0f1e0a,#0a1506);text-align:center;}
+.bx-footer-home{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:0 20px;border:1px solid rgba(216,176,84,0.32);border-radius:10px;color:rgba(216,176,84,0.9);font-family:'DM Mono',monospace;font-size:12px;font-weight:600;letter-spacing:0.4px;text-decoration:none;-webkit-tap-highlight-color:transparent;}
+.bx-footer-home:hover{background:rgba(216,176,84,0.08);color:rgba(216,176,84,1);}
+.bx-footer-links{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;column-gap:10px;row-gap:4px;margin-top:16px;}
+.bx-footer-links a{display:inline-flex;align-items:center;min-height:32px;padding:0 2px;color:rgba(216,176,84,0.72);font-size:11.5px;text-decoration:none;}
+.bx-footer-links a:hover{color:rgba(216,176,84,0.95);text-decoration:underline;}
+.bx-footer-sep{color:rgba(216,176,84,0.32);font-size:11px;}
+.bx-footer-copy{margin-top:12px;font-size:10.5px;color:rgba(255,255,255,0.4);line-height:1.6;}

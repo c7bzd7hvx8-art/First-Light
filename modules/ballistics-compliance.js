@@ -25,7 +25,7 @@
 //   escapeHtml             — string sanitiser
 // =============================================================================
 
-import { JURISDICTIONS, flUkDeerLawVerified } from '../lib/fl-deer-law.js';
+import { JURISDICTIONS, flUkDeerLawVerified, LAW_VERIFIED_ON, verifiedOnLabel } from '../lib/fl-deer-law.js';
 
 export function groupComplianceResults(results) {
   const groups = new Map();
@@ -129,6 +129,7 @@ export function renderComplianceSection(profile, deps) {
         ${groups.map(g => renderComplianceRow(g, sharedCitation != null, escapeHtml)).join('')}
       </div>
       ${sharedCitation ? `<div class="bx-output-citation bx-compliance-shared-citation">${escapeHtml(sharedCitation)}</div>` : ''}
+      ${verifiedOnLabel(LAW_VERIFIED_ON) ? `<div class="bx-output-citation bx-compliance-verified">Statutory minima last read at primary source on ${escapeHtml(verifiedOnLabel(LAW_VERIFIED_ON))}. Statute changes &mdash; check the current text before relying on a borderline pass.</div>` : ''}
     </div>
   `;
 }

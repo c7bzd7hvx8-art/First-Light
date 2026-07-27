@@ -20,8 +20,60 @@ import { installErrorLogger } from './modules/error-logger.mjs';
 import {
   validateDisplayName,
   validatePasswordChange,
+  validateSeasonStartMonth,
 } from './modules/profile.mjs';
-import { isBlankDayEntry, blankDaySummaryText, formatRelativeTime } from './lib/fl-pure.mjs';
+import {
+  isBlankDayEntry, blankDaySummaryText, formatRelativeTime,
+  normalizeSeasonStartMonth, seasonBoundsForKey,
+  QUARRY_SPECIES, quarryMeta, isPestSpecies, speciesIsSexed,
+} from './lib/fl-pure.mjs';
+import {
+  fetchStands, saveStand, deleteStand, fetchStandForecasts, STANDS_MAX, STAND_PHOTOS_MAX,
+  cachedStands as flCachedStands, cachedForecastRaw as flCachedForecastRaw,
+  mintStandId, queueStandOp, standOutbox, standOutboxCount, applyStandOutbox, flushStandOutbox, normalizeStandFields,
+  FORECAST_MODEL as FL_FC_MODEL
+} from './modules/stands.mjs';
+// Aliased (fl-prefixed) to avoid colliding with any inline helpers.
+import {
+  distMeters as flDistMeters, calcSunTime as flCalcSunTime,
+  toMinutes as flToMinutes, fmtMins as flFmtMins,
+  RUT_CALENDAR as FL_RUT_CALENDAR, RUT_SPECIES as FL_RUT_SPECIES,
+  rutMaskForSpecies as flRutMaskForSpecies, maxRutMasked as flMaxRutMasked,
+  getMoonPhase as flGetMoonPhase, standWindVerdict as flStandWindVerdict,
+  scentConePolygon as flScentConePolygon, scentConeVerdict as flScentConeVerdict,
+  bearingDeg as flBearingDeg,
+  getSolunar as flGetSolunar, scoreStandHour as flScoreStandHour,
+  windDirLabel8 as flWindDirLabel8,
+  wxHourAt as flWxHourAt, buildScoreSnapshot as flBuildScoreSnapshot
+} from './lib/fl-forecast.mjs';
+// Sightings (live deer seen, not shot) — SIGHTINGS-PLAN.md S2/S3. Pure maths
+// in lib/fl-sightings.mjs; Supabase CRUD in modules/sightings.mjs.
+import { saveSighting, fetchSightings, deleteSighting, fetchSightingWeatherMap } from './modules/sightings.mjs';
+import {
+  sightingSexLabels, sightingHeadcount, sightingCompositionText,
+  validateSightingCounts, SIGHTING_COUNT_KEYS,
+  summariseSightings, buckDoeIndex, summariseSightingsByMonth,
+  sightingLightBand, fillMonthGaps, sightingHeatRadiusM,
+  youngPerHundredFemales, sightingSexWords
+} from './lib/fl-sightings.mjs';
+// Grounds boundaries (G2 — GROUNDS-PLAN.md): CRUD/cache in modules/grounds.mjs,
+// geometry maths in lib/fl-geo.mjs; this file owns the sheet, editor + wiring.
+import {
+  fetchGroundFeatures, saveGroundFeature, deleteGroundFeature,
+  cachedGroundFeatures, groundFeaturesUnavailable, GROUND_FEATURES_MAX
+} from './modules/grounds.mjs';
+import {
+  ringAreaM2, ringPerimeterM, pathLengthM, ringSelfIntersects, ringCentroid, pointInRing,
+  validateBoundaryRing, validateLinePath, makeGeometry, parseGeometry, geometryAreaM2,
+  makeMarkerGeometry, markerFromGeometry, GROUND_MARKER_TYPES,
+  markerTypeLabel, markerTypeChip,
+  makeLineGeometry, lineSubtypeOf, lineSubtypeLabel, lineSubtypeChip, LINE_SUBTYPES,
+  formatAreaBoth, landParts, sumLandParts, formatAreaParts,
+  formatDistM, MAX_BOUNDARY_VERTICES, round6, declutterLabels,
+  featuresToGeoJson, featuresToGpx, featuresToKml, parseImportFeatures,
+  kmzToKmlText, looksLikeZip, lineTypeFromName, markerTypeFromName,
+  latLngToOsGrid, formatLatLngDegrees, formatPlaceRef
+} from './lib/fl-geo.mjs';
 
 // Tag that the client-side error logger writes into
 // public.app_errors.app_version. Bumped in lock-step with SW_VERSION in
@@ -29,23 +81,27 @@ import { isBlankDayEntry, blankDaySummaryText, formatRelativeTime } from './lib/
 // after a deploy can be filtered down to the new build. Hand-maintained
 // (two strings, but cheap to update; see PROJECT-LOG on the error-logger
 // rollout).
-const FL_APP_VERSION = '7.107';
+const FL_APP_VERSION = '7.402';
 import {
   wxCodeLabel,
   windDirLabel,
-  fetchCullWeather
+  fetchCullWeather,
+  fetchCullWeatherArchive,
+  diaryLondonWallMs
 } from './modules/weather.mjs';
-// findOpenMeteoHourlyIndex and diaryLondonWallMs are not re-imported —
-// they're used only by fetchCullWeather (inside the module) and tests.
+// findOpenMeteoHourlyIndex is not re-imported — it's used only by
+// fetchCullWeather (inside the module) and tests. diaryLondonWallMs is used
+// here to store/read sighting seen_at as a Europe/London wall-clock instant.
 import {
   CULL_PHOTO_SIGN_EXPIRES,
   newCullPhotoPath,
   cullPhotoStoragePath,
   dataUrlToBlob,
-  compressPhotoFile
+  compressPhotoFile,
+  readPhotoExif
 } from './modules/photos.mjs';
 import {
-  CAL_COLORS, SP_COLORS_D,
+  SP_COLORS_D,
   AGE_CLASSES, AGE_COLORS, AGE_GROUPS,
   aggregateShooterStats,
   aggregateDestinationStats,
@@ -70,7 +126,7 @@ import {
   // monthly chart — everything that is a pure function of the filtered
   // entries + a small opts bag. The surrounding orchestration (map init,
   // season-pill sync, plan-card visibility, targets async chain, state
-  // flag writes) stays in buildStats(speciesFilter) below.
+  // flag writes) stays in buildStats() below.
   renderStatsTabBody
 } from './modules/stats.mjs';
 import {
@@ -83,6 +139,7 @@ import {
   buildConsignmentDealerDeclarationPDF,
   buildSeasonSummaryPDF,
   buildSyndicateSeasonSummaryPDF,
+  buildSightingsReportPDF,
   syndicateFileSlug as flSyndicateFileSlug,
   userProfileDisplayName as flUserProfileDisplayName,
   pdfSafeText as flPdfSafeText
@@ -104,6 +161,10 @@ import {
   SVG_WX_SKY_DZ, SVG_WX_SKY_RAIN, SVG_WX_SKY_SHOWERS, SVG_WX_SKY_SNOW,
   SVG_WX_SKY_SNSH, SVG_WX_SKY_TS, SVG_WX_SKY_UNK
 } from './modules/svg-icons.mjs';
+// The single statutory source for UK deer close seasons, shared with the deer-law
+// page. diary.js is a module, so it imports it directly — index.html needs the
+// lib/fl-deer-seasons-bridge.js shim only because app.js is a classic script.
+import { checkCullSeason } from './lib/fl-deer-seasons.js';
 
 // ══════════════════════════════════════════════════════════════
 // GLOBALS INDEX (partial — full migration deferred to P3 code-quality #1)
@@ -180,6 +241,32 @@ function flDebugLog(level, label, details) {
     if (/Non-Error promise rejection/i.test(msg)) return true;
     return false;
   }
+  // A8: "Something went wrong - please try again" told the user nothing they
+  // could act on, and crucially never answered the only question that matters
+  // when a diary throws: *is my record safe?* The same six words covered a
+  // failed tile fetch and a failed save. Classify from the message and stack -
+  // imprecise by nature, so every branch is worded to be true even if the guess
+  // is wrong, and the fallback still states the data position explicitly.
+  function flErrToastFor(reason) {
+    var txt = '';
+    try {
+      txt = String((reason && (reason.message || reason.toString())) || '') + ' '
+          + String((reason && reason.stack) || '');
+    } catch (_) { txt = ''; }
+    var t = txt.toLowerCase();
+    if (/leaflet|\bl\.map\b|tile|mapbox|invalidatesize|latlng|geojson|boundar/.test(t))
+      return '\u26a0\ufe0f The map could not load \u2014 your records are unaffected';
+    if (/jspdf|pdf|canvas\.todataurl|html2canvas/.test(t))
+      return '\u26a0\ufe0f The PDF could not be built \u2014 nothing was changed';
+    if (/upload|storage|photo|image\/|blob/.test(t))
+      return '\u26a0\ufe0f A photo could not be uploaded \u2014 the entry itself is saved';
+    if (/insert|update|upsert|delete|\bsave\b|submit/.test(t))
+      return '\u26a0\ufe0f That did not save \u2014 check the details and try again';
+    if (/failed to fetch|networkerror|load failed|supabase|geolocation|position|nominatim|open-meteo|timeout/.test(t))
+      return '\u26a0\ufe0f Could not reach the server \u2014 your saved records are safe on this device';
+    return '\u26a0\ufe0f Something did not finish \u2014 nothing was saved, please try again';
+  }
+
   function surface(label, reason) {
     if (shouldIgnore(reason)) return;
     flDebugLog('error', label, reason);
@@ -187,7 +274,7 @@ function flDebugLog(level, label, details) {
     if (now - lastToastAt < FL_ERR_COOLDOWN_MS) return;
     lastToastAt = now;
     try { if (typeof flHapticError === 'function') flHapticError(); } catch (_) {}
-    try { if (typeof showToast === 'function') showToast('⚠️ Something went wrong — please try again'); } catch (_) {}
+    try { if (typeof showToast === 'function') showToast(flErrToastFor(reason), 4500); } catch (_) {}
   }
   window.addEventListener('unhandledrejection', function(ev) {
     surface('unhandledrejection', ev && ev.reason);
@@ -254,11 +341,139 @@ function planSpeciesMeta(name) {
   return { name: name, color: '#5a7a30', mLbl: 'Male', fLbl: 'Female' };
 }
 
-function isCurrentSeason(season) {
-  var now = diaryNow();
-  var m = now.getMonth() + 1, y = now.getFullYear();
-  var startYear = m >= 8 ? y : y - 1;
-  return season === startYear + '-' + String(startYear + 1).slice(-2);
+/**
+ * The signed-in user's "season starts in" month (1–12) from Supabase auth
+ * `user_metadata.fl_season_start_month` — SEASON-YEAR-PLAN.md §2. Signed
+ * out / unset / garbage all normalise to 8 (August, the historical UK
+ * deer-year default), so every pre-setting code path behaves exactly as
+ * before. PERSONAL context only — syndicate views resolve their syndicate's
+ * own `season_start_month` column instead (step-4 slice).
+ */
+function personalSeasonStartMonth() {
+  var meta = (currentUser && currentUser.user_metadata) || {};
+  return normalizeSeasonStartMonth(meta.fl_season_start_month);
+}
+
+/**
+ * The user's ground species (full diary names, e.g. 'Red Deer','Roe Deer')
+ * from localStorage 'fl-my-species-v1'. localStorage (not user_metadata) is
+ * deliberate: the signed-out marketing homepage (app.js) reads the SAME key on
+ * the same origin, so the rut factor stays consistent across both surfaces.
+ * Empty / unset / garbage ⇒ [] ⇒ all species ⇒ pre-setting behaviour intact.
+ */
+const FL_MY_SPECIES_KEY = 'fl-my-species-v1';
+function flMySpecies() {
+  try {
+    var raw = localStorage.getItem(FL_MY_SPECIES_KEY);
+    if (!raw) return [];
+    var arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) { return []; }
+}
+
+// ── Silent forecast-vs-reality logger (round 12) ────────────────────────────
+// Every NEW cull, blank outing and sighting saved near a stand appends one
+// self-contained record to 'fl-score-log-v1': what the activity model
+// PREDICTED for that hour at that stand, next to what actually happened.
+// This is the calibration dataset the score currently lacks — after a
+// season it answers "did high-score hours really produce more deer?" and
+// lets the weights (and the provisional weather-cue thresholds) be tuned on
+// evidence instead of judgment. Design rules: CREATE only (edits would
+// duplicate outcomes), no network ever (cached forecast or nothing — a
+// backdated or uncovered entry is skipped, not padded), and absolute
+// silence: this must never slow, block or fail a save, so everything is
+// wrapped and errors are swallowed. Capped FIFO at 800 records (~a season
+// of heavy use); the prediction maths lives in lib buildScoreSnapshot.
+var FL_SCORE_LOG_KEY = 'fl-score-log-v1';
+/* Findings 19/20: whether grounds exports carry high-seat waypoints. Sticky,
+   because a privacy choice the user has to remember to re-make every time is
+   not a privacy choice. Absent = on, which is the long-standing behaviour. */
+var FL_EXPORT_SEATS_KEY = 'fl-export-seats-v1';
+var FL_SCORE_LOG_CAP = 800;
+
+/** 'HH:MM'(:SS) → minutes since midnight, else null. */
+function flTimeToMin(t) {
+  if (!t) return null;
+  var m = /^(\d{1,2}):(\d{2})/.exec(String(t).trim());
+  if (!m) return null;
+  var v = (+m[1]) * 60 + (+m[2]);
+  return (v >= 0 && v < 1440) ? v : null;
+}
+
+/** The stands list every reader should trust: the live list when loaded
+ *  (refreshStandsView overlays it), else the offline cache with queued
+ *  outbox work overlaid — so a seat saved offline is real everywhere at
+ *  once: the picker, the score logger, exports, maps and the manage sheet. */
+function flEffectiveStands() {
+  if (flStandsState.list && flStandsState.list.length) return flStandsState.list;
+  var cached = flCachedStands();
+  return currentUser ? applyStandOutbox(cached, standOutbox(currentUser.id)) : cached;
+}
+
+/** info: { kind, date, lat, lng, timeMin, winMins, species, n } */
+function flLogScoreSnapshot(info) {
+  try {
+    var stands = flEffectiveStands();
+    var snap = flBuildScoreSnapshot({
+      stands: stands,
+      cache: flCachedForecastRaw(),
+      lat: info.lat, lng: info.lng, dateStr: info.date,
+      timeMin: info.timeMin, winMins: info.winMins,
+      species: flMySpecies(),
+      kind: info.kind, n: info.n, entrySpecies: info.species,
+      nowMs: Date.now(),
+      // ONE definition of "near this stand" (round 17): the same 300 m the
+      // visible record card and sightings matching use — so the calibration
+      // dataset and the displayed evidence agree on which culls belong where.
+      maxDistM: STAND_HISTORY_RADIUS_M
+    });
+    if (!snap) return;
+    snap.appVer = FL_APP_VERSION;
+    snap.model = FL_FC_MODEL; // which weather model made this prediction (round 14)
+    var log = [];
+    try { log = JSON.parse(localStorage.getItem(FL_SCORE_LOG_KEY) || '[]'); } catch (e2) { }
+    if (!Array.isArray(log)) log = [];
+    log.push(snap);
+    if (log.length > FL_SCORE_LOG_CAP) log = log.slice(log.length - FL_SCORE_LOG_CAP);
+    localStorage.setItem(FL_SCORE_LOG_KEY, JSON.stringify(log));
+  } catch (e) { /* silent by design — never disturb a save */ }
+}
+
+/** The logger's info bag from a cull/blank payload (online or offline shape). */
+function flSnapshotInfoFromEntry(p) {
+  var start = flTimeToMin(p.outing_start_time), end = flTimeToMin(p.outing_end_time);
+  return {
+    kind: p.is_blank ? 'blank' : 'cull',
+    date: p.date, lat: p.lat, lng: p.lng,
+    timeMin: flTimeToMin(p.time),
+    winMins: (start != null && end != null) ? [start, end] : null,
+    species: p.species || null,
+    n: p.is_blank ? 0 : (p.quantity || 1)
+  };
+}
+
+/**
+ * A syndicate's "season starts in" month (1–12) from its
+ * `syndicates.season_start_month` column (live since the step-2 migration;
+ * arrives free on every fetched row — loadMySyndicateRows and the manage
+ * sheet both select('*')). Missing / garbage normalises to 8 (August).
+ * SYNDICATE context only — the §2 context rule: syndicate views bucket by
+ * the syndicate's month, personal views by the user's, never mixed.
+ */
+function syndicateSeasonStartMonth(syn) {
+  return normalizeSeasonStartMonth(syn && syn.season_start_month);
+}
+
+/**
+ * `startMonth` optional (step-4 context argument): omitted ⇒ the viewer's
+ * personal month; pass syndicateSeasonStartMonth(s) in syndicate views.
+ */
+function isCurrentSeason(season, startMonth) {
+  // Delegate to getCurrentSeason so this uses the SAME Europe/London calendar as
+  // the rest of the app. Reading device-local month/year here (getMonth/getFullYear)
+  // diverged from getCurrentSeason for a user abroad at the season boundary, which
+  // could mislabel the live season "read only" and block target editing.
+  return season === getCurrentSeason(startMonth);
 }
 
 /** UK deer season immediately after `seasonKey` (Aug–Jul), e.g. 2025-26 → 2026-27. */
@@ -275,19 +490,21 @@ function getNextSeasonAfter(seasonKey) {
 
 /**
  * Personal cull targets (and syndicate group targets keyed by season) may be
- * edited for the active season or the **next** Aug–Jul season so managers can
- * plan before 1 August — previously blocked until the season started.
+ * edited for the active season or the **next** season so managers can plan
+ * ahead — previously blocked until the season started. `startMonth` optional
+ * (step-4 context argument): omitted ⇒ personal month; syndicate callers
+ * pass their syndicate's month so "current"/"next" follow that context.
  */
-function seasonAllowsTargetEditing(seasonKey) {
+function seasonAllowsTargetEditing(seasonKey, startMonth) {
   if (!seasonKey || seasonKey === '__all__') return false;
-  if (isCurrentSeason(seasonKey)) return true;
-  var upcoming = getNextSeasonAfter(getCurrentSeason());
+  if (isCurrentSeason(seasonKey, startMonth)) return true;
+  var upcoming = getNextSeasonAfter(getCurrentSeason(startMonth));
   return !!(upcoming && seasonKey === upcoming);
 }
 
-function isPastSeasonForTargets(seasonKey) {
+function isPastSeasonForTargets(seasonKey, startMonth) {
   if (!seasonKey || seasonKey === '__all__') return false;
-  return !seasonAllowsTargetEditing(seasonKey);
+  return !seasonAllowsTargetEditing(seasonKey, startMonth);
 }
 
 async function loadTargets(season) {
@@ -364,12 +581,6 @@ function diaryHeroNoPhotoHtml() {
     + '<div class="detail-hero-noph-t">No photo</div></div>';
 }
 
-function diaryPhotoThumbEmptyHtml() {
-  return '<div class="photo-thumb-noph">'
-    + '<span class="di-ic di-ic--thumb-noph" aria-hidden="true">' + SVG_FL_IMAGE_OFF + '</span>'
-    + '<div class="photo-thumb-noph-t">No photo</div></div>';
-}
-
 function flToastParse(msg) {
   var m = String(msg == null ? '' : msg);
   if (/^✅\s*/.test(m)) return { kind: 'ok', text: m.replace(/^✅\s*/, '') };
@@ -382,7 +593,75 @@ function flToastParse(msg) {
   if (/^☁️?\s*/.test(m)) return { kind: 'info', text: m.replace(/^☁️?\s*/, '') };
   if (/^⏳\s*/.test(m)) return { kind: 'info', text: m.replace(/^⏳\s*/, '') };
   if (/^🗑\uFE0F?\s*/.test(m)) return { kind: 'info', text: m.replace(/^🗑\uFE0F?\s*/, '') };
+  // Wave H: the toast paints its own icon from `kind`, so any glyph still on
+  // the front of the text draws a SECOND icon beside it - in full-colour
+  // emoji, against a themed pill. Twenty-seven call sites were already covered
+  // by the rules above; nine carried a mark this list had never heard of - six
+  // an info i, one a download arrow, one footprints, one a satellite dish.
+  // Rather than chase each one and wait for the tenth, strip whatever
+  // pictograph leads and let the icon do the job it was added for.
+  //
+  // The class is deliberately narrow. It covers the pictographic planes and the
+  // handful of loose symbols used as marks, and it leaves the app's typographic
+  // glyphs alone - tick, cross, arrows, en dash, degree - because a message is
+  // allowed to open on one of those and mean it.
+  var lead = /^(?:[\u2139\u23F3\u2B05-\u2B07\u2B1B\u2B1C\u2B50\u2934\u2935]|[\uD83C-\uD83E][\uDC00-\uDFFF])\uFE0F?\s*/;
+  if (lead.test(m)) return { kind: 'info', text: m.replace(lead, '') };
   return { kind: 'info', text: m };
+}
+
+/** Live subtitle for the collapsed Season Plan card (live-review rec): a
+ *  closed box shouldn't be opaque. Reads the hero's canonical target calc —
+ *  null when no target is set, so callers fall back to the static line. */
+function flPlanSubSummary() {
+  try {
+    var d = flLastHeroData;
+    if (!d) return null;
+    var c = d.targetCalc || {};
+    var t = c.targetTotal || 0;
+    if (!(t > 0)) return null;
+    // DEER-only numerator (d.targetRows), same as the hero + plan-card total — NOT
+    // d.total (all cull rows), which counted a pest bag's row and read e.g. 7/21
+    // while the hero + plan total correctly showed 6/21.
+    var n = (d.targetRows != null ? d.targetRows : d.total) || 0;
+    return n + '/' + t + ' culled · ' + Math.min(999, Math.round(n / t * 100)) + '% of target';
+  } catch (e) { return null; }
+}
+
+/**
+ * Section 6 (2026-07-25): a plan row with no target used to draw a FULL bar and
+ * label itself "3/0". Both halves said the same wrong thing. A zero-denominator
+ * percentage is not 100%, it is undefined, and "3/0" is the one fraction a
+ * reader is entitled to read as a typo - so three Roe does culled against no
+ * plan looked, at a glance, like a species finished. An untargeted row now
+ * leaves its track empty and says what it is. One helper serves both the
+ * personal plan card and the syndicate progress bars, which carried identical
+ * copies of the defect.
+ *   opts.gold       - syndicate "Yours" palette instead of the green plan bars
+ *   opts.small      - 10px count (the indented "Yours" sub-row)
+ *   opts.rowClass   - extra class on the row
+ *   opts.noneLabel  - wording when there is no denominator (default "no target")
+ * Label is inserted as given, so callers escape it exactly as they do today.
+ */
+function flPlanSexRowHtml(icon, label, target, actual, opts) {
+  opts = opts || {};
+  var has = target > 0;
+  var pct = has ? Math.min(100, Math.round(actual / target * 100)) : 0;
+  var done = has && actual >= target;
+  var bar = opts.gold
+    ? (done ? 'linear-gradient(90deg,#b8860b,#f0cc74)' : 'linear-gradient(90deg,#d8b054,#f0cc74)')
+    : (done ? 'linear-gradient(90deg,#2d7a1a,#7adf7a)' : 'linear-gradient(90deg,#5a7a30,#7adf7a)');
+  var cls = !has ? 'plan-count-none' : done ? 'plan-count-done' : actual === 0 ? 'plan-count-zero' : '';
+  var txt = has ? (actual + '/' + target + (done ? ' ✓' : ''))
+                : (actual + ' · ' + (opts.noneLabel || 'no target'));
+  return '<div class="plan-sex-row' + (opts.rowClass ? ' ' + opts.rowClass : '') + '">'
+    + '<div class="plan-sex-icon">' + icon + '</div>'
+    + '<div class="plan-sex-lbl">' + label + '</div>'
+    + '<div class="plan-bar-wrap' + (has ? '' : ' plan-bar-wrap--none') + '">'
+    + (has ? '<div class="plan-bar" style="width:' + pct + '%;background:' + bar + ';"></div>' : '')
+    + '</div>'
+    + '<div class="plan-count ' + cls + '"' + (opts.small ? ' style="font-size:10px;"' : '') + '>' + txt + '</div>'
+    + '</div>';
 }
 
 function renderPlanCard(entries, season) {
@@ -395,7 +674,7 @@ function renderPlanCard(entries, season) {
   var canEditTargets = seasonAllowsTargetEditing(season);
   if (editBtn) editBtn.style.display = canEditTargets ? '' : 'none';
   if (planSub) {
-    if (isCurrentSeason(season)) planSub.textContent = 'Cull targets vs actual';
+    if (isCurrentSeason(season)) planSub.textContent = flPlanSubSummary() || 'Cull targets vs actual';
     else if (seasonAllowsTargetEditing(season)) planSub.textContent = 'Next season · plan ahead';
     else planSub.textContent = 'Past season · read only';
   }
@@ -448,6 +727,22 @@ function renderPlanCard(entries, season) {
     activeTargets = groundTargets[planGroundFilter] || {};
   }
 
+  // Live deer SEEN per species, scoped to the plan's season + ground (S5b) — the
+  // "seen vs culled" signal. allSightings is loaded lazily on the Stats tab.
+  var seenBySpecies = {};
+  if (allSightings && allSightings.length) {
+    var _seenB = seasonBoundsForKey(season, personalSeasonStartMonth());
+    allSightings.forEach(function(sg) {
+      var d = sightingDatePart(sg);
+      if (_seenB) { if (!d || d < _seenB.startIso || d > _seenB.endIso) return; }
+      if (planGroundFilter && planGroundFilter !== 'overview') {
+        if (planGroundFilter === '__unassigned__') { if (sg.ground) return; }
+        else if (sg.ground !== planGroundFilter) return;
+      }
+      if (sg.species) seenBySpecies[sg.species] = (seenBySpecies[sg.species] || 0) + sightingHeadcount(sg);
+    });
+  }
+
   var totalTarget = 0, totalActual = 0;
   var html = '';
 
@@ -470,44 +765,49 @@ function renderPlanCard(entries, season) {
     html += '<div class="plan-sp-hdr">';
     html += '<div class="plan-sp-dot" style="background:' + sp.color + ';"></div>';
     html += '<div class="plan-sp-name">' + sp.name + '</div>';
-    html += '<div class="plan-sp-total">' + spActual + '/' + spTarget + '</div>';
+    html += '<div class="plan-sp-total' + (spTarget > 0 ? '' : ' plan-sp-total--none') + '">'
+      + (spTarget > 0 ? (spActual + '/' + spTarget) : (spActual + ' · no target')) + '</div>';
     html += '</div>';
+    if (seenBySpecies[sp.name]) {
+      html += '<div class="plan-sp-seen">' + svgEyeHtml(11, '#5a7a30') + ' ' + seenBySpecies[sp.name] + ' seen · ' + spActual + ' culled this season</div>';
+    }
 
     // Male row — show if target set OR actuals exist
     if (mTarget > 0 || mActual > 0) {
-      var mPct = mTarget > 0 ? Math.min(100, Math.round(mActual / mTarget * 100)) : (mActual > 0 ? 100 : 0);
-      var mDone = mTarget > 0 && mActual >= mTarget;
-      var barColor = mTarget === 0 ? 'linear-gradient(90deg,#a0988a,#c0b8a8)' : mDone ? 'linear-gradient(90deg,#2d7a1a,#7adf7a)' : 'linear-gradient(90deg,#5a7a30,#7adf7a)';
-      html += '<div class="plan-sex-row">';
-      html += '<div class="plan-sex-icon">♂</div>';
-      html += '<div class="plan-sex-lbl">' + sp.mLbl + '</div>';
-      html += '<div class="plan-bar-wrap"><div class="plan-bar" style="width:' + mPct + '%;background:' + barColor + ';"></div></div>';
-      html += '<div class="plan-count ' + (mDone ? 'plan-count-done' : mActual === 0 ? 'plan-count-zero' : '') + '">' + mActual + '/' + mTarget + (mDone ? ' ✓' : '') + '</div>';
-      html += '</div>';
+      html += flPlanSexRowHtml('♂', sp.mLbl, mTarget, mActual);
     }
 
     // Female row — show if target set OR actuals exist
     if (fTarget > 0 || fActual > 0) {
-      var fPct = fTarget > 0 ? Math.min(100, Math.round(fActual / fTarget * 100)) : (fActual > 0 ? 100 : 0);
-      var fDone = fTarget > 0 && fActual >= fTarget;
-      var fBarColor = fTarget === 0 ? 'linear-gradient(90deg,#a0988a,#c0b8a8)' : fDone ? 'linear-gradient(90deg,#2d7a1a,#7adf7a)' : 'linear-gradient(90deg,#5a7a30,#7adf7a)';
-      html += '<div class="plan-sex-row">';
-      html += '<div class="plan-sex-icon">♀</div>';
-      html += '<div class="plan-sex-lbl">' + sp.fLbl + '</div>';
-      html += '<div class="plan-bar-wrap"><div class="plan-bar" style="width:' + fPct + '%;background:' + fBarColor + ';"></div></div>';
-      html += '<div class="plan-count ' + (fDone ? 'plan-count-done' : fActual === 0 ? 'plan-count-zero' : '') + '">' + fActual + '/' + fTarget + (fDone ? ' ✓' : '') + '</div>';
-      html += '</div>';
+      html += flPlanSexRowHtml('♀', sp.fLbl, fTarget, fActual);
     }
 
     html += '</div>';
   });
 
   // Total row
-  var totalPct = totalTarget > 0 ? Math.min(100, Math.round(totalActual / totalTarget * 100)) : 0;
   html += '<div class="plan-total-row">';
   html += '<div class="plan-total-lbl">Total</div>';
-  html += '<div class="plan-total-bar"><div class="plan-total-fill" style="width:' + totalPct + '%;"></div></div>';
-  html += '<div class="plan-total-count">' + totalActual + '/' + totalTarget + '</div>';
+  if (totalTarget > 0) {
+    var totalPct = Math.min(100, Math.round(totalActual / totalTarget * 100));
+    // PP-4: a quiet gold progress ring (replaces the flat bar) - season-target
+    // completeness at a glance, framed neutrally as % culled toward target, never
+    // a kill-streak/celebration. The raw count still sits alongside.
+    var _prC = 2 * Math.PI * 16;
+    html += '<div class="plan-ring" role="img" aria-label="' + totalPct + '% of season target culled">'
+      + '<svg class="plan-ring-svg" width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">'
+      + '<circle cx="20" cy="20" r="16" fill="none" stroke="#ede9e2" stroke-width="3.2"/>'
+      + '<circle cx="20" cy="20" r="16" fill="none" stroke="#d8b054" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="' + (_prC * totalPct / 100).toFixed(1) + ' ' + _prC.toFixed(1) + '" transform="rotate(-90 20 20)"/>'
+      + '<text x="20" y="20.5" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="700" fill="#8a6a12" font-family="DM Mono,monospace">' + totalPct + '%</text>'
+      + '</svg></div>';
+    html += '<div class="plan-total-count">' + totalActual + '/' + totalTarget + '</div>';
+  } else {
+    // Section 6: with no target in this view there is no percentage to draw. A
+    // 0% ring would be a claim about a plan that does not exist - and with a
+    // ground filter on, an untargeted ground is an ordinary state, not an error.
+    html += '<div class="plan-total-none">no target set for this view</div>';
+    html += '<div class="plan-total-count">' + totalActual + ' culled</div>';
+  }
   html += '</div>';
 
   if (isPastSeasonForTargets(season)) html += '<div class="plan-past-note">Past season — read only</div>';
@@ -773,7 +1073,7 @@ async function saveTargets() {
     renderPlanGroundFilter();
     renderPlanCard(allEntries, currentSeason);
   } catch(e) {
-    showToast('⚠️ Save failed: ' + (e.message || 'Unknown error'));
+    showToast('⚠️ Save failed: ' + friendlyErr(e, 'Unknown error'));
     flHapticError();
   }
   btn.disabled = false; btn.innerHTML = diaryCloudSaveInner('Save targets');
@@ -793,7 +1093,7 @@ function initSupabase() {
     // Show setup notice on auth card instead of crashing.
     var note = document.querySelector('.auth-note');
     if (note) {
-      note.innerHTML = '<span style="color:#c62828;font-weight:700;">Supabase not configured.</span><br>Open <strong>modules/supabase.mjs</strong> and set<br><code>SUPABASE_URL</code> and <code>SUPABASE_KEY</code><br>(replace the <code>YOUR_SUPABASE_*</code> placeholders).';
+      note.innerHTML = '<span style="color:var(--red);font-weight:700;">Supabase not configured.</span><br>Open <strong>modules/supabase.mjs</strong> and set<br><code>SUPABASE_URL</code> and <code>SUPABASE_KEY</code><br>(replace the <code>YOUR_SUPABASE_*</code> placeholders).';
     }
     document.getElementById('auth-btn').disabled = true;
     return false;
@@ -807,6 +1107,52 @@ function initSupabase() {
 // ════════════════════════════════════
 var currentUser   = null;
 var allEntries    = [];
+// ── Sightings (live deer seen) — S4 view + map-layer state ──
+var allSightings   = [];
+var sightingsLoaded = false;
+var sightFilter    = 'all';   // species chip filter in the Sightings view
+var sightSortAsc   = false;   // Sightings view: newest first by default
+var cullMapMode    = 'culls'; // cull map layer: 'culls' | 'sightings' | 'both'
+var sightHeatLayer = null;    // Leaflet layerGroup of sighting "heat" circles
+// Batch 2: how the CULL layer is drawn — individual pins/clusters (default) or a
+// density "heat" map (overlapping translucent discs that stack into hotspots).
+var cullDisplay    = 'pins';  // 'pins' | 'heat'
+var cullHeatLayer  = null;    // Leaflet layerGroup of cull-density circles
+var sightView      = 'list';  // Sightings view body: 'list' | 'trends' (S5a)
+var editingSightingId = null; // when set, the Sighting form edits this row (polish)
+// Round 17: which stand launched the entry form (via "Add entry here"), so a
+// sighting saved from that path carries its stand_id instead of relying on
+// GPS-radius matching. null = form opened normally; preserved on edits.
+var flFormStandId = null;
+// ── Pest bag quantity (PEST-QUANTITY-PLAN.md PQ2): a "how many?" count for the
+//    four high-volume pests only; every other species (deer / fox / boar) and
+//    blank days always = 1. entryQty() reads the DB column (default 1). ──
+var PEST_QUANTITY_SPECIES = ['Rabbit', 'Grey Squirrel', 'Pigeon', 'Corvid'];
+function speciesUsesQuantity(sp) { return PEST_QUANTITY_SPECIES.indexOf(sp) !== -1; }
+function entryQty(e) { var q = e ? (e.quantity | 0) : 0; return q > 0 ? q : 1; }
+var formQuantity = 1;
+function entryQtyStep(delta) {
+  var next = formQuantity + (delta | 0);
+  if (next < 1) next = 1;
+  if (next > 1000) next = 1000;
+  formQuantity = next;
+  var el = document.getElementById('f-qty-val');
+  if (el) el.value = String(next);
+  formDirty = true;
+}
+// #f-qty-val is a typable numeric input (a 200-bird pigeon bag can't be reached
+// by tapping + 200 times). Live-sync formQuantity from what's typed, clamped
+// 1..1000; the field is normalised to the clamped value on blur so an empty or
+// over-cap entry settles to something valid.
+function readFormQuantityFromInput() {
+  var el = document.getElementById('f-qty-val');
+  if (!el) return;
+  var digits = String(el.value == null ? '' : el.value).replace(/[^0-9]/g, '');
+  var n = parseInt(digits, 10);
+  if (!isFinite(n) || n < 1) n = 1;
+  if (n > 1000) { n = 1000; el.value = '1000'; }
+  formQuantity = n;
+}
 /** All-season rows for Summary PDF modal only (see openSummaryFilter). */
 var summaryEntryPool = null;
 /** All-season rows for Export CSV/PDF modal only (see openExportModal).
@@ -828,9 +1174,23 @@ var photoPreviewUrl = null;
 // preventing orphan photos from accumulating. `null` when adding a new entry or
 // when the edited entry had no photo to begin with.
 var editingOriginalPhotoPath = null;
+// True only when the user explicitly taps "remove photo". Distinguishes an
+// intentional removal from an empty photo slot caused by a transient
+// signed-URL failure at edit-open — without it, one failed sign + any save
+// would null photo_url AND delete the stored object (a routine edit destroying
+// the photo). Reset when opening a new/edit form.
+var photoExplicitlyRemoved = false;
+// Stored path of a sighting's photo at edit-open, so a failed sign doesn't
+// detach it on save (the sighting mirror of editingOriginalPhotoPath).
+var editingOriginalSightingPhotoPath = null;
 var formSpecies   = '';
 /** When true, form logs a blank day (outing, no shot). */
 var formIsBlank   = false;
+// ── Sightings capture (SIGHTINGS-PLAN.md S3) — mutually exclusive with
+//    formIsBlank. Counts mirror the sightings table's four columns. ──
+var formIsSighting = false;
+var flSightingCounts = { n_male: 0, n_female: 0, n_young: 0, n_unknown: 0 };
+var flSightingBehaviour = '';
 
 function revokeBlobPreviewUrl(u) {
   if (u && u.indexOf('blob:') === 0) {
@@ -871,6 +1231,24 @@ function enhanceKeyboardClickables(root) {
 function initDiaryFlUi() {
   document.body.addEventListener('click', function(e) {
     var el = e.target.closest('[data-fl-action]');
+    // G6: the map ＋ menu closes on any tap that isn't the ＋ or a menu row.
+    var gm = document.getElementById('gmb-menu');
+    if (gm && gm.style.display !== 'none'
+        && !(el && (el.getAttribute('data-fl-action') === 'ground-add-menu' || el.classList.contains('gmb-mi')))) {
+      gmbClose();
+    }
+    // G7: same rule for the ground switcher popover.
+    var gg = document.getElementById('gmb-grounds-menu');
+    if (gg && gg.style.display !== 'none'
+        && !(el && (el.getAttribute('data-fl-action') === 'gmb-grounds' || el.closest('#gmb-grounds-menu')))) {
+      gmbGroundsClose();
+    }
+    // G8: and for the seat filter popover.
+    var gf = document.getElementById('stnd-filter-menu');
+    if (gf && gf.style.display !== 'none'
+        && !(el && (el.getAttribute('data-fl-action') === 'stands-map-filter' || el.closest('#stnd-filter-menu')))) {
+      gf.style.display = 'none';
+    }
     if (!el) return;
     var act = el.getAttribute('data-fl-action');
     switch (act) {
@@ -892,6 +1270,117 @@ function initDiaryFlUi() {
       case 'save-name-edit':
         void saveNameEdit();
         break;
+      case 'open-settings-sheet': openSettingsSheet(); break;
+      case 'close-settings-sheet': closeSettingsSheet(); break;
+      case 'open-stand-sheet': {
+        var _sid = el.getAttribute('data-stand-id') || null;
+        openStandSheet(_sid, _sid ? null : standsMapSeed(true)); // G11/G21: new stand ALWAYS seeds from the map you're on
+        break;
+      }
+      case 'close-stand-sheet': closeStandSheet(); break;
+      case 'stand-sheet-pin': standSheetPickPin(); break;
+      case 'stand-sheet-gps': standSheetUseGps(); break;
+      case 'stand-wind-toggle': toggleStandWind(el.getAttribute('data-dir')); break;
+      case 'stand-face-set': setStandFacing(el.getAttribute('data-dir')); break;
+      case 'stand-face-aim': flStandFaceAimStart(); break;
+      case 'stand-face-aim-cancel': flStandFaceAimEnd(null); break;
+      case 'stand-photo-add': standPhotoAddClick(); break;
+      case 'stand-photo-remove': standPhotoRemove(el); break;
+      // Grounds boundaries (G2 — GROUNDS-PLAN.md §4)
+      case 'open-grounds-sheet': gmbLeaveFull(); openGroundsSheet(); break;
+      case 'close-grounds-sheet': closeGroundsSheet(); break;
+      case 'grounds-add': groundsAddFromInput(); break;
+      case 'ground-draw': openBoundaryEditor(el.getAttribute('data-ground'), null); break;
+      case 'ground-edit': openBoundaryEditor(el.getAttribute('data-ground'), el.getAttribute('data-feature-id')); break;
+      case 'ground-parcel-delete': groundParcelDelete(el); break;
+      case 'gmap-add-point': gmapAddPoint(); break;
+      case 'gmap-undo': gmapUndo(); break;
+      case 'gmap-close-ring': gmapCloseRing(); break;
+      case 'gmap-save': gmapSave(); break;
+      case 'gmap-cancel': gmapCancel(); break;
+      case 'gmap-layer': setGmapLayer(el.getAttribute('data-layer')); break;
+      case 'gmap-locate': gmapLocate(); break;
+      // G4 (GROUNDS-PLAN §6)
+      case 'ground-draw-zone': openBoundaryEditor(el.getAttribute('data-ground'), null, 'no_shoot'); break;
+      case 'ground-draw-line': openBoundaryEditor(el.getAttribute('data-ground'), null, 'line'); break; // G9
+      case 'ground-add-marker': openBoundaryEditor(el.getAttribute('data-ground'), null, 'marker'); break; // G10
+      case 'gmap-marker-type': gmapSetMarkerType(el.getAttribute('data-type')); break; // G10
+      case 'gmap-line-type': gmapSetLineType(el.getAttribute('data-type')); break; // G15
+      case 'gmap-ground-new-toggle': gmapGroundNewToggle(); break; // G18
+      case 'gmap-ground-new-create': gmapGroundNewCreate(); break; // G18
+      case 'gmap-kind': gmapSetKind(el.getAttribute('data-kind')); break;
+      case 'gmap-walk': gmapWalkToggle(); break;
+      case 'grounds-export': groundsExport(el.getAttribute('data-format')); break;
+      case 'grounds-import': groundsImportClick(); break;
+      // Finding S: rename / remove a ground from the My grounds sheet itself
+      case 'grx-rename-start': groundsSheetRenaming = el.getAttribute('data-ground'); renderGroundsSheet(); break;
+      case 'grx-rename-save': groundsSheetRenameSave(el.getAttribute('data-ground')); break;
+      case 'grx-rename-cancel': groundsSheetRenaming = null; renderGroundsSheet(); break;
+      case 'grx-ground-delete': groundsSheetDeleteGround(el.getAttribute('data-ground')); break;
+      case 'grounds-measure': openMeasureTool(); break; // G5
+      // G6: the Ground canvas ＋ menu (one thumb from the map to everything)
+      case 'ground-add-menu': gmbToggle(); break;
+      // G7: Grounds = switcher first (see it), Manage second (edit it)
+      case 'gmb-grounds': gmbGroundsToggle(); break;
+      case 'gmb-goto': gmbGroundsClose(); gmbGoToGround(el.getAttribute('data-ground')); break;
+      case 'gmb-pick-draw': gmbGroundsClose(); openBoundaryEditor(el.getAttribute('data-ground'), null, el.getAttribute('data-kind'), standsMapSeedLL()); break; // G16a/c
+      case 'gmb-pick-newground': gmbNewGroundStart(el.getAttribute('data-kind')); break; // G16b
+      case 'gmb-create-ground': gmbCreateGroundAndDraw(el.getAttribute('data-kind')); break; // G16b
+      // G17: manage grounds (rename / delete) inline
+      case 'gmb-edit-toggle': gmbEnterManage(); break;
+      case 'gmb-manage-done': gmbExitManage(); break;
+      case 'gmb-rename-start': gmbRenaming = el.getAttribute('data-ground'); gmbArmedDelete = null; gmbRenderManage(); break;
+      case 'gmb-rename-save': gmbRenameSave(el.getAttribute('data-ground')); break;
+      case 'gmb-del-arm': gmbArmedDelete = el.getAttribute('data-ground'); gmbRenaming = null; gmbRenderManage(); break;
+      case 'gmb-del-cancel': gmbArmedDelete = null; gmbRenderManage(); break;
+      case 'gmb-del-confirm': gmbDelConfirm(el.getAttribute('data-ground')); break;
+      case 'gmb-manage': gmbGroundsClose(); gmbLeaveFull(); openGroundsSheet(); break;
+      // G8: map filter for busy estates
+      case 'stands-map-filter': standsFilterToggle(); break;
+      case 'stands-filter-ground': {
+        var fg = el.getAttribute('data-ground');
+        standsFilterSetGround(fg === '__all__' ? null : fg);
+        break;
+      }
+      case 'stands-filter-names': standsFilterNamesToggle(); break;
+      case 'stands-filter-mtype': standsFilterMarkerToggle(el.getAttribute('data-type')); break;
+      case 'stands-filter-mnames': standsFilterMarkerNamesToggle(); break;
+      case 'gmb-stand': gmbClose(); gmbLeaveFull(); openStandSheet(null, standsMapSeed(true)); break; // G21: always seed from the map
+      case 'gmb-boundary': gmbClose(); gmbLeaveFull(); gmbDrawSmart('boundary'); break;
+      case 'gmb-zone': gmbClose(); gmbLeaveFull(); gmbDrawSmart('no_shoot'); break;
+      case 'gmb-line': gmbClose(); gmbLeaveFull(); gmbDrawSmart('line'); break; // G9
+      case 'gmb-marker': gmbClose(); gmbLeaveFull(); gmbDrawSmart('marker'); break; // G10
+      case 'gmb-measure': gmbClose(); gmbLeaveFull(); openMeasureTool(); break;
+      case 'stands-map-locate': standsMapLocate(); break;
+      case 'stands-fit-all': flStandsFitAll(); break; // ST-3/ST-10
+
+      case 'open-stand-photo': flOpenStandPhoto(el); break;
+      case 'save-stand': saveStandFromSheet(); break;
+      case 'open-stand-detail': openStandDetail(el.getAttribute('data-stand-id')); break;
+      case 'delete-stand': deleteStandFromDetail(); break;
+      case 'stand-add-entry': standAddEntryHere(); break;
+      case 'stand-day':
+        flStandsState.detailDayIdx = parseInt(el.getAttribute('data-day-idx'), 10) || 0;
+        if (flStandsState.detailId) renderStandDetail(flStandsState.detailId);
+        break;
+      case 'open-stand-day':
+        openStandDetail(el.getAttribute('data-stand-id'), parseInt(el.getAttribute('data-day-idx'), 10) || 0);
+        break;
+      case 'check-app-updates':
+        void checkAppUpdates();
+        break;
+      case 'sync-offline-now':
+        void syncOfflineNow();
+        break;
+      case 'open-season-start-edit': openSeasonStartEditModal(); break;
+      case 'close-season-start': closeSeasonStartEditModal(); break;
+      case 'save-season-start':
+        void saveSeasonStartEdit();
+        break;
+      case 'open-species-edit': openSpeciesEditModal(); break;
+      case 'close-species': closeSpeciesEditModal(); break;
+      case 'save-species': saveSpeciesEdit(); break;
+      case 'species-use-logged': flTickLoggedSpeciesOnly(); break;
       case 'open-password-change': openPasswordChangeModal(); break;
       case 'close-password-change': closePasswordChangeModal(); break;
       case 'save-password-change':
@@ -921,16 +1410,111 @@ function initDiaryFlUi() {
       case 'photo-camera': offlinePhotoWarn(function(){ var c = document.getElementById('photo-input-camera'); if (c) c.click(); }); break;
       case 'photo-gallery': offlinePhotoWarn(function(){ var c = document.getElementById('photo-input-gallery'); if (c) c.click(); }); break;
       case 'remove-photo': removePhoto(); break;
+      case 'photo-exif-apply': applyPhotoExif(); break;
+      case 'photo-exif-dismiss': hidePhotoExifCard(); break;
       case 'pick-species': pickSpecies(el, el.getAttribute('data-species')); break;
+      case 'toggle-pest-species': togglePestSpeciesGrid(); break;
+      case 'toggle-pest-filters': togglePestFilters(el); break;
       case 'pick-sex': pickSex(el.getAttribute('data-sex')); break;
+      case 'entry-qty': entryQtyStep(parseInt(el.getAttribute('data-d'), 10)); break;
       case 'open-pin': openPinDrop(); break;
       case 'get-gps': getGPS(); break;
       case 'clear-pinned': clearPinnedLocation(); break;
       case 'save-entry': saveEntry(); break;
       case 'enter-blank-day': enterBlankDay(); break;
       case 'exit-blank-day': exitBlankDay(); break;
+      case 'enter-sighting': enterSighting(); break;
+      case 'exit-sighting': exitSighting(); break;
+      case 'set-entry-mode': setEntryMode(el.getAttribute('data-mode')); break;
+      case 'sighting-count':
+        // SG3: the click after a hold's release would double-count — swallow it.
+        if (flStepHold.fired) { flStepHold.fired = false; break; }
+        sightingCount(el.getAttribute('data-k'), parseInt(el.getAttribute('data-d'), 10));
+        break;
+      case 'sighting-type': sightingTypeCount(el.getAttribute('data-k')); break;
+      case 'sighting-same-again': applySightingAgain(); break;
+      case 'pick-behaviour': pickBehaviour(el, el.getAttribute('data-b')); break;
+      case 'open-new-sighting': openNewSighting(); break;
+      case 'filter-sightings': filterSightings(el.getAttribute('data-species'), el); break;
+      case 'toggle-sight-sort': toggleSightSort(); break;
+      case 'set-sight-view': setSightView(el.getAttribute('data-sv')); break;
+      case 'export-sightings-csv': exportSightingsCsv(); break;
+      case 'export-sightings-pdf': exportSightingsPDF(); break;
+      case 'edit-sighting': openEditSighting(el.getAttribute('data-sight-id')); break;
+      case 'sight-to-cull': openCullFromSighting(el.getAttribute('data-sight-id')); break;
+      case 'open-sighting-detail': openSightingDetail(el.getAttribute('data-sight-id')); break;
+      case 'sight-show-on-map': focusSightingOnMap(el.getAttribute('data-sight-id')); break;
+      case 'sight-map-band': // SG8 map lens
+        flSightMapBand = el.getAttribute('data-band') || 'all';
+        renderSightMap();
+        break;
+      case 'delete-sighting': deleteSightingPrompt(el.getAttribute('data-sight-id') || editingSightingId); break;
+      case 'set-cull-mode': setCullMode(el.getAttribute('data-mode')); break;
+      case 'set-cull-display': setCullDisplay(el.getAttribute('data-display')); break;
+      case 'open-nogps-recovery': openNoGpsRecovery(); break;
+      case 'close-nogps': closeNoGpsRecovery(); break;
+      case 'place-nogps': placeNoGpsEntry(el.getAttribute('data-entry-id'), el.getAttribute('data-kind')); break;
+      case 'open-sightings-map': openSightingsMap(); break;
       case 'open-targets': openTargetsSheet(); break;
+      case 'stats-jump': flStatsJump(el.getAttribute('data-target')); break;
       case 'set-cull-layer': setCullLayer(el.getAttribute('data-layer')); break;
+      case 'cull-open-map': flOpenCullOnMap(el.getAttribute('data-entry-id')); break;
+      case 'stand-open-map': flOpenStandOnMap(el.getAttribute('data-stand-id')); break;
+      case 'expand-map': flOpenMapModal(el.getAttribute('data-map-kind'), el.getAttribute('data-map-id')); break;
+      case 'close-map-modal': flCloseMapModal(); break;
+      case 'set-stands-layer': setStandsLayer(el.getAttribute('data-layer')); break;
+      case 'set-stands-plan-mode': flStandsState.planMode = (el.getAttribute('data-mode') === 'plan'); renderStandsList(); break;
+      case 'set-stands-plan-win': flStandsState.planWin = el.getAttribute('data-win'); renderStandsList(); break;
+      case 'set-stands-sort': flStandsState.sortMode = (el.getAttribute('data-sort') === 'best' ? 'best' : 'ground'); renderStandsList(); break;
+      case 'set-stands-view':
+        flStandsState.compact = el.getAttribute('data-density') === 'compact';
+        try {
+          if (flStandsState.compact) localStorage.setItem('fl-stands-compact', '1');
+          else localStorage.removeItem('fl-stands-compact');
+        } catch (e) { /* private mode — session-only is fine */ }
+        renderStandsList();
+        break;
+      case 'refresh-stand-forecasts': refreshStandForecastsNow(); break;
+      case 'share-week-plan': shareWeekPlan(); break;
+      case 'toggle-stand-hourly':
+        flStandsState.hourlyOpen = !flStandsState.hourlyOpen;
+        flPaintStandHourly();
+        break;
+      case 'open-stand-hourly':
+        // Live-bar tap (round 11): open the hour-by-hour table and bring it
+        // into view — the bar states the score, the table is the evidence.
+        flStandsState.hourlyOpen = true;
+        flPaintStandHourly();
+        var hrPanel = document.getElementById('stnd-hourly');
+        if (hrPanel) hrPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        break;
+      case 'toggle-stands-wind':
+        flStandsState.windOn = !flStandsState.windOn;
+        // Cones are on by default (round 15); remember only an explicit off.
+        try {
+          if (flStandsState.windOn) localStorage.removeItem('fl-stands-cones-off');
+          else localStorage.setItem('fl-stands-cones-off', '1');
+        } catch (e) { /* private mode — session-only is fine */ }
+        syncWindBar(); renderStandsCones();
+        break;
+      case 'stands-wind-day':
+        // Step through sits (Now / Tonight / future windows) — clamp to the
+        // live step list, which shrinks by one once tonight's dusk has gone.
+        var swSteps = flStandsWindSteps(
+          flStandsAnyDays(), flToMinutes(new Date()),
+          (flStandsState.list && flStandsState.list[0] && flStandsState.list[0].lat),
+          (flStandsState.list && flStandsState.list[0] && flStandsState.list[0].lng));
+        flStandsState.windStepIdx = Math.max(0, Math.min(swSteps.length - 1,
+          (flStandsState.windStepIdx || 0) + (parseInt(el.getAttribute('data-dir'), 10) || 0)));
+        syncWindBar(); renderStandsCones();
+        break;
+      case 'stands-wind-now':
+        // Tap the step label → straight home to Now (round 17; fourteen ‹ taps
+        // from Wednesday dusk was the alternative).
+        flStandsState.windStepIdx = 0;
+        syncWindBar(); renderStandsCones();
+        break;
+      case 'toggle-stands-map-full': flToggleStandsMapFull(); break;
       case 'set-pin-layer': setPinLayer(el.getAttribute('data-layer')); break;
       case 'open-export': openExportModal(el.getAttribute('data-export-fmt')); break;
       case 'open-syndicate-export': openSyndicateExportModal(el.getAttribute('data-export-fmt')); break;
@@ -1000,6 +1584,7 @@ function initDiaryFlUi() {
       case 'export-single-pdf': exportSinglePDF(el.getAttribute('data-entry-id')); break;
       case 'export-declaration': exportGameDealerDeclaration(el.getAttribute('data-entry-id')); break;
       case 'delete-entry': deleteEntry(el.getAttribute('data-entry-id')); break;
+      case 'undo-last-save': flUndoLastSave(); break;
       case 'gt-step':
         gtStep(el.getAttribute('data-gt-id'), parseInt(el.getAttribute('data-gt-delta'), 10));
         break;
@@ -1022,6 +1607,9 @@ function initDiaryFlUi() {
       case 'save-syndicate-targets': saveSyndicateTargets(); break;
       case 'save-syndicate-alloc': saveSyndicateAlloc(); break;
       case 'synd-generate-invite': syndGenerateInvite(); break;
+      case 'synd-save-season-start':
+        void syndSaveSeasonStart();
+        break;
       case 'synd-copy-invite': syndCopyInvite(el); break;
       case 'synd-copy-existing-invite': syndCopyExistingInvite(el); break;
       case 'synd-revoke-invite':
@@ -1107,13 +1695,37 @@ function initDiaryFlUi() {
 
   var fg = document.getElementById('f-ground');
   if (fg) fg.addEventListener('change', function() { handleGroundSelect(fg); });
+  // G4: boundary import file input (hidden; clicked via the grounds sheet).
+  var gif = document.getElementById('grounds-import-file');
+  if (gif) gif.addEventListener('change', function() {
+    var f = gif.files && gif.files[0];
+    gif.value = '';
+    if (f) groundsImportFile(f);
+  });
   var fgc = document.getElementById('f-ground-custom');
   if (fgc) {
-    fgc.addEventListener('change', function() { maybeAutoSelectSyndicateFromGround(fgc.value); });
-    fgc.addEventListener('blur', function() { maybeAutoSelectSyndicateFromGround(fgc.value); });
+    fgc.addEventListener('change', function() { maybeAutoSelectSyndicateFromGround(fgc.value); refreshGroundPinWarning(); });
+    fgc.addEventListener('blur', function() { maybeAutoSelectSyndicateFromGround(fgc.value); refreshGroundPinWarning(); });
   }
+  // AK: the stand sheet's ground select. Seeds an empty location from the
+  // ground's own centroid, and re-judges an existing pin against the new choice.
+  var sgsel = document.getElementById('stand-ground');
+  if (sgsel) sgsel.addEventListener('change', standSheetGroundChanged);
   var fs = document.getElementById('f-syndicate');
   if (fs) fs.addEventListener('change', clearSyndicateAutoNote);
+  var ssel = document.getElementById('sight-stand-sel');
+  if (ssel) ssel.addEventListener('change', onSightStandChange); // SG3
+  var sseasonSel = document.getElementById('sight-season-sel');
+  if (sseasonSel) sseasonSel.addEventListener('change', function() { // SG7
+    sightSeason = sseasonSel.value || '__all__';
+    renderSightingsList();
+  });
+  var smMonth = document.getElementById('sight-map-month');
+  if (smMonth) smMonth.addEventListener('change', function() { // SG8 map lens
+    var v = smMonth.value;
+    flSightMapMonth = (v === 'all') ? 'all' : (parseInt(v, 10) || 'all');
+    renderSightMap();
+  });
   var fc = document.getElementById('f-calibre-sel');
   if (fc) fc.addEventListener('change', function() { handleCalibreSelect(fc); });
   var fp = document.getElementById('f-placement');
@@ -1123,6 +1735,8 @@ function initDiaryFlUi() {
   var pig = document.getElementById('photo-input-gallery');
   if (pic) pic.addEventListener('change', function(ev) { handlePhoto(ev.target); });
   if (pig) pig.addEventListener('change', function(ev) { handlePhoto(ev.target); });
+  var spi = document.getElementById('stand-photo-input');
+  if (spi) spi.addEventListener('change', function(ev) { handleStandPhotoInput(ev.target); });
 
   var psearch = document.getElementById('pinmap-search');
   if (psearch) {
@@ -1149,6 +1763,18 @@ function initDiaryFlUi() {
   if (fshoot) {
     fshoot.addEventListener('input', function() {
       fshoot.classList.toggle('shooter-self', fshoot.value === '' || fshoot.value === 'Self');
+    });
+  }
+
+  // Pest-bag quantity: type the total directly (tap selects all so you can just
+  // key "200"); the +/- buttons stay for fine tweaks. Blur normalises the field.
+  var fqty = document.getElementById('f-qty-val');
+  if (fqty) {
+    fqty.addEventListener('input', readFormQuantityFromInput);
+    fqty.addEventListener('focus', function() { try { fqty.select(); } catch (e) {} });
+    fqty.addEventListener('blur', function() {
+      var el = document.getElementById('f-qty-val');
+      if (el) el.value = String(formQuantity);
     });
   }
 
@@ -1189,22 +1815,51 @@ function initDiaryFlUi() {
     ev.preventDefault();
     closeTargetsSheet();
   });
+
+  // Escape also closes the Account & settings sheet — it was the only
+  // sheet without it (targets sheet and map modal already had it). The
+  // name/password/season editors stack above the sheet as .di-modal-ov
+  // overlays; while one is visible, Escape belongs to it, not the sheet.
+  document.addEventListener('keydown', function(ev) {
+    if (ev.key !== 'Escape') return;
+    var so = document.getElementById('settings-ov');
+    if (!so || !so.classList.contains('open')) return;
+    var stacked = document.querySelectorAll('.di-modal-ov');
+    for (var i = 0; i < stacked.length; i++) {
+      var d = stacked[i].style.display;
+      if (d !== 'none' && d !== '') return;
+    }
+    ev.preventDefault();
+    closeSettingsSheet();
+  });
 }
 
 // ════════════════════════════════════
 // SEASON HELPERS — fully dynamic
 // ════════════════════════════════════
-function getCurrentSeason() {
+function getCurrentSeason(startMonth) {
   var now = diaryNow();
-  var y = now.getFullYear();
-  var m = now.getMonth() + 1; // 1-12
-  // Season runs Aug-Jul, so Aug 2025 → Jul 2026 = "2025-26"
-  var startYear = m >= 8 ? y : y - 1;
+  // Europe/London calendar (not device-local) so a stalker abroad sees the
+  // correct season across the year / season boundary at midnight.
+  var _p = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit' }).formatToParts(now);
+  var y = parseInt(_p.find(function(x){ return x.type === 'year'; }).value, 10);
+  var m = parseInt(_p.find(function(x){ return x.type === 'month'; }).value, 10); // 1-12
+  // Season runs 12 months from the context's start month. `startMonth`
+  // optional (step-4 context argument): omitted ⇒ the user's personal
+  // setting (default August — Aug 2025 → Jul 2026 = "2025-26"; resolver
+  // returns 8 signed out); syndicate views pass syndicateSeasonStartMonth(s).
+  var sm = startMonth == null ? personalSeasonStartMonth() : normalizeSeasonStartMonth(startMonth);
+  var startYear = m >= sm ? y : y - 1;
   return startYear + '-' + String(startYear + 1).slice(-2);
 }
 
-// SPEC: lib/fl-pure.mjs#seasonLabel — keep in sync until modularisation (P3 code-quality #1).
-function seasonLabel(s) {
+// SPEC: lib/fl-pure.mjs#seasonLabel — keep in sync until modularisation (P3
+// code-quality #1). Both copies take an optional `startMonth` (default 8):
+// January-start seasons render as a single calendar year ("2026 Season" for
+// key '2026-27' — the two-year label would mislead), every other month keeps
+// the two-year label. Personal call sites pass personalSeasonStartMonth();
+// syndicate sites gain their syndicate's month in the step-4 slice.
+function seasonLabel(s, startMonth) {
   if (s == null || s === '') return '—';
   var raw = String(s).trim();
   if (raw === '__all__') return 'All seasons';
@@ -1213,16 +1868,20 @@ function seasonLabel(s) {
     return raw;
   }
   var y1 = parts[0];
+  if (normalizeSeasonStartMonth(startMonth) === 1) return y1 + ' Season';
   var y2 = parts[1].length === 2 ? '20' + parts[1] : parts[1];
   return y1 + '–' + y2 + ' Season';
 }
 
-// SPEC: lib/fl-pure.mjs#buildSeasonFromEntry — parsing logic identical, but
-// this copy DELIBERATELY diverges on invalid input: pure returns null (and
-// modules/stats.mjs uses that, so Stats excludes malformed dates), while this
-// copy falls back to getCurrentSeason() so a list row always lands in a
-// season bucket. If you change the parsing, change both files.
-function buildSeasonFromEntry(dateStr) {
+// SPEC: lib/fl-pure.mjs#buildSeasonFromEntry — parsing logic identical; both
+// copies take an optional `startMonth`. DELIBERATE divergences: pure defaults
+// startMonth to 8 and returns null on invalid input (modules/stats.mjs relies
+// on that, so Stats excludes malformed dates), while this copy defaults to
+// personalSeasonStartMonth() (the signed-in user's setting; syndicate callers
+// pass their syndicate's month in the step-4 slice) and falls back to
+// getCurrentSeason() so a list row always lands in a season bucket. If you
+// change the parsing, change both files.
+function buildSeasonFromEntry(dateStr, startMonth) {
   // Given an entry date, return which season it belongs to
   if (dateStr == null || dateStr === '') return getCurrentSeason();
   var raw = String(dateStr).trim();
@@ -1233,7 +1892,8 @@ function buildSeasonFromEntry(dateStr) {
   var y = parseInt(parts[0], 10);
   var m = parseInt(parts[1], 10); // 1–12 exact, no timezone offset
   if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) return getCurrentSeason();
-  var startYear = m >= 8 ? y : y - 1;
+  var sm = startMonth == null ? personalSeasonStartMonth() : normalizeSeasonStartMonth(startMonth);
+  var startYear = m >= sm ? y : y - 1;
   if (!Number.isFinite(startYear)) return getCurrentSeason();
   return startYear + '-' + String(startYear + 1).slice(-2);
 }
@@ -1249,10 +1909,11 @@ function populateSeasonDropdown(seasons) {
     sel.appendChild(allOpt);
   }
   var nextFromNow = getNextSeasonAfter(getCurrentSeason());
+  var sm = personalSeasonStartMonth();
   seasons.forEach(function(s) {
     var opt = document.createElement('option');
     opt.value = s;
-    opt.textContent = seasonLabel(s) + (nextFromNow && s === nextFromNow ? ' · Next' : '');
+    opt.textContent = seasonLabel(s, sm) + (nextFromNow && s === nextFromNow ? ' · Next' : '');
     sel.appendChild(opt);
   });
   sel.value = currentSeason;
@@ -1339,8 +2000,8 @@ async function probeEarliestEntryDate() {
 // ════════════════════════════════════
 // ROUTING
 // ════════════════════════════════════
-var VIEWS = ['v-auth','v-list','v-form','v-detail','v-stats'];
-var NAV_MAP = {'v-list':'n-list','v-form':'n-form','v-stats':'n-stats'};
+var VIEWS = ['v-auth','v-list','v-form','v-detail','v-stats','v-stands','v-stand-detail','v-sightings','v-sighting-detail'];
+var NAV_MAP = {'v-list':'n-list','v-form':'n-form','v-stats':'n-stats','v-stands':'n-stands'};
 var formDirty = false;
 /** After loadEntries / sign-out; cleared at end of buildStats — avoids full stats rebuild on every Stats tab visit. */
 var statsNeedsFullRebuild = true;
@@ -1367,6 +2028,15 @@ function confirmDiscardUnsavedForm() {
 function go(id) {
   var target = document.getElementById(id);
   if (!target) return;
+  // A pending facing-aim (round 31) dies on ANY navigation — without this a
+  // stale aim would hijack the next stands-map tap into a surprise bearing.
+  if (typeof flStandFaceAimAbort === 'function') flStandFaceAimAbort();
+  // SG4: a pending map focus only survives while heading to / staying on the
+  // sightings view — anywhere else and the map returns to fitBounds.
+  if (id !== 'v-sightings') flSightFocusId = null;
+  // Same rule for the cull-map focus (an entry's "Open map"): it only survives
+  // while heading to Stats; anywhere else the cull map returns to fitBounds.
+  if (id !== 'v-stats') flCullFocusId = null;
   var tsOvGo = document.getElementById('tsheet-ov');
   if (tsOvGo && tsOvGo.classList.contains('open') && !closeTargetsSheet()) return;
   // Warn if leaving form with unsaved changes
@@ -1396,7 +2066,18 @@ function go(id) {
     if (fs) fs.scrollTop = 0;
     requestFormProgressUpdate();
   }
+  if (id === 'v-stands') {
+    // Lazy first load + 20-min-cached refresh on every visit (stands.mjs).
+    refreshStandsView();
+    loadSightings(); // ready for the stand-detail "Seen here" card (S5b)
+  }
+  if (id === 'v-sightings') {
+    // Lazy load + refresh the live-deer sightings list (S4).
+    refreshSightingsView();
+  }
   if (id === 'v-stats') {
+    // Load sightings once so the plan card can show "seen vs culled" (S5b).
+    if (!sightingsLoaded) loadSightings().then(function() { renderPlanCard(allEntries, currentSeason); });
     var statsSelGo = document.getElementById('season-select-stats');
     var listSelGo = document.getElementById('season-select');
     if (statsSelGo && listSelGo && listSelGo.options && listSelGo.options.length) {
@@ -1417,8 +2098,7 @@ function go(id) {
           cullMap.invalidateSize();
           renderCullMapPins();
         }
-        var sub = document.getElementById('cullmap-sub');
-        if (sub) sub.textContent = 'Location history · ' + currentSeason;
+        // ST1: #cullmap-sub is static — no season overwrite (header select owns it).
       }, 150);
       return;
     }
@@ -1441,15 +2121,78 @@ function requestFormProgressUpdate() {
   });
 }
 
+// PP-3: a form section counts as "filled" once the user has put something in it
+// — any native control with a value, a checked box/radio, a selected pill/chip
+// (species, sex… marked .on / .active / aria-pressed), or a captured photo. It's
+// a soft progress cue (not validation), so a generous definition is the point.
+/**
+ * Finding 12 (2026-07-24): a value the app seeded is not progress the user
+ * made. `Shooter` ships with value="Self" in the markup, so an untouched cull
+ * form reported its whole "Shot Details" section as filled before the stalker
+ * had typed a character. A control only counts once its value differs from the
+ * default the markup gave it. Values written by script when the form opens —
+ * the date and the time — have no markup default, so those sections still
+ * count, which is right: they genuinely are answered.
+ */
+function flControlAtMarkupDefault(el) {
+  if (el.tagName === 'SELECT') {
+    var def = null;
+    for (var i = 0; i < el.options.length; i++) {
+      if (el.options[i].defaultSelected) { def = el.options[i].value; break; }
+    }
+    if (def === null) def = el.options.length ? el.options[0].value : '';
+    return el.value === def;
+  }
+  return typeof el.defaultValue === 'string' && el.value === el.defaultValue;
+}
+
+function flFormSectionFilled(sec) {
+  if (!sec) return false;
+  var ctrls = sec.querySelectorAll('input, select, textarea');
+  for (var i = 0; i < ctrls.length; i++) {
+    var el = ctrls[i], type = (el.type || '').toLowerCase();
+    if (type === 'checkbox' || type === 'radio') { if (el.checked) return true; continue; }
+    if (type === 'button' || type === 'submit' || type === 'reset' || type === 'file') continue;
+    // SG-vi: a control the current mode has hidden is not progress the user
+    // can see. The outing window is in the shared Date & Time section but
+    // only exists for culls and blank days.
+    if (el.offsetParent === null) continue;
+    if (flControlAtMarkupDefault(el)) continue;
+    if ((el.value || '').trim() !== '') return true;
+  }
+  // SG-iv: the "How many seen" counters are spans, not inputs, and never take
+  // .on or .sel — so three deer recorded left the section reading empty while
+  // an optional Behaviour chip advanced the meter. The count IS the answer here.
+  var steps = sec.querySelectorAll('.sight-step-val');
+  for (var j = 0; j < steps.length; j++) {
+    if ((parseInt(steps[j].textContent, 10) || 0) > 0) return true;
+  }
+  // SG-v: a dropped pin is the strongest answer the Location section takes,
+  // and the pinned strip is a plain div — invisible to the control sweep above.
+  var pinStrip = sec.querySelector('#loc-pinned-strip');
+  if (pinStrip && pinStrip.style && pinStrip.style.display !== 'none') return true;
+  if (sec.querySelector('.on, .active, [aria-pressed="true"], .sel, .selected, .picked')) return true;
+  if (sec.querySelector('img[src^="blob:"], img[src^="data:"], img[src^="http"]')) return true;
+  return false;
+}
+
 function updateFormProgressChip() {
   var chip = document.getElementById('form-progress-chip');
   var sc = document.querySelector('#v-form .form-scroll');
   if (!chip || !sc) return;
-  if (formIsBlank) {
-    chip.textContent = 'Blank day · date, location & ground';
-    return;
-  }
+  var progFill = document.getElementById('form-prog-fill');
+  // Findings 5/9/12 (2026-07-24): every mode now counts the same way. Sighting
+  // and Blank day used to short-circuit to a fixed caption and a hardcoded
+  // 40%/30% bar, so an empty blank-day form drew a bar a third of the way
+  // across before anything had been entered.
+  var modePrefix = formIsSighting ? 'Sighting · ' : formIsBlank ? 'Blank day · ' : '';
+  // Not `:not(.fl-sighting-only)` — the offsetParent filter below already keeps
+  // to what is on screen, and in Sighting mode those ARE the visible sections.
   var sections = Array.from(document.querySelectorAll('#v-form .fsec'));
+  // Count and title only what the user can SEE: mode switches hide sections
+  // (the "How many" stepper is pest-only), and a hidden section leaking into
+  // the chip made a fresh deer cull read "3 of 9 filled · How many".
+  sections = sections.filter(function(sec) { return sec.offsetParent !== null; });
   if (!sections.length) return;
   var active = 0;
   var scRect = sc.getBoundingClientRect();
@@ -1458,18 +2201,41 @@ function updateFormProgressChip() {
     var secTop = sections[i].getBoundingClientRect().top;
     if (secTop <= marker) active = i;
   }
-  sections.forEach(function(sec, idx) { sec.classList.toggle('is-current', idx === active); });
+  sections.forEach(function(sec, idx) {
+    sec.classList.toggle('is-current', idx === active);
+    // Findings 5/9: the step numbers are authored in the markup and were never
+    // renumbered, so a pest cull counted 1,2,3,4,5,6,8 and a blank day counted
+    // 3,4,8. Numbering the sections the user can actually see is the whole job,
+    // and doing it here guarantees it can never disagree with the count in the
+    // chip beside it.
+    var numEl = sec.querySelector('.fsec-num');
+    var want = String(idx + 1);
+    if (numEl && numEl.textContent !== want) numEl.textContent = want;
+  });
+  // PP-3: completion, not scroll position — count sections actually filled so a
+  // single-scroll form doesn't read as a 9-step wizard. The scrolled-to section
+  // title still rides along for orientation.
+  var filled = 0;
+  sections.forEach(function(sec) { if (flFormSectionFilled(sec)) filled++; });
   var t = sections[active].querySelector('.fsec-title');
   var title = t ? t.textContent.trim() : '';
-  chip.textContent = 'Section ' + (active + 1) + ' of ' + sections.length + (title ? ' · ' + title : '');
+  chip.textContent = modePrefix + filled + ' of ' + sections.length + ' filled'
+    + (modePrefix ? '' : (title ? ' · ' + title : ''));
+  if (progFill) progFill.style.width = Math.round(filled / sections.length * 100) + '%';
 }
 
 // Mark form dirty on any input change
 flOnReady(function() {
   var form = document.getElementById('v-form');
   if (form) {
-    form.addEventListener('input', function() { formDirty = true; });
-    form.addEventListener('change', function() { formDirty = true; });
+    // PP-3: keep the "N of 9 filled" completion count live — recompute on typing,
+    // on change, and on any click (species/sex are pill BUTTONS, which don't fire
+    // 'input'). requestFormProgressUpdate is rAF-debounced, so this is cheap.
+    // The season advisory rides the same three events: species and sex are
+    // clicks, the date is a change, and the ground select is a change.
+    form.addEventListener('input', function() { formDirty = true; requestFormProgressUpdate(); queueCullSeasonAdvisory(); });
+    form.addEventListener('change', function() { formDirty = true; requestFormProgressUpdate(); queueCullSeasonAdvisory(); });
+    form.addEventListener('click', function() { requestFormProgressUpdate(); queueCullSeasonAdvisory(); });
   }
   renderAbnormalityGrid();
 });
@@ -1504,10 +2270,304 @@ function showToast(msg, duration) {
   setTimeout(function() { t.classList.remove('show'); }, duration || 2500);
 }
 
+// ── BB-2: post-capture undo ─────────────────────────────────────────────────
+// After a NEW cull is saved we surface a short-lived "Undo" on the success
+// toast, so a fat-fingered save on the hill can be pulled straight back out of
+// the record without hunting for the entry and clearing the delete-confirm
+// dialog. Scope is deliberately tight: new ONLINE saves only (quick sheet +
+// full form, incl. blank days). Edits keep the plain toast (nothing to undo);
+// offline-queued saves keep theirs too — undoing a queued row means reaching
+// into the offline queue + IndexedDB photo store while a sync might fire, which
+// wants its own careful pass. `flUndoState` holds the single most-recent
+// undoable id; a newer save supersedes an older one, and the id is consumed on
+// the first Undo tap so a double-tap can never double-delete.
+var flUndoState = null; // { id: <entryId>, timer: <handle> } | null
+
+function showUndoToast(msg, entryId) {
+  var t = document.getElementById('toast');
+  // No toast element or nothing to act on → fall back to the plain toast so the
+  // user never loses the "saved" confirmation.
+  if (!t || !entryId) { showToast(msg); return; }
+  if (flUndoState && flUndoState.timer) clearTimeout(flUndoState.timer);
+  var p = flToastParse(msg);
+  var iconSvg = p.kind === 'warn' ? SVG_FL_TOAST_WARN : (p.kind === 'ok' ? SVG_FL_TOAST_OK : SVG_FL_TOAST_INFO);
+  t.className = 'toast toast--' + p.kind + ' toast--undo';
+  t.innerHTML = '<span class="toast-inner"><span class="toast-ic" aria-hidden="true">' + iconSvg
+    + '</span><span class="toast-txt"></span>'
+    + '<button type="button" class="toast-undo" data-fl-action="undo-last-save">Undo</button></span>';
+  var tx = t.querySelector('.toast-txt');
+  if (tx) tx.textContent = p.text;
+  t.classList.add('show');
+  var thisId = entryId;
+  // 6s window: long enough to react to a mis-tap, short enough it never lingers
+  // over the next screen. After it lapses the entry is a normal record again.
+  flUndoState = { id: thisId, timer: setTimeout(function() {
+    t.classList.remove('show');
+    if (flUndoState && flUndoState.id === thisId) flUndoState = null;
+  }, 6000) };
+}
+
+async function flUndoLastSave() {
+  if (!flUndoState || !flUndoState.id) return;   // timed out or already used
+  var id = flUndoState.id;
+  if (flUndoState.timer) clearTimeout(flUndoState.timer);
+  flUndoState = null;                             // consume now → double-tap safe
+  var t = document.getElementById('toast');
+  if (t) t.classList.remove('show');
+  if (!sb || !currentUser) { showToast('⚠️ Could not undo — the entry is saved'); flHapticError(); return; }
+  try {
+    var entry = allEntries.find(function(e) { return e.id === id; });
+    // Mirror confirmDeleteEntry: drop the photo from storage first, if any.
+    if (entry && entry.photo_url) {
+      try {
+        var sp = cullPhotoStoragePath(entry.photo_url);
+        if (sp) await sb.storage.from('cull-photos').remove([sp]);
+      } catch (_) { /* non-fatal */ }
+    }
+    var r = await sb.from('cull_entries').delete().eq('id', id).eq('user_id', currentUser.id);
+    if (r && r.error) { showToast('⚠️ Could not undo — the entry is saved'); flHapticError(); return; }
+    // Same cache hygiene as a manual delete: the removed row may have been the
+    // only one in its season, and the stand-history cache is now stale.
+    invalidateSeasonCache();
+    flStandHistAll.rows = null;
+    showToast('🗑 Entry removed');
+    flHapticSuccess();
+    await loadEntries();
+  } catch (e) {
+    showToast('⚠️ Could not undo — the entry is saved');
+    flHapticError();
+  }
+}
+/**
+ * Translate a raw backend / DB / network error into a short, human message.
+ * Never surfaces raw Postgres/Supabase/technical text to the user (audit Low:
+ * ~25 toast sites showed err.message verbatim). Falls back to the caller's own
+ * plain-language string; always logs the raw error to the console for support.
+ */
+function friendlyErr(err, fallback) {
+  var fb = fallback || 'Something went wrong — please try again.';
+  var raw = '';
+  try { if (err) raw = String(err.message || err.error_description || err.msg || err.error || err || ''); } catch (_) { raw = ''; }
+  try { if (raw) console.warn('[fl] error:', raw, err); } catch (_) {}
+  var low = raw.toLowerCase();
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'You appear to be offline — this will retry when your connection is back.';
+  if (low.indexOf('failed to fetch') >= 0 || low.indexOf('networkerror') >= 0 || low.indexOf('load failed') >= 0 || low.indexOf('network request failed') >= 0) return 'Network problem — please check your connection and try again.';
+  if (low.indexOf('jwt') >= 0 || low.indexOf('token is expired') >= 0 || low.indexOf('not authenticated') >= 0 || low.indexOf('auth session') >= 0 || low.indexOf('session missing') >= 0) return 'Your session has expired — please sign in again.';
+  if (low.indexOf('duplicate key') >= 0 || low.indexOf('already exists') >= 0) return 'That looks like a duplicate — it may already be saved.';
+  if (low.indexOf('row-level security') >= 0 || low.indexOf('permission denied') >= 0 || low.indexOf('not allowed') >= 0) return "You don't have permission to do that.";
+  if (low.indexOf('violates') >= 0 || low.indexOf('constraint') >= 0 || low.indexOf('invalid input') >= 0) return fb;
+  if (low.indexOf('payload') >= 0 || low.indexOf('too large') >= 0 || low.indexOf(' 413') >= 0) return 'That file or entry is too large to save.';
+  return fb;
+}
+
 function flReducedMotion() {
   try {
     return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   } catch (e) { return false; }
+}
+
+/** Stats wayfinding (live-review rec): the jump chips under the season strip.
+ *  Scrolls the section into view, opening it first if collapsed — a jump must
+ *  never land on a closed box. Reuses each section's own toggle handler so
+ *  aria state and the remembered open/closed preference stay correct. */
+/** Mark the jump chip for `id` as current, clearing the rest. `null` clears all. */
+function flStatsJumpMark(id) {
+  var chips = document.querySelectorAll('.stats-jump .sj-chip');
+  for (var i = 0; i < chips.length; i++) {
+    if (chips[i].getAttribute('data-target') === id) chips[i].setAttribute('aria-current', 'true');
+    else chips[i].removeAttribute('aria-current');
+  }
+}
+
+/**
+ * Section 6 (corrected 2026-07-25): keep the jump chips honest while you
+ * scroll, not just when you tap.
+ *
+ * The first attempt observed each section with an IntersectionObserver whose
+ * rootMargin carved a reading band under the sticky header, and took the last
+ * INTERSECTING id in CHIP order. Two things were wrong with that. The chips are
+ * not in document order - Charts (stats-more-wrap) sits above Plan (plan-card)
+ * on the page - so "last in chip order" was not "furthest down the page". And
+ * the document bottoms out long before Exports can rise into a band that ends
+ * 28% down the viewport, so scrolling to the very end left EVERY chip dark with
+ * the Exports block filling the screen. Measure the sections instead, sort by
+ * where they actually are, and never go dark once you are inside one.
+ */
+
+/**
+ * Which chip is current, from measured geometry. Pure, so it can be tested.
+ * `items` are {id, top, bottom} in viewport pixels, in any order. Returns the
+ * id to mark, or null when the reader is still above the first section.
+ */
+function flStatsSpyPick(items, bandTop, bandBottom, viewH, atBottom) {
+  var list = [];
+  for (var i = 0; i < (items || []).length; i++) {
+    var it = items[i];
+    if (it && it.id && isFinite(it.top) && isFinite(it.bottom)) list.push(it);
+  }
+  if (!list.length) return null;
+  function deepest(pred) {
+    var best = null;
+    for (var k = 0; k < list.length; k++) {
+      if (!pred(list[k])) continue;
+      if (!best || list[k].top > best.top) best = list[k];
+    }
+    return best ? best.id : null;
+  }
+  // At the foot of the document nothing can rise into the band any more, so the
+  // section furthest down the screen is the honest answer. Without this the
+  // last chip could never light at all.
+  if (atBottom) {
+    var end = deepest(function(it) { return it.top < viewH && it.bottom > 0; });
+    if (end) return end;
+  }
+  // The ordinary case: whatever is sitting in the reading band.
+  var band = deepest(function(it) { return it.top <= bandBottom && it.bottom > bandTop; });
+  if (band) return band;
+  // Between two sections, or inside one taller than the band: keep the last
+  // section you scrolled into rather than clearing every chip.
+  return deepest(function(it) { return it.top <= bandBottom; });
+}
+
+/**
+ * Find the element that actually scrolls the Stats screen.
+ *
+ * In the review browser the document itself scrolls and `.stats-scroll` is
+ * content-sized, so document.scrollingElement is the right answer. On a phone
+ * the app shell can size to the viewport instead, which makes `.stats-scroll`
+ * the scroller and leaves document.scrollingElement.scrollTop pinned at 0
+ * forever - `atBottom` would then never be true and the Exports chip would
+ * never light. Walk up from the chips and take the first scrollable ancestor,
+ * falling back to the document.
+ */
+function flStatsSpyScroller(from) {
+  var doc = document.scrollingElement || document.documentElement || null;
+  var css = (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function')
+    ? window.getComputedStyle.bind(window) : null;
+  var el = from || null;
+  while (css && el && el.nodeType === 1 && el !== doc) {
+    var sh = el.scrollHeight || 0;
+    var ch = el.clientHeight || 0;
+    if (sh > ch + 2) {
+      var ov = (css(el) || {}).overflowY;
+      if (ov === 'auto' || ov === 'scroll' || ov === 'overlay') return el;
+    }
+    el = el.parentElement;
+  }
+  return doc || { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
+}
+
+/**
+ * Measure the observed sections, skipping any that are not laid out.
+ * `originTop` is the viewport y of the scrollport's top edge, so that a
+ * section's coordinates are relative to the box the reader is looking through
+ * rather than to the window. It is 0 when the document is the scroller.
+ */
+function flStatsSpySections(originTop) {
+  var o = isFinite(Number(originTop)) ? Number(originTop) : 0;
+  var chips = document.querySelectorAll('.stats-jump .sj-chip');
+  var out = [];
+  for (var i = 0; i < chips.length; i++) {
+    var id = chips[i].getAttribute('data-target');
+    var el = id ? document.getElementById(id) : null;
+    if (!el) continue;
+    var r = el.getBoundingClientRect();
+    if (!r.height && !r.width) continue;  // a screen that is not on show does not vote
+    out.push({ id: id, top: r.top - o, bottom: r.bottom - o });
+  }
+  return out;
+}
+
+var flStatsSpyOn = false;
+var flStatsSpyRaf = 0;
+
+function flStatsSpySync() {
+  flStatsSpyRaf = 0;
+  var strip = document.querySelector ? document.querySelector('.stats-jump') : null;
+  var doc = document.scrollingElement || document.documentElement || null;
+  var se = flStatsSpyScroller(strip);
+  var viewTop = 0;
+  var viewH = 0;
+  if (!se || se === doc) {
+    viewH = (typeof window !== 'undefined' && window.innerHeight) || (se && se.clientHeight) || 0;
+  } else {
+    var vr = typeof se.getBoundingClientRect === 'function' ? se.getBoundingClientRect() : null;
+    viewTop = vr ? vr.top : 0;
+    viewH = se.clientHeight || (vr ? vr.height : 0) || 0;
+  }
+  var top = se && se.scrollTop || 0;
+  var ch = se && se.clientHeight || viewH;
+  var sh = se && se.scrollHeight || 0;
+  // scrollTop 0 is never "the bottom", even on a page short enough to be both.
+  var atBottom = top > 0 && (top + ch) >= (sh - 2);
+  flStatsJumpMark(flStatsSpyPick(flStatsSpySections(viewTop), 64, viewH * 0.28, viewH, atBottom));
+}
+
+/** Coalesce a burst of scroll events into one measurement per frame. */
+function flStatsSpyQueue() {
+  if (flStatsSpyRaf) return;
+  flStatsSpyRaf = (typeof requestAnimationFrame === 'function')
+    ? requestAnimationFrame(flStatsSpySync)
+    : setTimeout(flStatsSpySync, 16);
+}
+
+function initStatsJumpSpy() {
+  if (!document.querySelectorAll('.stats-jump .sj-chip').length) return;
+  if (!flStatsSpyOn) {
+    // Capture, not bubble: scroll events do not bubble, so a plain window
+    // listener hears the document scrolling and nothing else. If the shell ever
+    // makes .stats-scroll the scroller, only the capture phase sees it.
+    window.addEventListener('scroll', flStatsSpyQueue, { passive: true, capture: true });
+    window.addEventListener('resize', flStatsSpyQueue);
+    flStatsSpyOn = true;
+  }
+  flStatsSpyQueue();
+}
+
+function flStatsJump(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  flStatsJumpMark(id);
+  var fold = el.querySelector('.stats-section-body[hidden], .stats-more-body[hidden]');
+  if (fold) {
+    var tog = el.querySelector('.stats-section-toggle, .stats-more-toggle');
+    if (tog) tog.click();
+  }
+  requestAnimationFrame(function() {
+    el.scrollIntoView({ behavior: flReducedMotion() ? 'auto' : 'smooth', block: 'start' });
+  });
+}
+
+/**
+ * AA/AL (2026-07-26): put the row that has just been created in front of the
+ * person who created it.
+ *
+ * Both findings were the same omission wearing different clothes. Adding a
+ * fifth ground re-rendered the list and left the scroll position alone, so the
+ * new card sat 874px above the top of the sheet while a toast said "now draw
+ * its boundary" — an instruction pointing at something off-screen, which is
+ * worse than no instruction, because the user goes looking and concludes the
+ * save failed. Saving a stand put its row at y771 of a 791px viewport: one
+ * line of it visible, below the fold on every phone. In both cases the write
+ * had succeeded perfectly and the only thing missing was the app showing its
+ * work.
+ *
+ * Centre rather than 'start', because a row flush against the top edge reads
+ * as "the list begins here" rather than "this is the new one". The flash is
+ * what distinguishes a row that was scrolled to from a row that happened to be
+ * there; it is removed on a timer so a screenshot taken later is not misleading
+ * about which row is which.
+ */
+function flRevealRow(el) {
+  if (!el || !el.scrollIntoView) return;
+  var slow = flReducedMotion();
+  // A rAF so the freshly-rendered list has been laid out and the offsets we are
+  // about to scroll to are real ones.
+  requestAnimationFrame(function() {
+    try { el.scrollIntoView({ behavior: slow ? 'auto' : 'smooth', block: 'center' }); } catch (_) {}
+    el.classList.add('fl-justadded');
+    setTimeout(function() { try { el.classList.remove('fl-justadded'); } catch (_) {} }, 2400);
+  });
 }
 
 /** One short pulse on devices that support Vibration API (typically Android Chrome). */
@@ -1846,6 +2906,250 @@ async function saveNameEdit() {
   }
 }
 
+// ── Season start month (season-year feature, SEASON-YEAR-PLAN.md §9a 3b) ────
+// Personal setting stored in auth user_metadata.fl_season_start_month; read
+// back through personalSeasonStartMonth() (default 8/August). Changing it
+// re-buckets entries instantly and reversibly; targets keep their season KEYS
+// but count against the shifted window — hence the flConfirm warning step.
+
+/** Sync the Profile card "Season starts" row with the current setting. */
+function renderProfileSeasonStartRow() {
+  var el = document.getElementById('profile-season-start-value');
+  if (el) el.textContent = FULL_MONTHS[personalSeasonStartMonth() - 1] || 'August';
+}
+
+/** "Aug 2025 – Jul 2026" from a seasonBoundsForKey() result, for warning copy. */
+function seasonStartWindowText(b) {
+  if (!b) return '';
+  function part(iso) {
+    var p = String(iso).split('-');
+    var mi = parseInt(p[1], 10) - 1;
+    return (MONTH_NAMES[mi] || p[1]) + ' ' + p[0];
+  }
+  return part(b.startIso) + ' – ' + part(b.endIso);
+}
+
+function openSeasonStartEditModal() {
+  if (!currentUser) return;
+  var modal = document.getElementById('season-start-modal');
+  var sel = document.getElementById('season-start-select');
+  var err = document.getElementById('season-start-err');
+  if (!modal || !sel) return;
+  sel.value = String(personalSeasonStartMonth());
+  if (err) { err.textContent = ''; err.style.display = 'none'; }
+  modal.style.display = 'flex';
+  setTimeout(function(){ try { sel.focus(); } catch(_) {} }, 30);
+}
+
+function closeSeasonStartEditModal() {
+  var modal = document.getElementById('season-start-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function saveSeasonStartEdit() {
+  if (!sb || !currentUser) return;
+  var sel = document.getElementById('season-start-select');
+  var err = document.getElementById('season-start-err');
+  var btn = document.getElementById('season-start-btn');
+  if (!sel) return;
+  var v = validateSeasonStartMonth(sel.value);
+  if (!v.ok) {
+    if (err) { err.textContent = v.error; err.style.display = 'block'; }
+    flHapticError();
+    return;
+  }
+  if (err) { err.textContent = ''; err.style.display = 'none'; }
+
+  var prev = personalSeasonStartMonth();
+  if (v.value === prev) { closeSeasonStartEditModal(); return; }
+
+  // Warning step (plan §6): allowed + reversible, but the window every stored
+  // target key covers shifts — show old vs new window for the current key.
+  var exampleKey = (currentSeason && currentSeason !== '__all__') ? currentSeason : getCurrentSeason();
+  var oldB = seasonBoundsForKey(exampleKey, prev);
+  var newB = seasonBoundsForKey(exampleKey, v.value);
+  var confirmed = await flConfirm({
+    title: 'Change season start month?',
+    body: 'Your seasons currently run ' + seasonStartWindowText(oldB) + '. After this change, season '
+      + exampleKey + ' will cover ' + seasonStartWindowText(newB) + '. '
+      + 'Entries re-sort instantly and you can change this back at any time. '
+      + 'Existing targets keep their season names but now count against the new dates.',
+    action: 'Change month',
+    tone: 'warn'
+  });
+  if (!confirmed) return; // keep the modal open so the user can adjust or cancel
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    var upd = await sb.auth.updateUser({ data: { fl_season_start_month: v.value } });
+    if (upd.error) throw upd.error;
+    if (upd.data && upd.data.user) currentUser = upd.data.user;
+
+    // Apply sequence (plan §9a 3b.4). The earliest-entry cache is date-based
+    // and survives a start-month change (code map §6); the season DROPDOWN
+    // bakes derived keys, so loadEntries() must re-run to rebuild it.
+    currentSeason = getCurrentSeason();
+    statsNeedsFullRebuild = true;
+    renderProfileSeasonStartRow();
+    var sl = document.getElementById('season-label');
+    var ssl = document.getElementById('stats-season-lbl');
+    if (sl) sl.textContent = seasonLabel(currentSeason, v.value);
+    if (ssl) ssl.textContent = seasonLabel(currentSeason, v.value);
+
+    closeSeasonStartEditModal();
+    showToast('✅ Seasons now start in ' + (FULL_MONTHS[v.value - 1] || 'month ' + v.value));
+
+    await loadEntries(); // re-buckets list + rebuilds both season dropdowns
+    // Re-key targets to the (possibly different) current season key, then
+    // repaint the plan card — mirrors the buildStats reload at its :4306 site.
+    await Promise.all([loadTargets(currentSeason), loadGroundTargets(currentSeason)]);
+    loadPrevTargets(currentSeason);
+    renderPlanGroundFilter();
+    renderPlanCard(allEntries, currentSeason);
+  } catch (e) {
+    if (err) {
+      err.textContent = (e && e.message) ? e.message : 'Could not update the season start month.';
+      err.style.display = 'block';
+    }
+    flHapticError();
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+  }
+}
+
+// ── Deer on my ground (species-aware rut, RUT-SPECIES-PLAN) ──────────────────
+// Stored device-local in localStorage (FL_MY_SPECIES_KEY) rather than auth
+// metadata so the signed-out homepage (app.js) reads the same key on the same
+// origin. Canonical display order for the profile row + checkbox list.
+var FL_SPECIES_ORDER = ['Red Deer', 'Roe Deer', 'Fallow', 'Sika', 'Muntjac', 'CWD'];
+
+/** Sync the Profile card "Deer on my ground" row with the current setting. */
+function renderProfileSpeciesRow() {
+  var el = document.getElementById('profile-species-value');
+  if (!el) return;
+  var mine = flMySpecies();
+  el.textContent = mine.length ? mine.join(', ') : 'All species';
+}
+
+/** Distinct deer species already logged in the diary — the first-open default. */
+function flLoggedDeerSpecies() {
+  var out = [], seen = {};
+  try {
+    (allEntries || []).forEach(function (e) {
+      if (e && e.species && FL_SPECIES_ORDER.indexOf(e.species) !== -1 && !seen[e.species]) {
+        seen[e.species] = 1; out.push(e.species);
+      }
+    });
+  } catch (_) {}
+  return out;
+}
+
+/** ['a','b','c'] -> 'a, b and c'. Plain English, not a comma-separated dump. */
+function flListSentence(arr) {
+  var a = arr || [];
+  if (!a.length) return '';
+  if (a.length === 1) return a[0];
+  return a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+}
+
+/**
+ * Section 6 (2026-07-25): the note under the checkboxes. Two things this modal
+ * never said out loud - that the setting is kept on this device only (it lives
+ * in localStorage deliberately, so the signed-out homepage can read it), and
+ * what the diary itself suggests. The suggestion used to be applied SILENTLY as
+ * the pre-tick on first open. Now it is stated, with a button to accept it, and
+ * the boxes start on whatever is genuinely in force.
+ */
+function flRenderSpeciesNote() {
+  var el = document.getElementById('species-note-suggest');
+  var btn = document.getElementById('species-note-apply');
+  if (!el) return;
+  var mine = flMySpecies();
+  var logged = flLoggedDeerSpecies();
+  var ordered = FL_SPECIES_ORDER.filter(function (s) { return logged.indexOf(s) !== -1; });
+  var txt = '', showBtn = false;
+  if (!mine.length) {
+    if (ordered.length && ordered.length < FL_SPECIES_ORDER.length) {
+      txt = 'All six are ticked, which is the current setting. Your diary so far records only '
+          + flListSentence(ordered) + '.';
+      showBtn = true;
+    }
+  } else {
+    var extra = ordered.filter(function (s) { return mine.indexOf(s) === -1; });
+    if (extra.length) {
+      txt = 'Your diary also records ' + flListSentence(extra) + ', which '
+          + (extra.length === 1 ? 'is' : 'are') + ' not ticked.';
+    }
+  }
+  el.textContent = txt;
+  el.style.display = txt ? '' : 'none';
+  if (btn) btn.style.display = showBtn ? '' : 'none';
+}
+
+/** Accept the diary's suggestion: tick exactly the species already recorded. */
+function flTickLoggedSpeciesOnly() {
+  var list = document.getElementById('species-check-list');
+  if (!list) return;
+  var logged = flLoggedDeerSpecies();
+  if (!logged.length) return;
+  var boxes = list.querySelectorAll('input[type="checkbox"]');
+  for (var i = 0; i < boxes.length; i++) boxes[i].checked = logged.indexOf(boxes[i].value) !== -1;
+  var el = document.getElementById('species-note-suggest');
+  var btn = document.getElementById('species-note-apply');
+  if (el) { el.textContent = ''; el.style.display = 'none'; }
+  if (btn) btn.style.display = 'none';
+}
+
+function openSpeciesEditModal() {
+  var modal = document.getElementById('species-modal');
+  var list = document.getElementById('species-check-list');
+  var err = document.getElementById('species-err');
+  if (!modal || !list) return;
+  // Section 6 (2026-07-25): pre-tick EXACTLY what is in force. With nothing saved
+  // the profile row says "All species" and the forecast scores all six, so the
+  // modal must open showing all six ticked. It used to pre-tick only the species
+  // already in the diary, which meant a user who opened this out of curiosity and
+  // tapped Save silently narrowed their own rut boost to a set they never chose -
+  // and the modal never said a word about it. The diary's own suggestion is still
+  // offered, but now out loud, as something to accept rather than to undo.
+  var mine = flMySpecies();
+  var preset = mine.length ? mine : FL_SPECIES_ORDER.slice();
+  var boxes = list.querySelectorAll('input[type="checkbox"]');
+  for (var i = 0; i < boxes.length; i++) boxes[i].checked = preset.indexOf(boxes[i].value) !== -1;
+  if (err) { err.textContent = ''; err.style.display = 'none'; }
+  flRenderSpeciesNote();
+  modal.style.display = 'flex';
+}
+
+function closeSpeciesEditModal() {
+  var modal = document.getElementById('species-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function saveSpeciesEdit() {
+  var list = document.getElementById('species-check-list');
+  var err = document.getElementById('species-err');
+  if (!list) return;
+  var boxes = list.querySelectorAll('input[type="checkbox"]'), chosen = [];
+  for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) chosen.push(boxes[i].value);
+  if (!chosen.length) {
+    if (err) { err.textContent = 'Pick at least one species, or all of them.'; err.style.display = 'block'; }
+    flHapticError();
+    return;
+  }
+  // Persist in canonical order. All six selected ⇒ store [] ("all species") so
+  // the setting stays a true no-op for the common case (and the homepage too).
+  var ordered = FL_SPECIES_ORDER.filter(function (s) { return chosen.indexOf(s) !== -1; });
+  var toStore = ordered.length === FL_SPECIES_ORDER.length ? [] : ordered;
+  try { localStorage.setItem(FL_MY_SPECIES_KEY, JSON.stringify(toStore)); } catch (_) {}
+  renderProfileSpeciesRow();
+  closeSpeciesEditModal();
+  showToast('✅ Ground species updated');
+  // Rut masking feeds the stands forecast; re-score from cache + repaint if the
+  // user has already opened Stands (no forced Supabase/network refetch).
+  try { if (flStandsState && flStandsState.list) void refreshStandsView(false); } catch (_) {}
+}
+
 function openPasswordChangeModal() {
   if (!currentUser) return;
   var modal = document.getElementById('password-change-modal');
@@ -2017,19 +3321,75 @@ function destroyCullMapLeaflet() {
  * the auth call we tear down the same local state we'd clear on a regular
  * sign-out (offline queue + IndexedDB + in-memory caches).
  */
-async function signOut(opts) {
-  var scope = opts && opts.scope === 'global' ? 'global' : 'local';
-  if (sb) {
-    try { await sb.auth.signOut({ scope: scope }); }
-    // Fall back to default signOut() for older supabase-js versions that
-    // don't accept the `scope` option — still signs out locally which is
-    // the minimum safe behaviour.
-    catch (_) { try { await sb.auth.signOut(); } catch (__) {} }
-  }
+// Clear every in-memory cache tied to the signed-in account. Shared by the
+// signOut() wrapper AND the SIGNED_OUT auth handler (the latter is the only
+// choke-point that also runs for account-deletion and remote / "sign out
+// everywhere" sign-outs, which bypass the wrapper). Without the stands /
+// sightings reset here, the next account on a shared device could see the
+// previous user's stand coordinates and sightings before any refetch.
+function resetSessionState() {
+  currentUser = null;
+  allEntries = [];
+  allSightings = [];
+  sightingsLoaded = false;
+  filteredEntries = [];
+  currentSeason = getCurrentSeason();
+  currentFilter = 'all';
+  invalidateSeasonCache();
+  cullTargets = {};
+  groundTargets = {};
+  savedGrounds = [];
+  syndicateGroundFilterSet = new Set();
+  planGroundFilter = 'overview';
+  targetMode = 'season';
+  // Stands share one state object — reset its fields (keep the reference so
+  // existing closures stay valid).
+  try {
+    flStandsState.list = null;
+    flStandsState.forecasts = null;
+    flStandsState.loading = false;
+    flStandsState.detailId = null;
+    flStandsState.selectedId = null;
+    flStandsState.sheet = { editingId: null, lat: null, lng: null, locName: '', badWinds: [], facing: null, photos: [], newPhotos: [], removedPaths: [] };
+  } catch (_) {}
+  // Also drop this account's location/activity caches from localStorage so a
+  // shared device can't surface the previous user's stand coordinates + ground
+  // boundaries to the next account (the in-memory reset above isn't enough).
+  purgeLocalUserDataCaches();
+}
+
+// Purge device-local caches holding this account's LOCATION + activity data
+// (ground boundaries, stand GPS, coord-keyed forecasts, score log, last ground,
+// species prefs, and any offline-queue backups). Prefix-matched so a future cache
+// version bump (…-v2) is still covered. Called from BOTH clearOfflineLocalData
+// (sign-out wrapper + account delete) and resetSessionState (the SIGNED_OUT
+// choke-point that also runs for remote / "sign out everywhere" and post-delete),
+// so no path leaves the previous user's coordinates on a shared device or after
+// erasure. App display prefs + the on-device ballistics profiles are left intact.
+function purgeLocalUserDataCaches() {
+  try {
+    var prefixes = ['fl-grounds-cache', 'fl-stands-cache', 'fl-stands-forecast', 'fl-score-log', 'fl-last-ground', 'fl-my-species'];
+    var extra = [OFFLINE_KEY + '-corrupt', OFFLINE_KEY + '-deadletter'];
+    var kill = [];
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (!k) continue;
+      if (extra.indexOf(k) !== -1) { kill.push(k); continue; }
+      for (var p = 0; p < prefixes.length; p++) { if (k.indexOf(prefixes[p]) === 0) { kill.push(k); break; } }
+    }
+    kill.forEach(function(k) { try { localStorage.removeItem(k); } catch (_) {} });
+  } catch (_) {}
+}
+
+// Wipe this device's offline queue (localStorage) and its IndexedDB photo
+// blobs. Shared by signOut() and deleteAccount() so account deletion doesn't
+// leave the just-deleted account's cull data recoverable on the device.
+async function clearOfflineLocalData() {
   try {
     localStorage.removeItem(OFFLINE_KEY);
     localStorage.removeItem(OFFLINE_SYNCED_RECENT_KEY);
   } catch (_) {}
+  purgeLocalUserDataCaches();
   try {
     var db = await openOfflineDb();
     if (db) {
@@ -2041,21 +3401,48 @@ async function signOut(opts) {
       });
     }
   } catch (_) {}
-  // Reset all session state so a new user starts clean
-  currentUser = null;
-  allEntries = [];
-  filteredEntries = [];
-  currentSeason = getCurrentSeason();
-  currentFilter = 'all';
-  invalidateSeasonCache();
-  cullTargets = {};
-  groundTargets = {};
-  savedGrounds = [];
-  syndicateGroundFilterSet = new Set();
-  planGroundFilter = 'overview';
-  targetMode = 'season';
+}
+
+async function signOut(opts) {
+  var scope = opts && opts.scope === 'global' ? 'global' : 'local';
+  // Guard: signing out wipes the offline queue + its IndexedDB photos (below),
+  // so unsynced entries would be lost silently. Try to flush first when online;
+  // if anything is still queued, make the user confirm before we destroy it.
+  try {
+    var pending = getOfflineQueueForCurrentUser();
+    if (pending && pending.length) {
+      if (navigator.onLine) {
+        try { await syncOfflineQueue(); } catch (_) {}
+        pending = getOfflineQueueForCurrentUser();
+      }
+      if (pending && pending.length) {
+        var proceed = await flConfirm({
+          title: 'Unsynced entries will be lost',
+          body: pending.length + (pending.length === 1 ? ' entry has' : ' entries have') +
+            ' not synced to your account yet. Signing out deletes ' +
+            (pending.length === 1 ? 'it' : 'them') + ' from this device. Sign out anyway?',
+          action: 'Sign out',
+          tone: 'danger'
+        });
+        if (!proceed) return false;
+      }
+    }
+  } catch (_) { /* never block sign-out on a guard failure */ }
+  if (sb) {
+    try { await sb.auth.signOut({ scope: scope }); }
+    // Fall back to default signOut() for older supabase-js versions that
+    // don't accept the `scope` option — still signs out locally which is
+    // the minimum safe behaviour.
+    catch (_) { try { await sb.auth.signOut(); } catch (__) {} }
+  }
+  await clearOfflineLocalData();
+  // Reset all in-memory session state so a new user starts clean.
+  resetSessionState();
   destroyCullMapLeaflet();
   hideStatsLoadingOverlay();
+  // The settings sheet may be the very thing that triggered sign-out — close
+  // it so the auth view isn't left under an open overlay with scroll locked.
+  closeSettingsSheet();
   go('v-auth');
 }
 
@@ -2080,7 +3467,8 @@ async function confirmSignOutAll() {
   if (btn) { btn.disabled = true; btn.textContent = 'Signing out…'; }
   try {
     closeSignOutAllModal();
-    await signOut({ scope: 'global' });
+    var soRes = await signOut({ scope: 'global' });
+    if (soRes === false) return; // user cancelled at the unsynced-entries prompt
     showToast('✅ Signed out of all devices', 4000);
   } catch (e) {
     if (typeof console !== 'undefined' && console.warn) console.warn('signout-all:', e);
@@ -2107,7 +3495,41 @@ async function confirmSignOutAll() {
 // Icons are inlined to avoid a second SVG round-trip. Resolver pattern so the
 // returned Promise can be awaited by any async caller:
 //   if (!(await flConfirm({ title: '…', body: '…', action: '…', tone: 'danger' }))) return;
+//
+// ─────────────────────────────────────────────────────────────────────────
+// M71 — THE CONFIRMATION LAW. The app had drifted to five different ways of
+// asking "are you sure?", so the same tap meant different things on different
+// screens and none of them taught the user what the others would do. There is
+// now ONE default and three named, justified exceptions. Anything new that
+// destroys data uses flConfirm(); adding a sixth pattern needs a reason as
+// specific as the three below.
+//
+//   1. flConfirm()  — THE DEFAULT for anything permanent. Titles the action,
+//      names the thing, states what survives. (Stand delete, ground parcel /
+//      zone / line / marker remove, syndicate delete, invite revoke, …)
+//
+//   2. #delete-entry-modal — bespoke, and staying bespoke: it renders a
+//      SUMMARY of the entry about to go (species, date, photos) and handles
+//      blank days separately. flConfirm's plain body could not carry that.
+//
+//   3. .gmb-del-card — the inline confirm in the grounds bottom sheet. Same
+//      content contract as flConfirm (question + consequence + named action,
+//      with a real Cancel button), rendered IN PLACE because a modal stacked
+//      over an open bottom sheet reads as a second app.
+//
+//   4. Two-tap arming, and ONLY inside the boundary map editor (vertex delete,
+//      ← discard). There the target IS the thing you tap — direct manipulation,
+//      not a dialog — and gmapSnapshot() keeps an undo stack, so the cost of a
+//      mis-tap is one Undo. Everywhere else two-tap was hiding an irreversible
+//      action behind a glyph swap, which is what this law removed.
+//
+//   5. Native confirm(), ONLY for unsaved-changes guards (closeTargetsSheet,
+//      confirmDiscardUnsavedForm). Those sit in synchronous `go(id)` paths
+//      that need a boolean back immediately; see the note at each site.
+// ─────────────────────────────────────────────────────────────────────────
 var FL_CONFIRM_ICON_SVG = {
+  // NB: literal hex, not var(--red) — these are SVG presentation attributes,
+  // which are not CSS declarations, so var() would not be substituted.
   danger: '<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke="#c62828" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="#c62828" stroke-width="2" stroke-linecap="round"/>',
   warn:   '<path d="M12 3l10 18H2L12 3z" stroke="#c8892b" stroke-width="2" fill="none" stroke-linejoin="round"/><path d="M12 10v5" stroke="#c8892b" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="18" r="1" fill="#c8892b"/>',
   info:   '<circle cx="12" cy="12" r="9" stroke="#5a7a30" stroke-width="2" fill="none"/><path d="M12 11v5" stroke="#5a7a30" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="8" r="1" fill="#5a7a30"/>'
@@ -2155,11 +3577,19 @@ function flConfirm(opts) {
   if (tone === 'info') iconWrap.classList.add('di-delete-icon-wrap--info');
   else if (tone === 'warn') iconWrap.classList.add('di-delete-icon-wrap--warn');
 
+  // Section 6 (2026-07-26): the comment that used to sit here claimed 'danger'
+  // "uses the default .di-btn-full red". There was no such red. .di-btn-full
+  // sets width, padding, radius and weight and NO background, so every
+  // destructive confirm in the app rendered its CTA in browser grey, stacked
+  // directly on a grey Cancel — the one dialog where the two buttons must not
+  // look alike. Every tone now names its own class, and nothing relies on a
+  // default that was never there.
   okBtn.classList.remove('di-btn-warn');
+  okBtn.classList.remove('di-btn-danger');
+  okBtn.classList.remove('di-btn-pri-solid');
   if (tone === 'warn') okBtn.classList.add('di-btn-warn');
-  // 'danger' uses the default .di-btn-full red (same as delete-entry modal).
-  // 'info' uses .di-btn-pri-solid when explicitly requested but for the
-  // generic helper we keep the default green-tinted CTA look.
+  else if (tone === 'danger') okBtn.classList.add('di-btn-danger');
+  else okBtn.classList.add('di-btn-pri-solid'); // 'info' — a decision, not a loss
 
   iconEl.innerHTML = FL_CONFIRM_ICON_SVG[tone] || FL_CONFIRM_ICON_SVG.danger;
 
@@ -2176,6 +3606,15 @@ function flConfirm(opts) {
 function onSignedIn() {
   reconcileOfflineQueueForCurrentUser();
   updateOfflineBadge();
+  // Auto-flush entries queued offline in a previous session. The offline banner
+  // promises they sync "when connection returns", but the window 'online' event
+  // only fires on an offline→online transition — never on an app launch that
+  // starts online — so without this they sat queued until a manual tap (M4).
+  // syncOfflineQueue self-guards onLine + an in-flight lock, so this is safe.
+  if (navigator.onLine && (getOfflineQueueForCurrentUser().length > 0 ||
+      (currentUser && standOutboxCount(currentUser.id) > 0))) {
+    setTimeout(function() { try { syncOfflineQueue(); } catch (_) {} }, 1500);
+  }
   var meta = currentUser.user_metadata || {};
   var name = meta.full_name || currentUser.email.split('@')[0];
   var initials = name.split(' ').map(function(w){ return w[0]; }).join('').toUpperCase().slice(0,2);
@@ -2193,11 +3632,31 @@ function onSignedIn() {
   currentSeason = getCurrentSeason();
   var sl = document.getElementById('season-label');
   var ssl = document.getElementById('stats-season-lbl');
-  if (sl) sl.textContent = seasonLabel(currentSeason);
-  if (ssl) ssl.textContent = seasonLabel(currentSeason);
+  var seasonSm = personalSeasonStartMonth();
+  if (sl) sl.textContent = seasonLabel(currentSeason, seasonSm);
+  if (ssl) ssl.textContent = seasonLabel(currentSeason, seasonSm);
+  // Profile card: mirror the season-start setting under the "Season starts"
+  // row so the Edit button opens with the current value shown.
+  renderProfileSeasonStartRow();
+  renderProfileSpeciesRow();
   go('v-list');
   loadGrounds();
+  refreshGroundsData(); // G3: boundaries paint on every map + settings row
   loadEntries();
+  // QW-5 (2026-07-20 audit): home-screen app shortcuts (manifest) deep-link
+  // straight into capture. Fires once per sign-in; only the quick/new keys are
+  // stripped from the URL so a manual refresh doesn't re-open the sheet — and any
+  // syndicate-invite param is preserved for tryRedeemSyndicateInviteFromUrl below.
+  try {
+    var _flSp = new URLSearchParams(window.location.search);
+    var _flShortcut = _flSp.get('quick') === '1' ? 'quick' : (_flSp.get('new') === '1' ? 'new' : '');
+    if (_flShortcut) {
+      _flSp.delete('quick'); _flSp.delete('new');
+      var _flQ = _flSp.toString();
+      history.replaceState(null, '', window.location.pathname + (_flQ ? '?' + _flQ : ''));
+      if (_flShortcut === 'quick') { openQuickEntry(); } else { openNewEntry(); }
+    }
+  } catch (_flErr) { /* shortcut is best-effort */ }
   (async function() {
     await tryRedeemSyndicateInviteFromUrl();
     await ensureMySyndicateDisplayNames();
@@ -2228,6 +3687,7 @@ flOnReady(function() {
   await syncDiaryTrustedUkClock();
   initStatsMoreSection();
   initPlanCollapse();
+  initStatsJumpSpy();
   if (!initSupabase()) return;
 
   // Best-effort client-side error capture. Installs window.error +
@@ -2261,9 +3721,11 @@ flOnReady(function() {
   (async function() {
     sb.auth.onAuthStateChange(function(event, session) {
       if (event === 'SIGNED_OUT') {
-        currentUser = null;
+        // Full cache reset here covers account-deletion + remote/global
+        // sign-outs that never run the signOut() wrapper (H5: shared-device
+        // residue of the previous user's stands / sightings / entries).
+        resetSessionState();
         authRecoveryMode = false;
-        invalidateSeasonCache();
         diaryHidePasswordRecoveryUI();
         go('v-auth');
         return;
@@ -2322,7 +3784,13 @@ initSwBridge();
 // DATA
 // ════════════════════════════════════
 function seasonDates(season) {
-  var parts = season.split('-');
+  // Window follows the user's configured start month (default August).
+  // The { start, end } (YYYY-MM-DD) return shape is relied on by the entry
+  // fetch window in loadEntries and the pace KPI — keep it exactly.
+  var b = seasonBoundsForKey(season, personalSeasonStartMonth());
+  if (b) return { start: b.startIso, end: b.endIso };
+  // Unparseable key — historical August window (callers never pass '__all__').
+  var parts = String(season).split('-');
   var y1 = parseInt(parts[0]); // e.g. 2025
   var y2 = y1 + 1;             // always next year (2026)
   return { start: y1 + '-08-01', end: y2 + '-07-31' };
@@ -2331,7 +3799,7 @@ function seasonDates(season) {
 // Season list + cards + stats + map: omit weather_data (JSONB can be large). Hydrate in openDetail.
 var CULL_ENTRY_LIST_COLUMNS =
   'id,user_id,species,sex,date,time,outing_start_time,outing_end_time,location_name,lat,lng,weight_kg,' +
-  'calibre,distance_m,shot_placement,age_class,notes,shooter,ground,destination,tag_number,abnormalities,abnormalities_other,syndicate_id,photo_url,is_blank,created_at';
+  'calibre,distance_m,shot_placement,age_class,notes,shooter,ground,destination,tag_number,abnormalities,abnormalities_other,syndicate_id,photo_url,is_blank,quantity,created_at';
 var CULL_ENTRY_LIST_COLUMNS_LEGACY =
   'id,user_id,species,sex,date,time,outing_start_time,outing_end_time,location_name,lat,lng,weight_kg,' +
   'calibre,distance_m,shot_placement,age_class,notes,shooter,ground,destination,abnormalities,abnormalities_other,syndicate_id,photo_url,is_blank,created_at';
@@ -2382,6 +3850,7 @@ async function loadEntries() {
         if (!fallback.error) {
           fallback.data = (fallback.data || []).map(function(row) {
             row.tag_number = null;
+            row.quantity = row.quantity == null ? 1 : row.quantity;
             return row;
           });
           r = fallback;
@@ -2394,7 +3863,11 @@ async function loadEntries() {
       allEntries = r.data || [];
       await resolveCullPhotoDisplayUrls(allEntries);
       populateGroundFilterDropdown();
+      populateShooterSuggestions();
       renderList();
+      // SG1: warm the sightings cache once per session so the header strip
+      // shows its tally (also pre-loads the map/stands "seen here" surfaces).
+      if (!sightingsLoaded) { loadSightings(); } else { updateSightingsStrip(); }
       statsNeedsFullRebuild = true;
       if (statsActive) {
         buildStats();
@@ -2421,14 +3894,19 @@ async function loadEntries() {
 
 function changeSeason() {
   currentSeason = document.getElementById('season-select').value;
-  document.getElementById('season-label').textContent = currentSeason === '__all__' ? 'All Seasons' : seasonLabel(currentSeason);
+  // DL4: the header label is gone (the select states the season); null-guarded
+  // for any straggler markup.
+  var seasonLblEl = document.getElementById('season-label');
+  if (seasonLblEl) seasonLblEl.textContent = currentSeason === '__all__' ? 'All Seasons' : seasonLabel(currentSeason, personalSeasonStartMonth());
   loadEntries();
 }
 
 // ════════════════════════════════════
 // RENDER LIST
 // ════════════════════════════════════
-var SPECIES_CLASS = { 'Red Deer':'sp-red','Roe Deer':'sp-roe','Fallow':'sp-fallow','Sika':'sp-sika','Muntjac':'sp-muntjac','CWD':'sp-cwd' };
+var SPECIES_CLASS = { 'Red Deer':'sp-red','Roe Deer':'sp-roe','Fallow':'sp-fallow','Sika':'sp-sika','Muntjac':'sp-muntjac','CWD':'sp-cwd',
+  // Pest Control (v3) — accent classes in diary.css alongside the deer set.
+  'Fox':'sp-fox','Rabbit':'sp-rabbit','Grey Squirrel':'sp-squirrel','Pigeon':'sp-pigeon','Corvid':'sp-corvid','Wild Boar':'sp-boar' };
 // SPEC: lib/fl-pure.mjs#MONTH_NAMES — values must match exactly (declaration
 // style differs: fl-pure uses `export const`, this is `var` with padding).
 var MONTH_NAMES   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -2507,11 +3985,18 @@ function renderAbnormalityGrid() {
           var chip = cb.closest('.abnorm-chip');
           if (chip) chip.classList.remove('is-on');
         });
-        var otherInp = document.getElementById('f-abnorm-other');
-        if (otherInp) otherInp.value = '';
+        // Findings 6/11 (2026-07-24): do NOT wipe the free-text note here.
+        // Ticking "No abnormalities" used to silently delete whatever the
+        // stalker had typed, and getAbnormalityValues() then discarded it
+        // again on save — two independent ways to lose a written observation.
+        // abnormalitySummaryText() has always been able to render the pair
+        // ("No structural abnormalities observed (additional note: …)"), and
+        // setAbnormalityValues() has always restored it, so the form was the
+        // only part of the app that refused to carry both.
       } else {
         grid.classList.remove('is-disabled');
       }
+      flSyncAbnormOtherLabel();
     });
   }
 }
@@ -2525,8 +4010,11 @@ function getAbnormalityValues() {
       codes.push(cb.value);
     });
   }
+  // Findings 6/11: the note is kept whichever way the checklist went. A clean
+  // carcass with a remark on it ("off-side shoulder shot-damaged") is a normal
+  // larder entry, not a contradiction.
   var otherEl = document.getElementById('f-abnorm-other');
-  var other = (otherEl && !isNone) ? otherEl.value.trim() : '';
+  var other = otherEl ? otherEl.value.trim() : '';
   // DB convention: store `['none']` when explicitly clear; `null` when the
   // stalker didn't engage with the inspection at all. This lets the Summary
   // PDF distinguish "confirmed healthy" from "unchecked / unknown".
@@ -2535,6 +4023,21 @@ function getAbnormalityValues() {
   else if (codes.length) arr = codes;
   else arr = null;
   return { abnormalities: arr, abnormalities_other: other || null };
+}
+
+/**
+ * Findings 6/11: the free-text row means something slightly different either
+ * side of the "No abnormalities" tick — an extra finding when the checklist is
+ * in play, a plain remark when the carcass was clean — so the label says which.
+ * Wording matches abnormalitySummaryText(), which prints "additional note".
+ */
+function flSyncAbnormOtherLabel() {
+  var noneBox = document.getElementById('f-abnorm-none');
+  var lbl = document.querySelector('label[for="f-abnorm-other"]');
+  var inp = document.getElementById('f-abnorm-other');
+  var clean = !!(noneBox && noneBox.checked);
+  if (lbl) lbl.textContent = clean ? 'Additional note (optional)' : 'Other abnormalities (optional)';
+  if (inp) inp.placeholder = clean ? 'Anything else worth recording…' : 'Anything not on the list…';
 }
 
 function setAbnormalityValues(codes, other) {
@@ -2551,10 +4054,12 @@ function setAbnormalityValues(codes, other) {
     });
   }
   if (otherEl) otherEl.value = other || '';
+  flSyncAbnormOtherLabel();
   if (Array.isArray(codes)) {
     if (codes.length === 1 && codes[0] === 'none') {
       if (noneBox) noneBox.checked = true;
       if (grid) grid.classList.add('is-disabled');
+      flSyncAbnormOtherLabel();
     } else {
       codes.forEach(function(code) {
         var cb = document.querySelector('#abnorm-grid input[data-abnorm-input="1"][value="' + code + '"]');
@@ -2595,13 +4100,35 @@ function abnormalitySummaryText(codes, other) {
   return otherStr || null;
 }
 
-// SPEC: lib/fl-pure.mjs#sexBadgeClass — keep in sync.
+// SPEC: lib/fl-pure.mjs#sexBadgeClass — keep in sync (v3: '' for non-m/f sex;
+// fox → sx-dg/sx-vx via the imported quarryMeta; deer behaviour unchanged).
 function sexBadgeClass(sex, species) {
+  if (sex !== 'm' && sex !== 'f') return '';
+  var meta = quarryMeta(species);
+  if (meta && meta.group === 'pest') return sex === 'm' ? 'sx-dg' : 'sx-vx';
   if (sex === 'm') return (species === 'Roe Deer' || species === 'Fallow' || species === 'Muntjac' || species === 'CWD') ? 'sx-bu' : 'sx-st';
   return (species === 'Roe Deer' || species === 'Fallow' || species === 'Muntjac' || species === 'CWD') ? 'sx-do' : 'sx-hi';
 }
-// SPEC: lib/fl-pure.mjs#sexLabel — species-aware (Stag/Hind for Red/Sika, Buck/Doe otherwise).
+
+/** Detail-hero sex pill colour (design pass): the translucent `.dchip` twin of
+ *  sexBadgeClass, so a Roe BUCK reads the SAME green in the detail as on its
+ *  list card (it used to flatten to the stag rust — the one datum, two colours).
+ *  buck→green, stag→rust, doe→purple, hind→magenta, pest→brown. */
+function detailSexChipClass(sex, species) {
+  if (sex !== 'm' && sex !== 'f') return '';
+  var meta = quarryMeta(species);
+  if (meta && meta.group === 'pest') return sex === 'm' ? 'dc-dg' : 'dc-vx';
+  if (sex === 'm') return (species === 'Roe Deer' || species === 'Fallow' || species === 'Muntjac' || species === 'CWD') ? 'dc-bu' : 'dc-m';
+  return (species === 'Roe Deer' || species === 'Fallow' || species === 'Muntjac' || species === 'CWD') ? 'dc-do' : 'dc-f';
+}
+// SPEC: lib/fl-pure.mjs#sexLabel — species-aware (Stag/Hind for Red/Sika,
+// Buck/Doe otherwise; Dog/Vixen for fox via quarryMeta). v3: non-m/f sex
+// returns '' — sex-less pest rows and blank days store NULL, and the old
+// fall-through mislabelled them as 'Hind'/'Doe'.
 function sexLabel(sex, species) {
+  if (sex !== 'm' && sex !== 'f') return '';
+  var meta = quarryMeta(species);
+  if (meta && meta.sexed && meta.mLbl) return sex === 'm' ? meta.mLbl : meta.fLbl;
   var isBuck = ['Roe Deer','Fallow','Muntjac','CWD'].indexOf(species) >= 0;
   if (sex === 'm') return isBuck ? 'Buck' : 'Stag';
   return isBuck ? 'Doe' : 'Hind';
@@ -2629,6 +4156,20 @@ function fmtDate(d) {
   // Local calendar date — avoid UTC parse shift from new Date('YYYY-MM-DD')
   var dt = new Date(p.y, p.m - 1, p.day);
   return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.getDay()] + ' ' + p.day + ' ' + MONTH_NAMES[p.m - 1];
+}
+
+/**
+ * YR1 — the year rule: any date printed OUTSIDE a container that already
+ * states the year carries the year itself. List cards live under
+ * "September 2022" month headers (exempt); a season-scoped sightings list is
+ * disambiguated by its season header (exempt). Detail views, PDF rows,
+ * confirmation modals and feeds are standalone — a 2022 entry read in 2026
+ * must say 2022 on its own.
+ */
+function fmtDateYear(d) {
+  var s = fmtDate(d);
+  var p = parseEntryDateParts(d);
+  return (s && p && p.y) ? s + ' ' + p.y : s;
 }
 
 // Safe photo URL — only allow https URLs from trusted storage
@@ -2734,10 +4275,10 @@ function getEmptyListHtml() {
     + '<rect x="22" y="10" width="76" height="68" rx="9" fill="url(#empty-paper)" stroke="#d4cfc4" stroke-width="1.2"/>'
     + '<rect x="22" y="10" width="16" height="68" rx="3" fill="#5a7a30" opacity="0.1"/>'
     + '<line x1="22" y1="26" x2="98" y2="26" stroke="#e0dbd2" stroke-width="1"/>'
-    + '<line x1="46" y1="40" x2="88" y2="40" stroke="#c9a84c" stroke-width="1.4" stroke-linecap="round" opacity="0.45"/>'
-    + '<line x1="46" y1="50" x2="80" y2="50" stroke="#c9a84c" stroke-width="1.4" stroke-linecap="round" opacity="0.35"/>'
-    + '<line x1="46" y1="60" x2="92" y2="60" stroke="#c9a84c" stroke-width="1.4" stroke-linecap="round" opacity="0.28"/>'
-    + '<circle cx="82" cy="20" r="6" fill="#c9a84c" opacity="0.2"/>'
+    + '<line x1="46" y1="40" x2="88" y2="40" stroke="#d8b054" stroke-width="1.4" stroke-linecap="round" opacity="0.45"/>'
+    + '<line x1="46" y1="50" x2="80" y2="50" stroke="#d8b054" stroke-width="1.4" stroke-linecap="round" opacity="0.35"/>'
+    + '<line x1="46" y1="60" x2="92" y2="60" stroke="#d8b054" stroke-width="1.4" stroke-linecap="round" opacity="0.28"/>'
+    + '<circle cx="82" cy="20" r="6" fill="#d8b054" opacity="0.2"/>'
     + '<path d="M86 52c4-6 10-6 14-2c2 2 3 5 2 8h-5c0-3-2-5-5-5s-5 2-6 5v3h-4v-4c0-4 2-8 4-5z" fill="#5a7a30" opacity="0.18"/>'
     + '</svg>';
   return '<div class="empty-state">'
@@ -2804,7 +4345,71 @@ function clearListSearch() {
   renderList();
 }
 
+// DL6: the species chip row reflects YOUR diary — All + species that actually
+// hold entries (canonical order, unknown legacy names appended). Chips for
+// species you've never logged are dead controls; they appear the day you log
+// that species. The Pest ▸ toggle exists only when pest entries exist. An
+// active filter whose species vanishes resets to All (it can't filter to a
+// silent empty list).
+var FL_DEER_CHIP_ORDER = ['Red Deer', 'Roe Deer', 'Fallow', 'Sika', 'Muntjac', 'CWD'];
+var FL_PEST_CHIP_ORDER = ['Fox', 'Rabbit', 'Grey Squirrel', 'Pigeon', 'Corvid', 'Wild Boar'];
+
+function renderSpeciesChips() {
+  var bar = document.getElementById('species-filter-bar');
+  if (!bar) return;
+  var present = {};
+  (allEntries || []).forEach(function(e) { if (e.species) present[e.species] = true; });
+  var deer = FL_DEER_CHIP_ORDER.filter(function(s) { return present[s]; })
+    .concat(Object.keys(present).filter(function(s) {
+      return FL_DEER_CHIP_ORDER.indexOf(s) === -1 && !isPestSpecies(s);
+    }).sort());
+  var pests = FL_PEST_CHIP_ORDER.filter(function(s) { return present[s]; })
+    .concat(Object.keys(present).filter(function(s) {
+      return isPestSpecies(s) && FL_PEST_CHIP_ORDER.indexOf(s) === -1;
+    }).sort());
+  if (currentFilter !== 'all' && currentFilter !== '__pests__' && !present[currentFilter]) currentFilter = 'all';
+  var chip = function(s) {
+    // Colour-thread (design pass): the same species dot the Stats map chips use,
+    // so "Roe = that green, Fallow = that amber" is one learned cue everywhere.
+    var dot = SP_COLORS[s] || '#5a7a30';
+    return '<button class="fc' + (currentFilter === s ? ' on' : '') + '" type="button" data-fl-action="filter-entries" data-species="' + esc(s) + '"><span class="fc-dot" style="background:' + dot + '" aria-hidden="true"></span>' + esc(s) + '</button>';
+  };
+  var h = '<button class="fc' + (currentFilter === 'all' ? ' on' : '') + '" type="button" data-fl-action="filter-entries" data-species="all">All</button>';
+  deer.forEach(function(s) { h += chip(s); });
+  if (pests.length) {
+    h += '<button class="fc" type="button" id="pest-filter-toggle" data-fl-action="toggle-pest-filters" aria-expanded="false" aria-controls="pest-filter-row" title="Show Pest Control species filters">Pest ▸</button>';
+  }
+  bar.innerHTML = h;
+  var pr = document.getElementById('pest-filter-row');
+  if (pr) {
+    pr.innerHTML = pests.map(chip).join('');
+    if (!pests.length) pr.style.display = 'none';
+  }
+}
+
+/** BB-5 (2026-07-20 audit): fill the Shooter field's datalist with the user's
+ *  OWN past shooter names, most-used first. On a syndicate/estate the regulars
+ *  are then one tap away, and — because it nudges consistent spelling — the
+ *  Stats "cull by shooter" breakdown stops splitting "John" from "John Smith".
+ *  The field stays free-text; the datalist is a pure, dismissable suggestion. */
+function populateShooterSuggestions() {
+  var dl = document.getElementById('shooter-list');
+  if (!dl) return;
+  var counts = {};
+  (allEntries || []).forEach(function(e) {
+    if (!e || isBlankDayEntry(e)) return;
+    var s = (e.shooter || '').trim();
+    if (!s) return;
+    counts[s] = (counts[s] || 0) + 1;
+  });
+  var names = Object.keys(counts).sort(function(a, b) {
+    return counts[b] - counts[a] || a.localeCompare(b);
+  }).slice(0, 15);
+  dl.innerHTML = names.map(function(n) { return '<option value="' + esc(n) + '"></option>'; }).join('');
+}
+
 function populateGroundFilterDropdown() {
+  renderSpeciesChips(); // DL6: chips follow the data, before the list paints
   var sel = document.getElementById('ground-filter');
   var wrap = document.getElementById('list-secondary-filters');
   var searchWrap = document.getElementById('list-search');
@@ -2818,10 +4423,19 @@ function populateGroundFilterDropdown() {
   // were in use — which hid Select too.
   var hasAnyEntries = Array.isArray(allEntries) && allEntries.length > 0;
   wrap.style.display = hasAnyEntries ? 'flex' : 'none';
-  // Search row follows the same rule — hidden on an empty diary so it doesn't
-  // clutter the onboarding state, visible the moment the user has something
-  // to search through.
-  if (searchWrap) searchWrap.style.display = hasAnyEntries ? 'flex' : 'none';
+  // DL5: search earns its row at volume, not at first entry — four cards need
+  // eyes, not a query. Appears once scrolling starts to hurt; a search left
+  // active when the diary shrinks below the bar is cleared so it can't keep
+  // filtering invisibly.
+  var showSearch = Array.isArray(allEntries) && allEntries.length >= 8;
+  if (searchWrap) {
+    searchWrap.style.display = showSearch ? 'flex' : 'none';
+    if (!showSearch && currentSearch) {
+      currentSearch = '';
+      var _si = document.getElementById('list-search-input');
+      if (_si) _si.value = '';
+    }
+  }
 
   // The ground <select> itself is only useful when there are 2+ grounds to pick
   // between; hide it on its own while keeping Sort + Select visible.
@@ -2907,8 +4521,14 @@ function updateSelectBar() {
   if (delBtn) delBtn.disabled = disabled;
 }
 
+// Motion pass: fires the card settle-in exactly once per session (the first
+// populated render), never on filter/search/sort re-renders.
+var flListEntranceDone = false;
+
 function renderList() {
-  var entries = currentFilter === 'all' ? allEntries : allEntries.filter(function(e){ return e.species === currentFilter; });
+  var entries = currentFilter === 'all' ? allEntries
+    : currentFilter === '__pests__' ? allEntries.filter(function(e){ return isPestSpecies(e.species); })
+    : allEntries.filter(function(e){ return e.species === currentFilter; });
   if (currentGroundFilter !== 'all') entries = entries.filter(function(e){ return e.ground === currentGroundFilter; });
   if (currentSearch) entries = entries.filter(function(e) { return entryMatchesSearch(e, currentSearch); });
   // Full-list order (date + time). Month headings below follow the same order via listSortAsc.
@@ -2924,13 +4544,17 @@ function renderList() {
   filteredEntries = entries;
   var container = document.getElementById('entries-container');
 
-  // Stats
-  var total = entries.length;
+  // Stats. DL4: blank days are OUTINGS, not animals — they no longer inflate
+  // the Culls count (a season of 10 blanks and 2 culls used to read "12").
+  var total = entries.reduce(function(s,e){ return s + (isBlankDayEntry(e) ? 0 : entryQty(e)); }, 0); // animals, not rows (pest bags count)
   var kg = entries.reduce(function(s,e){ return s + (parseFloat(e.weight_kg)||0); }, 0);
   var species_set = new Set(entries.map(function(e){ return e.species; }).filter(Boolean));
   document.getElementById('stat-total').textContent = total;
   document.getElementById('stat-kg').textContent = Math.round(kg);
   document.getElementById('stat-spp').textContent = species_set.size;
+  // DL4: a dead-zero stat claims nothing — hide the kg cell until weights exist.
+  var kgCell = document.getElementById('hs-kg-cell');
+  if (kgCell) kgCell.style.display = (Math.round(kg) > 0) ? '' : 'none';
 
   if (!total) {
     // "Nothing matches your search" looks different from "you have no entries" —
@@ -2959,6 +4583,35 @@ function renderList() {
     months[k].push(e);
   });
 
+  // SYS78 (finding 87): index the entries that are indistinguishable on every
+  // field a card renders, so those - and only those - can carry an ordinal.
+  // Numbered by created_at (falling back to id) so "1 of 2" means "the one I
+  // logged first" - a fact the user can actually recall - and so the numbering
+  // survives re-renders and Newest/Oldest flips unchanged.
+  var flDupOrd = {};
+  (function() {
+    var buckets = {};
+    entries.forEach(function(e) {
+      if (isBlankDayEntry(e)) return;
+      var k = [e.species || '', e.sex || '', e.date || '', String(e.time || '').slice(0, 5),
+        e.location_name || e.ground || '', e.weight_kg == null ? '' : String(e.weight_kg),
+        e.tag_number || '', String(entryQty(e))].join('\u0001');
+      if (!buckets[k]) buckets[k] = [];
+      buckets[k].push(e);
+    });
+    Object.keys(buckets).forEach(function(k) {
+      var b = buckets[k];
+      if (b.length < 2) return;
+      b.sort(function(x, y) {
+        var xa = x.created_at ? Date.parse(x.created_at) : NaN;
+        var ya = y.created_at ? Date.parse(y.created_at) : NaN;
+        if (!isNaN(xa) && !isNaN(ya) && xa !== ya) return xa - ya;
+        return String(x.id) < String(y.id) ? -1 : String(x.id) > String(y.id) ? 1 : 0;
+      });
+      b.forEach(function(e, n) { flDupOrd[e.id] = (n + 1) + ' of ' + b.length; });
+    });
+  }());
+
   var html = '';
   var sortedYm = Object.keys(months).filter(function(k) { return k !== LIST_INVALID_YM; });
   sortedYm.sort(function(a, b) {
@@ -2986,6 +4639,7 @@ function renderList() {
         var isSelB = flSelection.active && flSelection.ids.has(e.id);
         var selClassB = isSelB ? ' is-selected' : '';
         var tickB = flSelection.active ? '<div class="gc-select-tick" aria-hidden="true">✓</div>' : '';
+        // DL1: no phantom foot — a blank day has no weight/tag/calibre to show.
         html += '<div class="gc blank-day' + selClassB + '" tabindex="0" role="button" data-fl-action="open-detail" data-entry-id="' + e.id + '">'
           + '<div class="gc-img sp-blank" style="position:relative;">' + blankDayListHeroHtml()
           + '<div class="gc-img-top"><span class="gc-sex gc-sex--blank" title="No shot logged"> </span></div>'
@@ -2994,7 +4648,7 @@ function renderList() {
           + '</div>'
           + '<div class="gc-body"><div class="gc-meta">' + esc(blLine) + '</div>'
           + (blNote ? '<div class="gc-sub">' + esc(blNote) + (blNote.length >= 100 ? '…' : '') + '</div>' : '')
-          + '<div class="gc-foot"><span class="gc-kg">—</span><span class="gc-cal"></span></div></div></div>';
+          + '</div></div>';
         i++;
         continue;
       }
@@ -3003,54 +4657,81 @@ function renderList() {
       var sxLbl = sexLabel(e.sex, e.species);
       var safePhoto = entryPhotoSrc(e);
       var hasPhoto = !!safePhoto;
-      // Wide layout: two adjacent no-photo entries — compute before img so no-photo can reserve bands.
-      var nextE = group[i+1];
-      var showWide = !e.photo_url && (!nextE || !nextE.photo_url);
+      // SYS78 (findings 1 + 46): the "wide card" is RETIRED. It fired when THIS
+      // entry had no photo AND the NEXT one also had none, so a card's geometry
+      // depended on its neighbour's photo status - a rule that is invisible to
+      // the user and indistinguishable from a rendering fault. Live, the topmost
+      // Red Deer rendered full-width with a 110px tile and a ~250px white void
+      // holding the single word "Wigmore" (its date wrapping onto two lines),
+      // while the Rabbit directly beneath it - identical no-photo state -
+      // rendered as a correct 2-up card with a NO PHOTO plate. The 2-up card was
+      // strictly the better of the two in the same situation, so it is now the
+      // only one. QW-1's placeholder-suppression hack - which is precisely what
+      // emptied the wide tile - goes with it.
       var imgHtml = hasPhoto
         ? '<div class="diary-img-skeleton" aria-hidden="true"></div><img class="diary-img diary-img-fade" src="' + esc(safePhoto) + '" alt="" loading="eager" decoding="async"><div class="gc-img-ov"></div>'
-        : diaryNoPhotoListHtml(spClass, showWide);
+        : diaryNoPhotoListHtml(spClass, false);
       var isSel = flSelection.active && flSelection.ids.has(e.id);
       var selClass = isSel ? ' is-selected' : '';
       var tickHtml = flSelection.active ? '<div class="gc-select-tick" aria-hidden="true">✓</div>' : '';
-      if (showWide) {
-        // Wide card
-        html += '<div class="gc wide' + selClass + '" tabindex="0" role="button" data-fl-action="open-detail" data-entry-id="' + e.id + '">'
-          + '<div class="gc-img ' + spClass + '" style="position:relative;">' + imgHtml
-          + '<div class="gc-img-top"><span class="gc-sex ' + sxClass + '">' + sxLbl + '</span></div>'
-          + '<div class="gc-img-bot"><div class="gc-species">' + esc(e.species || '') + '</div><div class="gc-date">' + fmtDate(e.date) + '</div></div>'
-          + tickHtml
-          + '</div>'
-          + '<div class="gc-body"><div class="gc-meta">' + esc(e.location_name) + (e.calibre ? ' · ' + esc(e.calibre) : '') + '</div>'
-          + '<div class="gc-foot"><span class="gc-kg">' + (hasValue(e.weight_kg) ? e.weight_kg + ' kg' : '–') + '</span>' + (e.tag_number ? '<span class="gc-tag">' + esc(e.tag_number) + '</span>' : '') + '</div></div></div>';
-        i++;
-      } else {
-        // Normal card
-        html += '<div class="gc' + selClass + '" tabindex="0" role="button" data-fl-action="open-detail" data-entry-id="' + e.id + '">'
-          + '<div class="gc-img ' + spClass + '" style="position:relative;">' + imgHtml
-          + '<div class="gc-img-top"><span class="gc-sex ' + sxClass + '">' + sxLbl + '</span>'
-          + (hasPhoto ? '<div class="gc-photo-badge" aria-hidden="true">' + SVG_FL_CAMERA + '</div>' : '')
-          + '</div>'
-          + '<div class="gc-img-bot"><div class="gc-species">' + esc(e.species || '') + '</div><div class="gc-date">' + fmtDate(e.date) + '</div></div>'
-          + tickHtml
-          + '</div>'
-          + '<div class="gc-body"><div class="gc-meta">' + esc(e.location_name) + (e.calibre ? ' · ' + esc(e.calibre) : '') + '</div>'
-          + '<div class="gc-foot"><span class="gc-kg">' + (hasValue(e.weight_kg) ? e.weight_kg + ' kg' : '–') + '</span>'
-          + (e.tag_number ? '<span class="gc-tag">' + esc(e.tag_number) + '</span>' : '')
-          + '<span class="gc-cal">' + esc(e.calibre) + '</span></div></div></div>';
-        i++;
-      }
+      // DL6 (every element earns its glance): calibre is OFF the list card —
+      // near-zero glance value when most stalkers shoot one rifle; it lives in
+      // the detail view + stats breakdowns. The body is ONE confident line:
+      // place · weight (moss, bold — the field-meaningful datum) + tag chip.
+      // Nothing to say ⇒ no body at all. The camera badge is gone — the hero
+      // image IS the signal. Time on the date (DL1) keeps twins tellable.
+      var gcWhen = fmtDate(e.date) + (e.time ? ' · ' + esc(String(e.time).slice(0, 5)) : '');
+      // SYS78 (finding 87): two entries can legitimately be identical on every
+      // field a card shows - a right-and-left logged at the same minute from the
+      // same seat. Live, two "Roe Deer · Sat 9 May · 20:55 · Gallow Hill" cards sat
+      // together with only the photo to tell them apart. Rather than inventing a
+      // difference, the card says the true thing: these are N separate records
+      // and this is the nth of them.
+      var gcDupe = flDupOrd[e.id]
+        ? '<span class="gc-dupe" title="More than one entry shares this species, sex, date, time and place — they are separate records, numbered oldest first.">' + esc(flDupOrd[e.id]) + '</span>'
+        : '';
+      var gcPlace = esc(e.location_name || e.ground || '');
+      var gcLineTxt = gcPlace
+        + (hasValue(e.weight_kg) ? (gcPlace ? ' · ' : '') + '<b class="gc-line-kg">' + e.weight_kg + ' kg</b>' : '');
+      var gcTag = e.tag_number ? '<span class="gc-tag">' + esc(e.tag_number) + '</span>' : '';
+      var gcBody = (gcLineTxt || gcTag)
+        ? '<div class="gc-body"><div class="gc-line"><span class="gc-line-txt">' + gcLineTxt + '</span>' + gcTag + '</div></div>'
+        : '';
+      html += '<div class="gc' + selClass + '" tabindex="0" role="button" data-fl-action="open-detail" data-entry-id="' + e.id + '">'
+        + '<div class="gc-img ' + spClass + '" style="position:relative;">' + imgHtml
+        + '<div class="gc-img-top">' + (sxLbl ? '<span class="gc-sex ' + sxClass + '">' + sxLbl + '</span>' : '<span></span>') + '</div>'
+        + '<div class="gc-img-bot"><div class="gc-species">' + esc(e.species || '') + (entryQty(e) > 1 ? ' <span class="gc-qty">×' + entryQty(e) + '</span>' : '') + '</div><div class="gc-date">' + gcWhen + gcDupe + '</div></div>'
+        + tickHtml
+        + '</div>'
+        + gcBody + '</div>';
+      i++;
     }
     html += '</div>';
   });
 
   container.innerHTML = html;
   diaryWireDiaryImages(container);
+  // Motion pass: the first time the diary has cards to show this session, let
+  // them settle in (staggered rise via .fl-list-in). One-shot — typing in
+  // search or switching filters re-renders instantly, no re-animation.
+  if (!flListEntranceDone && filteredEntries.length) {
+    flListEntranceDone = true;
+    container.classList.add('fl-list-in');
+  }
 }
 
 function filterEntries(filter, el) {
   currentFilter = filter;
   document.querySelectorAll('.filter-bar .fc').forEach(function(b){ b.classList.remove('on'); });
   el.classList.add('on');
+  // Deer-first tidy-up: choosing All or a deer species collapses the pest
+  // row again (idempotent — togglePestFilters' collapse path routes here).
+  if (filter !== '__pests__' && !isPestSpecies(filter)) {
+    var pestRow = document.getElementById('pest-filter-row');
+    var pestTog = document.getElementById('pest-filter-toggle');
+    if (pestRow) pestRow.style.display = 'none';
+    if (pestTog) { pestTog.setAttribute('aria-expanded', 'false'); pestTog.textContent = 'Pest ▸'; }
+  }
   renderList();
 }
 
@@ -3087,8 +4768,7 @@ async function openDetail(id) {
   }
   currentEntry = e;
   if (isBlankDayEntry(e)) {
-    var syncTimeB = e.created_at ? new Date(e.created_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
-    var dateDispB = fmtDate(e.date);
+    var dateDispB = fmtDateYear(e.date);
     var wxRawB = renderWeatherStrip(e);
     var wxCardB = wxRawB ? '<div class="dd-card dd-card--wx">' + wxRawB + '</div>' : '';
     var notesCardB = e.notes
@@ -3096,9 +4776,9 @@ async function openDetail(id) {
       : '';
     var whenCardB = '<div class="dd-card"><div class="dd-card-lbl">When &amp; where</div>'
       + '<div class="dd-kv"><span class="dd-k">Date</span><span class="dd-v">' + esc(dateDispB || '–') + '</span></div>'
-      + '<div class="dd-kv"><span class="dd-k">Time</span><span class="dd-v">' + esc(e.time || '–') + '</span></div>'
-      + '<div class="dd-kv"><span class="dd-k">Location</span><span class="dd-v">' + (e.location_name ? esc(e.location_name) : '–') + '</span></div>'
-      + '<div class="dd-kv"><span class="dd-k">Ground</span><span class="dd-v">' + (e.ground ? esc(e.ground) : '–') + '</span></div>'
+      + (e.time ? '<div class="dd-kv"><span class="dd-k">Time</span><span class="dd-v">' + esc(String(e.time).slice(0, 5)) + '</span></div>' : '')
+      + (e.location_name ? '<div class="dd-kv"><span class="dd-k">Location</span><span class="dd-v">' + esc(e.location_name) + '</span></div>' : '')
+      + (e.ground ? '<div class="dd-kv"><span class="dd-k">Ground</span><span class="dd-v">' + esc(e.ground) + '</span></div>' : '')
       + (e.syndicate_id
         ? '<div class="dd-kv"><span class="dd-k">Syndicate</span><span class="dd-v">' + esc(syndicateDisplay || 'Previously assigned (not active)') + '</span></div>'
         : '')
@@ -3113,7 +4793,6 @@ async function openDetail(id) {
       + '<span class="dchip dchip-blank-day">Outing · no shot</span>'
       + (e.ground ? '<span class="dchip dc-l"><span class="dchip-ic" aria-hidden="true">' + SVG_FL_PIN + '</span>' + esc(e.ground) + '</span>' : '')
       + '</div>'
-      + '<div class="sync-row"><div class="sync-dot"></div><span class="sync-txt">Synced' + (syncTimeB ? ' · ' + syncTimeB : '') + '</span></div>'
       + '</div></div>'
       + '<div class="detail-dash">'
       + whenCardB
@@ -3135,60 +4814,150 @@ async function openDetail(id) {
 
   var heroStyle = e.photo_url
     ? 'background:#0a0f07;'
-    : 'background:linear-gradient(135deg,' + {'Red Deer':'#3a1a0a,#1a0a04','Roe Deer':'#0a2210,#050e04','Fallow':'#3a2208,#180e04','Sika':'#081830,#020810','Muntjac':'#1a0a2a,#0a0410','CWD':'#062018,#041010'}[e.species] + ');';
+    : 'background:linear-gradient(135deg,' + ({'Red Deer':'#3a1a0a,#1a0a04','Roe Deer':'#0a2210,#050e04','Fallow':'#3a2208,#180e04','Sika':'#081830,#020810','Muntjac':'#1a0a2a,#0a0410','CWD':'#062018,#041010',
+      'Fox':'#2e1a0c,#180c04','Rabbit':'#2a2210,#161006','Grey Squirrel':'#22242a,#121318','Pigeon':'#121e2c,#0a1018','Corvid':'#16181c,#0a0b0e','Wild Boar':'#241a10,#120c06'}[e.species] || '#1a2a12,#0e160a') + ');';
 
   var _safeHero = entryPhotoSrc(e);
   var heroImg = _safeHero
     ? '<div class="diary-img-skeleton diary-img-skeleton-hero" aria-hidden="true"></div><img class="diary-img diary-img-fade" src="' + esc(_safeHero) + '" alt="" loading="eager" decoding="async" fetchpriority="high">'
     : diaryHeroNoPhotoHtml();
 
-  var syncTime = e.created_at ? new Date(e.created_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+  var dateDisp = fmtDateYear(e.date);
 
-  var dateDisp = fmtDate(e.date);
-  var calibreRange = '–';
-  if (e.calibre && hasValue(e.distance_m)) calibreRange = esc(e.calibre) + ' · ' + e.distance_m + 'm';
-  else if (e.calibre) calibreRange = esc(e.calibre);
-  else if (hasValue(e.distance_m)) calibreRange = '– · ' + e.distance_m + 'm';
-  var placementDisp = e.shot_placement ? esc(e.shot_placement) : '–';
-  var shooterDisp = e.shooter ? esc(e.shooter) : 'Self';
-  var destDisp = e.destination ? esc(e.destination) : '–';
-  function ddWt(v) {
-    if (v == null || v === '') return '–';
-    return esc(String(v)) + ' <span class="dd-u">kg</span>';
-  }
-  function ddDist(v) {
-    if (v == null || v === '') return '–';
-    return esc(String(v)) + ' <span class="dd-u">m</span>';
-  }
+  // DL7: the detail view is a record, not a form — a row renders only when
+  // the stalker captured that fact. No dead dashes; the photo lives once
+  // (the hero, tappable), each measurement lives once (its tile).
+  // A11: the light band, and the one case where it stops being decoration.
+  //
+  // sightingLightBand's 'night' boundary and the statutory deer shooting
+  // window are the same line drawn twice — the band is 'night' exactly when
+  // the time falls outside sunrise−60 … sunset+60, which is the window in
+  // Deer Act 1991 s.2(3) (E&W), Deer (Scotland) Act 1996 s.18 and Wildlife
+  // (NI) Order 1985 Art. 19(2) alike. So a 'night' band on a deer entry is
+  // not a mood word, it is the record saying this shot needed an
+  // authorisation. Say so, once, where the time is.
+  //
+  // Gated on deer: the statutory hours are a deer provision and nothing else.
+  // A fox at 23:40 is an ordinary night's work and must not be flagged as
+  // anything else. Gated on a pin too, via entryLightWord — without
+  // coordinates there is no sunset to be outside of, and a warning computed
+  // from a guessed latitude would be an accusation made up out of nothing.
+  var eBand = entryLightWord(e);
+  var nightNote = (eBand === 'night' && !isPestSpecies(e.species))
+    ? '<div class="dd-lawnote">Outside statutory deer shooting hours — sunrise and sunset at this pin put this time beyond the window of 1 hour before sunrise to 1 hour after sunset. Night shooting needs a written authorisation (Natural England, NatureScot or DAERA) unless it was emergency welfare dispatch. Worth putting the reference in your notes while you still remember it.</div>'
+    : '';
 
-  var photoCard = '<div class="dd-card"><div class="dd-card-lbl">Photo</div>'
-    + (_safeHero
-      ? '<div class="dd-photo-row"><div class="dd-photo-col"><div class="photo-thumb" tabindex="0" role="button" data-fl-action="open-photo-lb" data-photo-url="' + encodeURIComponent(_safeHero) + '" title="Tap to view full size"><div class="diary-img-skeleton diary-img-skeleton-thumb" aria-hidden="true"></div><img class="diary-img diary-img-fade" src="' + esc(_safeHero) + '" alt="" loading="eager" decoding="async"></div><div class="dd-photo-hint">Tap to expand</div></div><button type="button" class="photo-change-btn" data-fl-action="open-edit-entry" data-entry-id="' + e.id + '"><span class="di-btn-ic" aria-hidden="true">' + SVG_FL_PENCIL + '</span>Edit entry</button></div>'
-      : '<div class="dd-photo-row"><div class="dd-photo-col"><div class="photo-thumb photo-thumb--empty">' + diaryPhotoThumbEmptyHtml() + '</div></div><button type="button" class="photo-change-btn" data-fl-action="open-edit-entry" data-entry-id="' + e.id + '"><span class="di-btn-ic" aria-hidden="true">' + SVG_FL_PENCIL + '</span>Edit entry</button></div>')
-    + '</div>';
+  // The same season verdict the form gave, kept on the record.
+  //
+  // cullSeasonAdvisory ran while the entry was being typed, and its own copy
+  // ends "if this date is a slip, it is worth correcting now" - which is only
+  // true in the seconds before Save. After that the warning was gone and the
+  // saved record said nothing at all, so a doe dated inside a close season
+  // read exactly like a doe dated outside one, and the single chance to catch
+  // the slip had already passed. A cull diary is read months later, when a
+  // season is being totalled and a return is being compiled. That is precisely
+  // when the entry needs to still be saying it.
+  //
+  // Only 'closed' speaks. An in-season deer on an in-season date is the normal
+  // case, and a line confirming it on every entry would be wallpaper - which is
+  // how real warnings stop being read. 'unknown' stays silent too: a form has
+  // somewhere to put "set the jurisdiction", a finished record does not.
+  //
+  // Location follows the form exactly - pin first, then the centre of the
+  // chosen ground's boundary - because the jurisdiction is what picks the
+  // season table, and a stalker who works one permission may never drop a pin.
+  //
+  // Wrapped, like the light band, because SG2 was a cosmetic cue throwing and
+  // taking the whole render down with it. A note about a season is never worth
+  // a blank detail view.
+  var seasonNote = '';
+  try {
+    var _sLa = (e.lat != null) ? e.lat : null;
+    var _sLo = (e.lng != null) ? e.lng : null;
+    if (_sLa == null || _sLo == null) {
+      var _sSeed = standGroundSeed(e.ground, groundFeaturesNow());
+      if (_sSeed) { _sLa = _sSeed.lat; _sLo = _sSeed.lng; }
+    }
+    var _sV = cullSeasonAdvisory(e.species, e.sex, e.date, _sLa, _sLo);
+    if (_sV && _sV.status === 'closed') {
+      seasonNote = '<div class="dd-lawnote">' + esc(_sV.headline)
+        + '. A deer may lawfully be taken outside its season under a licence or an'
+        + ' authorisation, so this is a flag and not a verdict. If that is what'
+        + ' happened, the reference belongs in the notes; if the date is wrong,'
+        + ' this is the entry to correct before the season is totalled.</div>';
+    }
+  } catch (_seasonErr) { seasonNote = ''; }
 
   var whenCard = '<div class="dd-card"><div class="dd-card-lbl">When &amp; where</div>'
     + '<div class="dd-kv"><span class="dd-k">Date</span><span class="dd-v">' + esc(dateDisp || '–') + '</span></div>'
-    + '<div class="dd-kv"><span class="dd-k">Time</span><span class="dd-v">' + esc(e.time || '–') + '</span></div>'
-    + '<div class="dd-kv"><span class="dd-k">Location</span><span class="dd-v">' + (e.location_name ? esc(e.location_name) : '–') + '</span></div>'
-    + '<div class="dd-kv"><span class="dd-k">Ground</span><span class="dd-v">' + (e.ground ? esc(e.ground) : '–') + '</span></div>'
+    + (e.time ? '<div class="dd-kv"><span class="dd-k">Time</span><span class="dd-v">' + esc(String(e.time).slice(0, 5))
+        + (eBand ? '<span class="dd-band dd-band-' + eBand + '">' + eBand + '</span>' : '') + '</span></div>' : '')
+    + (e.location_name ? '<div class="dd-kv"><span class="dd-k">Location</span><span class="dd-v">' + esc(e.location_name) + '</span></div>' : '')
+    + (e.lat != null && e.lng != null ? '<div class="dd-kv"><span class="dd-k">' + flPlaceRefLabel(e.lat, e.lng, 8) + '</span><span class="dd-v">' + esc(flPlaceRef(e.lat, e.lng, 8)) + '</span></div>' : '')
+    + (e.ground ? '<div class="dd-kv"><span class="dd-k">Ground</span><span class="dd-v">' + esc(e.ground) + '</span></div>' : '')
     + (e.syndicate_id
       ? '<div class="dd-kv"><span class="dd-k">Syndicate</span><span class="dd-v">' + esc(syndicateDisplay || 'Previously assigned (not active)') + '</span></div>'
       : '')
+    + seasonNote
+    + nightNote
     + '</div>';
 
-  var weightsCard = '<div class="dd-card"><div class="dd-card-lbl">Weight &amp; distance</div><div class="dd-grid2">'
-    + '<div class="dd-tile"><div class="dd-tile-k">Carcass weight</div><div class="dd-tile-v">' + ddWt(e.weight_kg) + '</div></div>'
-    + '<div class="dd-tile"><div class="dd-tile-k">Distance</div><div class="dd-tile-v">' + ddDist(e.distance_m) + '</div></div>'
-    + (e.tag_number ? '<div class="dd-tile"><div class="dd-tile-k">Tag number</div><div class="dd-tile-v">' + esc(e.tag_number) + '</div></div>' : '')
-    + '</div></div>';
+  // Where — satellite snippet at the kill site (+ any culls nearby). Gives an
+  // entry the map that sightings already have. Tap → cull map on this pin.
+  var whereMapCard = (e.lat != null && e.lng != null)
+    ? '<div class="dd-card dd-map-card" data-fl-action="expand-map" data-map-kind="entry" data-map-id="' + e.id + '" role="button" tabindex="0" aria-label="Expand this cull on the map">'
+      + '<div class="dd-card-lbl dd-lbl-row"><span>Where</span><span class="dd-maplink">Open map ›</span></div>'
+      + '<div class="ent-mini" id="entry-mini-map"><span class="mini-exp" aria-hidden="true">⤢</span><span class="mini-base">Satellite</span></div>'
+      + '<div class="ent-mini-legend" id="entry-mini-legend"></div>'
+      + '</div>'
+    : '';
 
-  var shotCard = '<div class="dd-card"><div class="dd-card-lbl">Shot &amp; stalking</div>'
-    + '<div class="dd-kv"><span class="dd-k">Calibre / range</span><span class="dd-v">' + calibreRange + '</span></div>'
-    + '<div class="dd-kv"><span class="dd-k">Placement</span><span class="dd-v">' + placementDisp + '</span></div>'
-    + '<div class="dd-kv"><span class="dd-k">Shooter</span><span class="dd-v">' + shooterDisp + '</span></div>'
-    + '<div class="dd-kv"><span class="dd-k">Destination</span><span class="dd-v">' + destDisp + '</span></div>'
-    + '</div>';
+  // SYS78 (finding 78): with no coordinates the Where card simply vanished, so
+  // a stalker looking for the map found no map AND no explanation - the same
+  // blank a failed tile load would leave. This states which of the two it is
+  // and offers the remedy.
+  //
+  // It is deliberately NOT a titled card in the map's slot. Tried that first
+  // and it put "WHERE" directly above "WHEN & WHERE", two headings a word
+  // apart, and repeated the ground name three rows above the Ground row that
+  // already carries it. An absence is a footnote to the record, not a section
+  // of it - so it loses the heading and follows the facts instead of leading
+  // them.
+  var noGeoNote = (e.lat != null && e.lng != null)
+    ? ''
+    : '<div class="dd-card dd-nogeo">'
+      + '<p class="dd-nogeo-t">No map pin was saved for this cull, so it does not appear on the cull map.</p>'
+      + '<button type="button" class="dd-maplink dd-nogeo-add" data-fl-action="open-edit-entry" data-entry-id="' + e.id + '">Add location \u203a</button>'
+      + '</div>';
+
+  var wtTile = hasValue(e.weight_kg)
+    ? '<div class="dd-tile"><div class="dd-tile-k">Carcass weight</div><div class="dd-tile-v">' + esc(String(e.weight_kg)) + ' <span class="dd-u">kg</span></div></div>' : '';
+  var distTile = hasValue(e.distance_m)
+    ? '<div class="dd-tile"><div class="dd-tile-k">Distance</div><div class="dd-tile-v">' + esc(String(e.distance_m)) + ' <span class="dd-u">m</span></div></div>' : '';
+  var tagTile = e.tag_number
+    ? '<div class="dd-tile"><div class="dd-tile-k">Tag number</div><div class="dd-tile-v">' + esc(e.tag_number) + '</div></div>' : '';
+  var weightsCard = (wtTile || distTile || tagTile)
+    ? '<div class="dd-card"><div class="dd-card-lbl">Weight &amp; distance</div><div class="dd-grid2">' + wtTile + distTile + tagTile + '</div></div>'
+    : '';
+
+  var calRow = e.calibre ? '<div class="dd-kv"><span class="dd-k">Calibre</span><span class="dd-v">' + esc(e.calibre) + '</span></div>' : '';
+  var placeRow = e.shot_placement ? '<div class="dd-kv"><span class="dd-k">Placement</span><span class="dd-v">' + esc(e.shot_placement) + '</span></div>' : '';
+  var destRow = e.destination ? '<div class="dd-kv"><span class="dd-k">Destination</span><span class="dd-v">' + esc(e.destination) + '</span></div>' : '';
+  // SYS78 (finding 78): a heading has to earn its card. "Shot & stalking" was
+  // rendering as a full bordered card, uppercase label and all, around a single
+  // row reading "Shooter: Self" - which is the default, i.e. the absence of a
+  // fact dressed up as one. Live, that row WAS the entire shot section of the
+  // Rabbit entry. A shooter who is someone else is a real fact and still earns
+  // the card; the default no longer conjures a section out of nothing.
+  var namedShooter = e.shooter && !/^(self|me)$/i.test(String(e.shooter).trim())
+    ? String(e.shooter).trim() : '';
+  var shotCard = (calRow || placeRow || destRow || namedShooter)
+    ? '<div class="dd-card"><div class="dd-card-lbl">Shot &amp; stalking</div>'
+      + calRow + placeRow
+      + '<div class="dd-kv"><span class="dd-k">Shooter</span><span class="dd-v">' + (namedShooter ? esc(namedShooter) : 'Self') + '</span></div>'
+      + destRow
+      + '</div>'
+    : '';
 
   var notesCard = e.notes
     ? '<div class="dd-card"><div class="dd-card-lbl">Notes</div><p class="dd-notes">' + esc(e.notes) + '</p></div>'
@@ -3217,24 +4986,35 @@ async function openDetail(id) {
   var wxRaw = renderWeatherStrip(e);
   var wxCard = wxRaw ? '<div class="dd-card dd-card--wx">' + wxRaw + '</div>' : '';
 
-  var html = '<div class="detail-hero detail-hero--dense ' + spClass + '" style="' + heroStyle + '">'
+  // DL7: with a photo, the hero IS the photo affordance — the whole image
+  // taps through to the lightbox (the back button's own action wins via
+  // closest()), and a small expand button top-right is the visible cue +
+  // keyboard target. No separate Photo card repeating the same image below.
+  var html = '<div class="detail-hero detail-hero--dense ' + spClass + (_safeHero ? ' detail-hero--tap' : ' detail-hero--noph') + '" style="' + heroStyle + '"'
+    + (_safeHero ? ' data-fl-action="open-photo-lb" data-photo-url="' + encodeURIComponent(_safeHero) + '"' : '') + '>'
     + heroImg
     + '<div class="detail-hero-ov"></div>'
     + '<button type="button" class="detail-hero-back" data-fl-action="go" data-view="v-list" aria-label="Back to list">←</button>'
+    + (_safeHero ? '<button type="button" class="detail-hero-expand" data-fl-action="open-photo-lb" data-photo-url="' + encodeURIComponent(_safeHero) + '" aria-label="View photo full size">⤢</button>' : '')
     + '<div class="detail-hero-bot">'
     + '<div class="detail-species">' + esc(e.species || '') + ' ' + esc(sxLbl) + '</div>'
     + '<div class="detail-chips">'
-    + '<span class="dchip ' + (e.sex === 'm' ? 'dc-m' : 'dc-f') + '">' + (e.sex === 'm' ? '♂' : '♀') + ' ' + esc(sxLbl) + (e.age_class ? ' · ' + esc(e.age_class) : '') + '</span>'
+    + (entryQty(e) > 1 ? '<span class="dchip dc-qty">×' + entryQty(e) + ' shot</span>' : '')
+    + ((e.sex === 'm' || e.sex === 'f')
+        ? '<span class="dchip ' + detailSexChipClass(e.sex, e.species) + '">' + (e.sex === 'm' ? '♂' : '♀') + ' ' + esc(sxLbl) + (e.age_class ? ' · ' + esc(e.age_class) : '') + '</span>'
+        : (e.age_class ? '<span class="dchip">' + esc(e.age_class) + '</span>' : ''))
     + (e.location_name ? '<span class="dchip dc-l"><span class="dchip-ic" aria-hidden="true">' + SVG_FL_PIN + '</span>' + esc(e.location_name) + '</span>' : '')
-    + (hasValue(e.weight_kg) ? '<span class="dchip dc-w">' + e.weight_kg + ' kg</span>' : '')
-    + (e.tag_number ? '<span class="dchip dc-t">' + esc(e.tag_number) + '</span>' : '')
+    // Leaner hero (design pass): weight & tag pills removed — they duplicated the
+    // "Weight & distance" card immediately below (carcass weight + tag number
+    // tiles). Hero now carries identity only (sex/age + location); the numbers
+    // live in the cards, so the hero stops competing with itself.
     + '</div>'
-    + '<div class="sync-row"><div class="sync-dot"></div><span class="sync-txt">Synced' + (syncTime ? ' · ' + syncTime : '') + '</span></div>'
     + '</div></div>'
 
     + '<div class="detail-dash">'
-    + photoCard
+    + whereMapCard
     + whenCard
+    + noGeoNote
     + weightsCard
     + shotCard
     + notesCard
@@ -3243,8 +5023,9 @@ async function openDetail(id) {
     + '<div class="action-row action-row--dash">'
     + '<button type="button" class="abtn a-e" data-fl-action="open-edit-entry" data-entry-id="' + e.id + '"><span class="di-btn-ic" aria-hidden="true">' + SVG_FL_PENCIL + '</span>Edit</button>'
     + '<button type="button" class="abtn a-x" data-fl-action="export-single-pdf" data-entry-id="' + e.id + '"><span class="di-btn-ic" aria-hidden="true">' + SVG_FL_FILE_PDF + '</span>PDF</button>'
-    + '<button type="button" class="abtn a-dec" data-fl-action="export-declaration" data-entry-id="' + e.id + '" title="Trained hunter declaration PDF — for game dealers and wild game food safety (UK)." aria-label="Download trained hunter declaration PDF for game dealers">'
-    + '<span class="di-btn-ic" aria-hidden="true">' + SVG_FL_FILE_PDF + '</span>Game dealer PDF</button>'
+    // v3: game-dealer declaration is deer-only — no button on pest entries.
+    + (isPestSpecies(e.species) ? '' : '<button type="button" class="abtn a-dec" data-fl-action="export-declaration" data-entry-id="' + e.id + '" title="Trained hunter declaration PDF — for game dealers and wild game food safety (UK)." aria-label="Download trained hunter declaration PDF for game dealers">'
+    + '<span class="di-btn-ic" aria-hidden="true">' + SVG_FL_FILE_PDF + '</span>Game dealer PDF</button>')
     + '<button type="button" class="abtn a-d" data-fl-action="delete-entry" data-entry-id="' + e.id + '"><span class="di-btn-ic" aria-hidden="true">' + SVG_FL_TRASH + '</span>Delete</button>'
     + '</div></div>';
 
@@ -3252,6 +5033,13 @@ async function openDetail(id) {
   detailEl.innerHTML = html;
   diaryWireDiaryImages(detailEl);
   go('v-detail');
+  // Motion pass: the detail rises + settles into place instead of a hard cut.
+  // (A literal "photo grows out of the card" morph would fight the async
+  // weather/photo-signing above, so this is the robust, jank-free form.)
+  detailEl.classList.remove('fl-detail-in');
+  void detailEl.offsetWidth; // reflow so the animation replays on every open
+  detailEl.classList.add('fl-detail-in');
+  flRenderEntryMiniMap(e); // "Where" satellite snippet (view is active now)
 }
 
 // ════════════════════════════════════
@@ -3264,8 +5052,11 @@ async function openNewEntry() {
   }
   formDirty = false;
   editingId = null;
+  flFormStandId = null;
   photoFile = null;
   editingOriginalPhotoPath = null;
+  editingOriginalSightingPhotoPath = null;
+  photoExplicitlyRemoved = false;
   revokeBlobPreviewUrl(photoPreviewUrl);
   photoPreviewUrl = null;
   formSpecies = '';
@@ -3275,6 +5066,8 @@ async function openNewEntry() {
   document.getElementById('sx-m').classList.remove('on');
   document.getElementById('sx-f').classList.remove('on');
   updateFormSexLabels('');
+  applyFormSpeciesMode();
+  setPestSpeciesGridOpen(false);
   var now = diaryNow();
   // Use UK time for date/time pre-fill — toISOString() returns UTC which can be wrong date/time
   var _ukParts = new Intl.DateTimeFormat('en-GB', {
@@ -3293,6 +5086,7 @@ async function openNewEntry() {
   ['f-location','f-dist','f-notes'].forEach(function(id){ document.getElementById(id).value = ''; }); setCalibreValue('');
   var shooterEl = document.getElementById('f-shooter');
   if (shooterEl) { shooterEl.value = 'Self'; shooterEl.classList.add('shooter-self'); }
+  populateShooterSuggestions(); // BB-5: refresh the shooter datalist on each open (covers the ?new=1 shortcut before a data load)
   var destEl = document.getElementById('f-destination');
   if (destEl) destEl.value = '';
   var tagEl = document.getElementById('f-tag');
@@ -3310,7 +5104,7 @@ async function openNewEntry() {
   clearPinnedLocation();
   setPlacementValue('');
   document.getElementById('f-age').value = '';
-  document.getElementById('form-title').textContent = 'New Entry';
+  document.getElementById('form-title').textContent = 'New entry';
   var _days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   var _ukDate = new Intl.DateTimeFormat('en-GB', {
     timeZone:'Europe/London', weekday:'short', day:'numeric', month:'long', year:'numeric'
@@ -3318,7 +5112,11 @@ async function openNewEntry() {
   var _gp = function(t){ var p=_ukDate.find(function(x){return x.type===t;}); return p?p.value:''; };
   document.getElementById('form-date-label').textContent = _gp('weekday') + ' ' + _gp('day') + ' ' + _gp('month') + ' ' + _gp('year');
   formIsBlank = false;
+  formIsSighting = false;
+  editingSightingId = null;
+  resetSightingForm();
   applyFormBlankMode();
+  queueCullSeasonAdvisory();
   go('v-form');
 }
 
@@ -3327,11 +5125,13 @@ async function openEditEntry(id) {
   var e = allEntries.find(function(x){ return x.id === id; });
   if (!e) return;
   formIsBlank = isBlankDayEntry(e);
+  formIsSighting = false;
   await syncSyndicateGroundFiltersForCurrentUser();
   editingId = id;
   formSpecies = formIsBlank ? '' : e.species;
   formSex = formIsBlank ? '' : e.sex;
   photoFile = null;
+  photoExplicitlyRemoved = false;
   revokeBlobPreviewUrl(photoPreviewUrl);
   photoPreviewUrl = null;
   var path = e.photo_url ? cullPhotoStoragePath(e.photo_url) : null;
@@ -3355,8 +5155,13 @@ async function openEditEntry(id) {
   }
   // Species
   document.querySelectorAll('.sp-btn').forEach(function(b){
-    b.classList.toggle('on', !formIsBlank && b.querySelector('.sp-name').textContent === e.species);
+    var nmEl = b.querySelector('.sp-name');
+    b.classList.toggle('on', !formIsBlank && !!nmEl && nmEl.textContent === e.species);
   });
+  // Editing a pest entry: open the collapsed Pest Control group so the
+  // selected button is visible; per-species gates before field prefill.
+  setPestSpeciesGridOpen(!formIsBlank && isPestSpecies(e.species));
+  applyFormSpeciesMode();
   updateFormSexLabels(formIsBlank ? '' : e.species);
   // Sex
   document.getElementById('sx-m').classList.toggle('on', !formIsBlank && e.sex === 'm');
@@ -3373,11 +5178,13 @@ async function openEditEntry(id) {
   document.getElementById('f-location').value = e.location_name || '';
   if (e.lat != null && e.lng != null) {
     formPinLat = e.lat; formPinLng = e.lng;
-    showPinnedStrip(e.location_name || (e.lat.toFixed(4) + ', ' + e.lng.toFixed(4)), e.lat, e.lng);
+    showPinnedStrip(e.location_name || flPlaceRef(e.lat, e.lng, 6), e.lat, e.lng);
   } else {
     clearPinnedLocation();
   }
   document.getElementById('f-wt').value = hasValue(e.weight_kg) ? String(e.weight_kg) : '';
+  formQuantity = entryQty(e);
+  var _qvEdit = document.getElementById('f-qty-val'); if (_qvEdit) _qvEdit.value = String(formQuantity);
   setCalibreValue(e.calibre || '');
   document.getElementById('f-dist').value = hasValue(e.distance_m) ? String(e.distance_m) : '';
   setPlacementValue(e.shot_placement || '');
@@ -3398,12 +5205,13 @@ async function openEditEntry(id) {
   setGroundValue(e.ground || '');
   await populateSyndicateAttributionDropdown(e.syndicate_id || '');
   document.getElementById('form-title').textContent = 'Edit Entry';
-  document.getElementById('form-date-label').textContent = fmtDate(e.date);
+  document.getElementById('form-date-label').textContent = fmtDateYear(e.date);
   applyFormBlankMode();
+  queueCullSeasonAdvisory();
   go('v-form');
 }
 
-var JUVENILE_LABEL = { 'Red Deer':'Calf', 'Sika':'Calf', 'Roe Deer':'Kid', 'Fallow':'Fawn', 'Muntjac':'Fawn', 'CWD':'Fawn' };
+var JUVENILE_LABEL = { 'Red Deer':'Calf', 'Sika':'Calf', 'Roe Deer':'Kid', 'Fallow':'Fawn', 'Muntjac':'Fawn', 'CWD':'Fawn', 'Fox':'Cub', 'Wild Boar':'Piglet' };
 
 function updateFormSexLabels(species) {
   var mName = document.querySelector('#sx-m .sx-name');
@@ -3444,6 +5252,8 @@ function pickSpecies(el, name) {
   el.classList.add('on');
   formSpecies = name;
   updateFormSexLabels(name);
+  applyFormSpeciesMode();
+  if (formIsSighting) renderSightingLabels();
   formDirty = true;
 }
 function pickSex(s) {
@@ -3465,6 +5275,12 @@ function handlePhoto(input) {
   revokeBlobPreviewUrl(photoPreviewUrl);
   photoPreviewUrl = null;
 
+  // EXIF is read from the ORIGINAL file, in parallel with compression — the
+  // canvas re-encode below strips all metadata (deliberately: the stored
+  // upload carries no embedded GPS), so this is the only moment the photo's
+  // location + capture time exist. Result is offered via showPhotoExifCard.
+  var exifRead = readPhotoExif(file);
+
   // Compression (FileReader → Image → Canvas → Blob at 800px max / 0.75 JPEG)
   // lives in modules/photos.mjs so the offline-queue code can share it and so
   // the pipeline is testable in isolation. Everything below the compress call
@@ -3480,6 +5296,13 @@ function handlePhoto(input) {
     document.getElementById('photo-rm-btn').style.display = 'block';
 
     showToast('📷 Photo ready · ' + res.kb + ' KB');
+
+    exifRead.then(function(exif) {
+      // Stale guard: the stalker may have removed or replaced the photo
+      // while the metadata read was in flight.
+      if (photoFile !== res.file) return;
+      showPhotoExifCard(exif);
+    });
   }).catch(function(err) {
     console.warn('Photo compress failed:', err);
     showToast('⚠️ Photo failed to load');
@@ -3488,6 +5311,7 @@ function handlePhoto(input) {
 
 function removePhoto() {
   photoFile = null;
+  photoExplicitlyRemoved = true;
   revokeBlobPreviewUrl(photoPreviewUrl);
   photoPreviewUrl = null;
   resetPhotoSlot();
@@ -3498,7 +5322,7 @@ var PHOTO_SLOT_EMPTY_HTML =
   '<div class="photo-slot-icon" aria-hidden="true">' +
   '<svg class="photo-slot-empty-svg" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">' +
   '<rect x="7" y="11" width="34" height="26" rx="5" stroke="currentColor" stroke-width="1.5" opacity="0.9"/>' +
-  '<circle cx="17" cy="20" r="3.5" fill="#c8a84b" opacity="0.42"/>' +
+  '<circle cx="17" cy="20" r="3.5" fill="#d8b054" opacity="0.42"/>' +
   '<path d="M9 36l9-12 7 7 9-13 6 18H9z" fill="#5a7a30" fill-opacity="0.2"/>' +
   '<path d="M9 36l9-12 7 7 9-13 6 18" fill="none" stroke="#5a7a30" stroke-opacity="0.5" stroke-width="1.15" stroke-linejoin="round"/>' +
   '</svg></div><div class="photo-slot-lbl">No photo</div>';
@@ -3508,6 +5332,107 @@ function resetPhotoSlot() {
   slot.className = 'photo-slot empty';
   slot.innerHTML = PHOTO_SLOT_EMPTY_HTML;
   document.getElementById('photo-rm-btn').style.display = 'none';
+  hidePhotoExifCard();
+}
+
+// ── PHOTO EXIF OFFER ─────────────────────────────────────────
+// A fresh photo's metadata (read in handlePhoto from the ORIGINAL file via
+// modules/photos.mjs → lib/fl-exif.mjs) is offered on a small card under the
+// photo slot rather than silently applied: not every photo is taken at the
+// shot site (larder shots, next-morning trophy shots), so the stalker stays
+// the authority on the record. Grouped state per the no-new-globals rule.
+var flPhotoExif = { pending: null };
+
+var PHOTO_EXIF_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+/** '2026-07-14' → '14 Jul 2026' (display only; no Date object / TZ games). */
+function photoExifFriendlyDate(iso) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  if (!m) return iso || '';
+  return parseInt(m[3], 10) + ' ' + (PHOTO_EXIF_MONTHS[parseInt(m[2], 10) - 1] || m[2]) + ' ' + m[1];
+}
+
+function hidePhotoExifCard() {
+  flPhotoExif.pending = null;
+  var card = document.getElementById('photo-exif-card');
+  if (card) card.style.display = 'none';
+}
+
+/** Show the offer card for a parseExif() result (null-safe no-op). */
+function showPhotoExifCard(exif) {
+  var card = document.getElementById('photo-exif-card');
+  var lines = document.getElementById('photo-exif-lines');
+  if (!card || !lines) return;
+  var hasLoc = !!(exif && exif.lat != null && exif.lng != null);
+  var hasWhen = !!(exif && (exif.date || exif.time));
+  if (!hasLoc && !hasWhen) { hidePhotoExifCard(); return; }
+  flPhotoExif.pending = exif;
+
+  lines.textContent = '';
+  if (hasLoc) {
+    var l1 = document.createElement('div');
+    l1.className = 'photo-exif-line';
+    l1.textContent = 'Location · ' + flPlaceRef(exif.lat, exif.lng, 8);
+    lines.appendChild(l1);
+  }
+  if (hasWhen) {
+    var l2 = document.createElement('div');
+    l2.className = 'photo-exif-line';
+    l2.textContent = 'Taken · ' + (exif.time ? exif.time + ' · ' : '') + photoExifFriendlyDate(exif.date);
+    lines.appendChild(l2);
+  }
+
+  // Date sanity check — a larder/trophy photo from another day must not
+  // quietly re-date the record, so a mismatch is called out up front.
+  var note = document.getElementById('photo-exif-note');
+  if (note) {
+    var entryDate = document.getElementById('f-date') ? document.getElementById('f-date').value : '';
+    if (exif.date && entryDate && exif.date !== entryDate) {
+      note.textContent = 'Photo date differs from the entry date (' +
+        photoExifFriendlyDate(exif.date) + ' vs ' + photoExifFriendlyDate(entryDate) +
+        ') — Use will update the date too.';
+      note.style.display = 'block';
+    } else {
+      note.textContent = '';
+      note.style.display = 'none';
+    }
+  }
+  card.style.display = 'block';
+}
+
+/** "Use for this entry": pin the photo's location, set date + time. */
+function applyPhotoExif() {
+  var p = flPhotoExif.pending;
+  hidePhotoExifCard();
+  if (!p) return;
+  var applied = [];
+  if (p.lat != null && p.lng != null) {
+    var lat = p.lat, lng = p.lng;
+    formPinLat = lat; formPinLng = lng;
+    lastGpsLat = lat; lastGpsLng = lng;
+    var latStr = lat.toFixed(5), lngStr = lng.toFixed(5);
+    var coordLabel = latStr + ', ' + lngStr;
+    document.getElementById('f-location').value = coordLabel;
+    showPinnedStrip(coordLabel, lat, lng);
+    // Friendly place name when online (same flow as getGPS). The pin itself
+    // is already set, so a failed/offline lookup keeps the coordinate label;
+    // if the stalker typed their own name meanwhile, leave it alone.
+    nominatimFetch('https://nominatim.openstreetmap.org/reverse?lat=' + latStr + '&lon=' + lngStr + '&format=jsonv2&addressdetails=1&zoom=15')
+      .then(function(r){ return r.json(); })
+      .then(function(d) {
+        var name = diaryReverseGeocodeLabel(d, latStr, lngStr);
+        var locEl = document.getElementById('f-location');
+        if (name && name !== coordLabel && locEl && locEl.value === coordLabel) {
+          locEl.value = name;
+          showPinnedStrip(name, lat, lng);
+        }
+      }).catch(function() {});
+    applied.push('location');
+  }
+  if (p.date) { var fd = document.getElementById('f-date'); if (fd) fd.value = p.date; }
+  if (p.time) { var ft = document.getElementById('f-time'); if (ft) ft.value = p.time; }
+  if (p.date || p.time) applied.push(p.date && p.time ? 'date & time' : (p.date ? 'date' : 'time'));
+  if (applied.length) showToast('✓ Photo ' + applied.join(' + ') + ' applied');
 }
 
 var lastGpsLat = null, lastGpsLng = null;
@@ -3638,6 +5563,7 @@ function getGPS() {
     var lng = pos.coords.longitude.toFixed(4);
     lastGpsLat = parseFloat(lat); lastGpsLng = parseFloat(lng);
     formPinLat = parseFloat(lat); formPinLng = parseFloat(lng);
+    maybeAutoSelectGroundFromPin(parseFloat(lat), parseFloat(lng)); // G3
     nominatimFetch('https://nominatim.openstreetmap.org/reverse?lat=' + lat + '&lon=' + lng + '&format=jsonv2&addressdetails=1&zoom=15')
       .then(function(r){ return r.json(); })
       .then(function(d) {
@@ -3653,7 +5579,8 @@ function getGPS() {
 }
 
 function diaryFormSaveButtonLabel() {
-  return formIsBlank ? 'Save blank day' : 'Save to Cloud';
+  if (formIsSighting) return editingSightingId ? 'Update sighting' : 'Save sighting';
+  return formIsBlank ? 'Save blank day' : 'Save cull';
 }
 
 function hasCullFormData() {
@@ -3696,17 +5623,120 @@ function clearCullOnlyFormFields() {
 
 function applyFormBlankMode() {
   var vf = document.getElementById('v-form');
-  if (vf) vf.classList.toggle('form--blank-day', formIsBlank);
-  var btn = document.getElementById('blank-day-btn');
-  var back = document.getElementById('blank-day-back');
-  if (btn) btn.style.display = formIsBlank ? 'none' : '';
-  if (back) back.style.display = formIsBlank ? '' : 'none';
+  if (vf) {
+    vf.classList.toggle('form--blank-day', formIsBlank);
+    vf.classList.remove('form--sighting');
+  }
   document.querySelectorAll('.fl-cull-only').forEach(function(el) {
     el.style.display = formIsBlank ? 'none' : '';
   });
+  // Species + photo are shared with Sighting mode (.fl-cull-or-sighting); in
+  // cull/blank they follow the same show-in-cull / hide-in-blank rule.
+  document.querySelectorAll('.fl-cull-or-sighting').forEach(function(el) {
+    el.style.display = formIsBlank ? 'none' : '';
+  });
+  // Sighting-only sections never show outside Sighting mode.
+  document.querySelectorAll('.fl-sighting-only').forEach(function(el) {
+    el.style.display = 'none';
+  });
+  // The form's sighting-delete button (SG2) only exists while EDITING a
+  // sighting — cull/blank modes always hide it.
+  var sightDelB = document.getElementById('sight-delete-btn');
+  if (sightDelB) sightDelB.style.display = 'none';
+  // Syndicate attribution and the outing window are cull/blank concepts —
+  // restore them (Sighting mode hides both).
+  document.querySelectorAll('.fl-no-sighting').forEach(function(el) {
+    el.style.display = '';
+  });
+  // Restore the full deer + Pest Control picker (Sighting mode hides the pest group).
+  var pestTog = document.getElementById('pest-species-toggle');
+  if (pestTog) pestTog.style.display = '';
+  // Re-apply the per-species gates — exiting blank mode resets every
+  // .fl-cull-only to visible, which would un-hide pest-gated sections.
+  applyFormSpeciesMode();
   var saveB = document.getElementById('save-btn');
   if (saveB) saveB.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
+  updateFormModeEntryButtons();
   updateFormProgressChip();
+}
+
+/**
+ * Per-species form gates (Pest Control, v3 — PEST-CODE-MAP §2). Two classes,
+ * toggled like .fl-cull-only in applyFormBlankMode above:
+ *   .fl-deer-only  — hidden for any pest (weight, tag, gralloch checklist)
+ *   .fl-sexed-only — hidden for sex-less species (sex section, age class;
+ *                    fox keeps both — Dog/Vixen + Cub)
+ * No species selected ⇒ everything visible (deer-shaped form, as today).
+ * Blank-day mode wins: these gates only refine visible cull sections
+ * (parents carrying .fl-cull-only are already display:none when blank).
+ */
+function applyFormSpeciesMode() {
+  var isPest = !!(formSpecies && isPestSpecies(formSpecies));
+  var sexed = formSpecies ? speciesIsSexed(formSpecies) : true;
+  document.querySelectorAll('.fl-deer-only').forEach(function(el) {
+    el.style.display = isPest ? 'none' : '';
+  });
+  document.querySelectorAll('.fl-sexed-only').forEach(function(el) {
+    el.style.display = sexed ? '' : 'none';
+  });
+  // Pest bag count — shown only for the four high-volume pests (PQ2); every
+  // other species resets to 1 so a stray count can't ride along on a deer save.
+  var usesQty = !!(formSpecies && speciesUsesQuantity(formSpecies));
+  document.querySelectorAll('.fl-count-only').forEach(function(el) { el.style.display = usesQty ? '' : 'none'; });
+  if (!usesQty) { formQuantity = 1; var _qv0 = document.getElementById('f-qty-val'); if (_qv0) _qv0.value = '1'; }
+  if (!sexed) {
+    // A sex picked for a previous species must not linger on a sex-less one.
+    formSex = '';
+    var sm = document.getElementById('sx-m');
+    var sf = document.getElementById('sx-f');
+    if (sm) sm.classList.remove('on');
+    if (sf) sf.classList.remove('on');
+  }
+}
+
+/** Expand/collapse the Pest Control group in the species picker. */
+function setPestSpeciesGridOpen(open) {
+  var grid = document.getElementById('pest-species-grid');
+  var tog = document.getElementById('pest-species-toggle');
+  if (grid) grid.style.display = open ? '' : 'none';
+  if (tog) {
+    tog.setAttribute('aria-expanded', open ? 'true' : 'false');
+    var nm = tog.querySelector('.sp-name');
+    if (nm) nm.textContent = open ? 'Pest Control ▾' : 'Pest Control ▸';
+  }
+}
+
+function togglePestSpeciesGrid() {
+  var grid = document.getElementById('pest-species-grid');
+  setPestSpeciesGridOpen(!!grid && grid.style.display === 'none');
+}
+
+/**
+ * "Pest ▸" chip on the diary filter bar. Opening it does BOTH things at once
+ * (owner UX decision 2026-07-07): the list filters to ALL pest species
+ * ('__pests__') and the second chip row appears so the user can narrow to
+ * one pest. Tapping it again (or the All chip) collapses the row and
+ * returns to All. While the row is open, tapping a specific pest chip
+ * narrows further via the normal filter-entries path — the Pest chip keeps
+ * its ▾ state as the row's header.
+ */
+function togglePestFilters(el) {
+  var row = document.getElementById('pest-filter-row');
+  if (!row) return;
+  var open = row.style.display === 'none';
+  row.style.display = open ? '' : 'none';
+  if (el) {
+    el.setAttribute('aria-expanded', open ? 'true' : 'false');
+    el.textContent = open ? 'Pest ▾' : 'Pest ▸';
+  }
+  if (open) {
+    // Filter to all pests immediately; el takes the 'on' state.
+    filterEntries('__pests__', el);
+  } else {
+    // Collapsing returns to All (matches the All chip's behaviour).
+    var allChip = document.querySelector('.filter-bar .fc[data-species="all"]');
+    if (allChip) filterEntries('all', allChip);
+  }
 }
 
 function enterBlankDay() {
@@ -3726,11 +5756,1895 @@ function exitBlankDay() {
   applyFormBlankMode();
 }
 
+// ══════════════════════════════════════════════════════════════
+// SIGHTINGS — "live deer seen" capture mode (SIGHTINGS-PLAN.md §2.2 / S3)
+// ══════════════════════════════════════════════════════════════
+// A sighting shares the New Entry form but writes to the owner-only
+// `sightings` table (modules/sightings.mjs), never cull_entries. Mode is
+// mutually exclusive with blank-day: formIsSighting XOR formIsBlank.
+
+/** Show/hide the blank-day + sighting entry buttons for the current mode. */
+var ENTRY_MODE_HELP = {
+  cull: '<span class="emode-help-mode">Cull</span> — a deer you shot: species, carcass, calibre, placement and larder check.',
+  blank: '<span class="emode-help-mode">Blank day</span> — an outing where you took nothing. Date, ground and notes only.',
+  sighting: '<span class="emode-help-mode">Sighting</span> — live deer you saw, not shot: species, how many, and behaviour.'
+};
+var ENTRY_MODE_NAME = { cull: 'a cull entry', blank: 'a blank day', sighting: 'a sighting' };
+
+/** Sync the New Entry mode selector (segmented pill) + helper to the current mode. */
+function updateFormModeEntryButtons() {
+  var mode = formIsSighting ? 'sighting' : (formIsBlank ? 'blank' : 'cull');
+  ['cull', 'blank', 'sighting'].forEach(function(m) {
+    var b = document.getElementById('emode-' + m);
+    if (b) { b.classList.toggle('on', m === mode); b.setAttribute('aria-pressed', m === mode ? 'true' : 'false'); }
+  });
+  var help = document.getElementById('entry-mode-help');
+  if (help) help.innerHTML = ENTRY_MODE_HELP[mode];
+}
+
+/**
+ * Switch the New Entry mode from the segmented selector. Confirms once if the
+ * switch would clear detail already entered, then resets the outgoing mode's
+ * fields and applies the target mode (which re-syncs the selector + helper).
+ */
+function setEntryMode(mode) {
+  if (mode !== 'cull' && mode !== 'blank' && mode !== 'sighting') return;
+  var cur = formIsSighting ? 'sighting' : (formIsBlank ? 'blank' : 'cull');
+  if (mode === cur) return;
+  // Don't let an in-progress EDIT cross tables. A cull/blank lives in
+  // cull_entries, a sighting in the sightings table; switching mode mid-edit
+  // would INSERT a new record and leave the original behind (a phantom cull, or
+  // a stray sighting) — M2. Cull↔blank is same-table and stays allowed; a NEW
+  // entry (no editingId/editingSightingId) can still switch freely.
+  if (editingId && mode === 'sighting') {
+    showToast('Save or delete this entry first to log a sighting instead');
+    updateFormModeEntryButtons();
+    return;
+  }
+  if (editingSightingId && mode !== 'sighting') {
+    showToast('Save or delete this sighting first to log a cull instead');
+    updateFormModeEntryButtons();
+    return;
+  }
+  var willClear =
+    (mode === 'blank' && (hasCullFormData() || sightingHeadcount(flSightingCounts) > 0)) ||
+    (cur === 'sighting' && sightingHeadcount(flSightingCounts) > 0);
+  if (willClear && !window.confirm('Switch to ' + ENTRY_MODE_NAME[mode] + '? Details from this entry will be cleared.')) {
+    updateFormModeEntryButtons(); // revert the pill to the real mode
+    return;
+  }
+  editingSightingId = null;
+  resetSightingForm();                       // sighting counts/behaviour reset on any switch
+  if (mode === 'blank') clearCullOnlyFormFields();  // blank keeps no species / carcass / photo
+  if (mode === 'sighting' && formSpecies && isPestSpecies(formSpecies)) {
+    formSpecies = '';
+    document.querySelectorAll('.sp-btn').forEach(function(b) { b.classList.remove('on'); });
+  }
+  formIsBlank = (mode === 'blank');
+  formIsSighting = (mode === 'sighting');
+  formDirty = true;
+  if (formIsSighting) applyFormSightingMode(); else applyFormBlankMode();
+}
+
+/**
+ * Sighting-mode form gates. Mirrors applyFormBlankMode but SHOWS the shared
+ * species + photo pickers (.fl-cull-or-sighting) and the sighting-only block
+ * (steppers + behaviour), hides every cull-only section + the syndicate field
+ * (.fl-no-sighting — syndicate attribution and the outing window, neither of
+ * which a sightings row can carry), and forces the species picker deer-only.
+ */
+function applyFormSightingMode() {
+  var vf = document.getElementById('v-form');
+  if (vf) {
+    vf.classList.toggle('form--sighting', formIsSighting);
+    vf.classList.remove('form--blank-day');
+  }
+  document.querySelectorAll('.fl-cull-only').forEach(function(el){ el.style.display = 'none'; });
+  document.querySelectorAll('.fl-cull-or-sighting').forEach(function(el){ el.style.display = ''; });
+  document.querySelectorAll('.fl-sighting-only').forEach(function(el){ el.style.display = ''; });
+  document.querySelectorAll('.fl-no-sighting').forEach(function(el){ el.style.display = 'none'; });
+  // Deer-only species picker: collapse + hide the Pest Control group.
+  setPestSpeciesGridOpen(false);
+  var pestTog = document.getElementById('pest-species-toggle');
+  if (pestTog) pestTog.style.display = 'none';
+  renderSightingLabels();
+  updateSightingTotal();
+  populateSightStandSelect();  // SG3: stand link options + current selection
+  updateSightAgainChip();      // SG3: repeat-last shortcut (new logs only)
+  // Delete lives in the edit surface (SG2): visible only when this form is
+  // editing an existing sighting, never on a fresh log.
+  var delB = document.getElementById('sight-delete-btn');
+  if (delB) delB.style.display = editingSightingId ? '' : 'none';
+  var saveB = document.getElementById('save-btn');
+  if (saveB) saveB.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
+  updateFormModeEntryButtons();
+  updateFormProgressChip();
+}
+
+// ── SG3: explicit stand link + repeat-last shortcut ──────────────
+
+/**
+ * Fill the sighting form's stand <select> from the live stands list (or the
+ * localStorage cache when the tab hasn't been visited) and sync it to
+ * flFormStandId. Called on every entry into sighting mode + after edit
+ * prefill — the options are cheap and stands change rarely.
+ */
+function populateSightStandSelect() {
+  var sel = document.getElementById('sight-stand-sel');
+  if (!sel) return;
+  var list = flEffectiveStands();
+  // SG-i / SG-ii: two seats can honestly carry the same name — "HS2" on West
+  // Acre in Norfolk and "HS2" on Wigmore in Herefordshire are two hundred miles
+  // apart, and the list drew them as two identical rows, so picking the wrong
+  // one silently planted the sighting's pin in the wrong county. Qualify a name
+  // with its ground only where the name is not unique, so the ordinary list
+  // stays clean. Sort numerically while we are here: a plain localeCompare put
+  // HS16 above HS2, which is the wrong order for the one naming convention
+  // every numbered high seat uses.
+  var nameCounts = {};
+  (list || []).forEach(function(st) {
+    if (!st || !st.id) return;
+    var n0 = String(st.name || 'Unnamed stand');
+    nameCounts[n0] = (nameCounts[n0] || 0) + 1;
+  });
+  var opts = '<option value="">No stand — free sighting</option>';
+  (list || []).slice().sort(function(a, b) {
+    return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
+  })
+    .forEach(function(st) {
+      if (!st || !st.id) return;
+      var nm = String(st.name || 'Unnamed stand');
+      var lbl = (nameCounts[nm] > 1 && st.ground) ? (nm + ' — ' + String(st.ground)) : nm;
+      opts += '<option value="' + esc(String(st.id)) + '">' + esc(lbl) + '</option>';
+    });
+  sel.innerHTML = opts;
+  sel.value = flFormStandId ? String(flFormStandId) : '';
+  if (flFormStandId && sel.value === '') sel.value = ''; // linked stand deleted — reads as free
+}
+
+/** Stand chosen in the form: keep the id, and adopt the stand's pin when no pin is set. */
+function onSightStandChange() {
+  var sel = document.getElementById('sight-stand-sel');
+  if (!sel) return;
+  flFormStandId = sel.value || null;
+  formDirty = true;
+  if (!flFormStandId) return;
+  var list = flEffectiveStands();
+  var st = (list || []).find(function(x) { return String(x.id) === String(flFormStandId); });
+  if (!st) return;
+  // SG-iii: a seat belongs to a permission, and the repeat path already knows
+  // it — applySightingAgain does this same setGroundValue. Adopting the pin but
+  // not the ground filed the sighting against no permission at all, under a
+  // field whose own hint reads "Syndicate permissions must match team tallies
+  // exactly". Fills a blank only: a ground already chosen always wins.
+  if (st.ground && !getGroundValue()) setGroundValue(st.ground);
+  if (formPinLat != null) return;
+  if (st.lat != null && st.lng != null) {
+    formPinLat = st.lat;
+    formPinLng = st.lng;
+    showPinnedStrip(st.name || 'Stand', st.lat, st.lng);
+  }
+}
+
+// Last saved sighting's context (session-only) — the second group of the
+// evening is usually the same species from the same seat.
+var flLastSightingCtx = null;
+
+/** Show/hide + label the "Same as last" chip (new sightings only, never edits). */
+function updateSightAgainChip() {
+  var btn = document.getElementById('sight-again-btn');
+  if (!btn) return;
+  var show = !!(flLastSightingCtx && !editingSightingId);
+  btn.style.display = show ? '' : 'none';
+  if (!show) return;
+  var lbl = document.getElementById('sight-again-lbl');
+  if (lbl) {
+    var where = flLastSightingCtx.standName || flLastSightingCtx.ground || '';
+    lbl.textContent = flLastSightingCtx.species + (where ? ' · ' + where : '');
+  }
+}
+
+/** Prefill species / stand / pin / ground from the last save. Counts stay zero — the group is new. */
+function applySightingAgain() {
+  var ctx = flLastSightingCtx;
+  if (!ctx || !formIsSighting) return;
+  formSpecies = ctx.species || '';
+  document.querySelectorAll('.sp-btn').forEach(function(b) {
+    var nm = b.querySelector('.sp-name');
+    b.classList.toggle('on', !!nm && nm.textContent === ctx.species);
+  });
+  renderSightingLabels();
+  flFormStandId = ctx.stand_id || null;
+  populateSightStandSelect();
+  if (ctx.lat != null && ctx.lng != null) {
+    formPinLat = ctx.lat;
+    formPinLng = ctx.lng;
+    showPinnedStrip(ctx.standName || ctx.ground || flPlaceRef(ctx.lat, ctx.lng, 6), ctx.lat, ctx.lng);
+  }
+  if (ctx.ground) setGroundValue(ctx.ground);
+  formDirty = true;
+}
+
+function enterSighting() {
+  if (formIsSighting) return;
+  editingSightingId = null; // entering via the CTA is always a NEW sighting
+  // A pest species can't be a deer sighting — drop any pest selection.
+  if (formSpecies && isPestSpecies(formSpecies)) {
+    formSpecies = '';
+    document.querySelectorAll('.sp-btn').forEach(function(b){ b.classList.remove('on'); });
+  }
+  formIsBlank = false;
+  formIsSighting = true;
+  formDirty = true;
+  applyFormSightingMode();
+}
+
+function exitSighting() {
+  if (!formIsSighting) return;
+  formIsSighting = false;
+  editingSightingId = null;
+  applyFormBlankMode();
+}
+
+// ── SG3: hold-to-repeat on the ± steppers ────────────────────────
+// 14 does must not cost 14 taps: press-and-hold starts repeating after
+// 350 ms (~12.5/s). The click that follows a hold's release is swallowed
+// via flStepHold.fired so it can't double-count; a quick tap (<350 ms)
+// never arms the repeat and clicks through normally.
+var flStepHold = { timer: null, iv: null, fired: false };
+document.addEventListener('pointerdown', function(ev) {
+  var b = ev.target && ev.target.closest ? ev.target.closest('.sight-step-btn') : null;
+  if (!b) return;
+  var k = b.getAttribute('data-k');
+  var d = parseInt(b.getAttribute('data-d'), 10);
+  flStepHold.fired = false;
+  flStepHold.timer = setTimeout(function() {
+    flStepHold.iv = setInterval(function() {
+      flStepHold.fired = true;
+      sightingCount(k, d);
+    }, 80);
+  }, 350);
+}, { passive: true });
+['pointerup', 'pointercancel'].forEach(function(t) {
+  document.addEventListener(t, function() {
+    if (flStepHold.timer) { clearTimeout(flStepHold.timer); flStepHold.timer = null; }
+    if (flStepHold.iv) { clearInterval(flStepHold.iv); flStepHold.iv = null; }
+  }, { passive: true });
+});
+// A long-press must repeat, not open the context menu / select text.
+document.addEventListener('contextmenu', function(ev) {
+  if (ev.target && ev.target.closest && ev.target.closest('.sight-step-btn')) ev.preventDefault();
+});
+
+/**
+ * Tap-to-type on a stepper value (SG3): swap the number for an inline
+ * numeric input; commit on blur/Enter, clamped 0–999; bad input keeps the
+ * old count. For the herd you counted through binos, not the pair.
+ */
+function sightingTypeCount(k) {
+  if (!Object.prototype.hasOwnProperty.call(flSightingCounts, k)) return;
+  var el = document.getElementById('sight-val-' + k);
+  if (!el || el.querySelector('input')) return;
+  var cur = flSightingCounts[k] | 0;
+  var inp = document.createElement('input');
+  inp.type = 'number'; inp.min = '0'; inp.max = '999';
+  inp.setAttribute('inputmode', 'numeric');
+  inp.value = String(cur);
+  inp.className = 'sight-step-input';
+  el.textContent = '';
+  el.appendChild(inp);
+  inp.focus();
+  inp.select();
+  var done = false;
+  function commit() {
+    if (done) return;
+    done = true;
+    var v = parseInt(inp.value, 10);
+    if (isNaN(v) || v < 0) v = cur;
+    if (v > 999) v = 999;
+    flSightingCounts[k] = v;
+    el.textContent = String(v);
+    updateSightingTotal();
+    formDirty = true;
+  }
+  inp.addEventListener('blur', commit);
+  inp.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+  });
+}
+
+/** +/- a sighting counter (clamped 0–999); refresh its value + the total. */
+function sightingCount(key, delta) {
+  if (!Object.prototype.hasOwnProperty.call(flSightingCounts, key)) return;
+  var next = (flSightingCounts[key] | 0) + (delta | 0);
+  if (next < 0) next = 0;
+  if (next > 999) next = 999;
+  flSightingCounts[key] = next;
+  var el = document.getElementById('sight-val-' + key);
+  if (el) el.textContent = String(next);
+  updateSightingTotal();
+  formDirty = true;
+}
+
+/** Single-select behaviour chip (tap again to clear). */
+function pickBehaviour(el, b) {
+  flSightingBehaviour = (flSightingBehaviour === b) ? '' : b;
+  document.querySelectorAll('#beh-chips .beh-chip').forEach(function(c){
+    c.classList.toggle('on', c.getAttribute('data-b') === flSightingBehaviour);
+  });
+  formDirty = true;
+}
+
+/** Species-appropriate stepper labels (Stag/Hind/Calf vs Buck/Doe/Kid). */
+function renderSightingLabels() {
+  var lbl = sightingSexLabels(formSpecies);
+  var map = { n_male: lbl.male, n_female: lbl.female, n_young: lbl.young, n_unknown: lbl.unknown };
+  Object.keys(map).forEach(function(k){
+    var el = document.getElementById('sight-lbl-' + k);
+    if (el) el.textContent = map[k];
+  });
+}
+
+function updateSightingTotal() {
+  var el = document.getElementById('sight-total');
+  if (!el) return;
+  var n = sightingHeadcount(flSightingCounts);
+  el.textContent = (n === 0)
+    ? 'No animals recorded yet'
+    : ('Total seen: ' + n + ' animal' + (n === 1 ? '' : 's'));
+}
+
+/** Zero the counters + behaviour and repaint (called from openNewEntry). */
+function resetSightingForm() {
+  flSightingCounts = { n_male: 0, n_female: 0, n_young: 0, n_unknown: 0 };
+  flSightingBehaviour = '';
+  SIGHTING_COUNT_KEYS.forEach(function(k){
+    var el = document.getElementById('sight-val-' + k);
+    if (el) el.textContent = '0';
+  });
+  document.querySelectorAll('#beh-chips .beh-chip').forEach(function(c){ c.classList.remove('on'); });
+  renderSightingLabels();
+  updateSightingTotal();
+}
+
+/**
+ * Save a sighting to the owner-only `sightings` table (never cull_entries).
+ * Online → saveSighting(); offline → enqueue tagged kind:'sighting', flushed
+ * by syncOfflineQueue. Reached only via saveEntry's formIsSighting early-return.
+ */
+async function saveSightingEntry() {
+  if (!sb) { showToast('⚠️ Supabase not configured'); return; }
+  if (!formSpecies || isPestSpecies(formSpecies)) { showToast('⚠️ Please pick a deer species'); return; }
+  var valid = validateSightingCounts(flSightingCounts);
+  if (!valid.ok) { showToast('⚠️ ' + valid.error); return; }
+  var dateVal = document.getElementById('f-date').value;
+  if (!dateVal) { showToast('⚠️ Please set a date'); return; }
+  // SG3: no more phantom midnight — an empty time used to save (and display)
+  // as 00:00. A sighting always has a time; the field defaults to now, so
+  // this only fires when the user actively cleared it.
+  var timeVal = document.getElementById('f-time').value;
+  if (!timeVal) { showToast('⚠️ Please set a time — when did you see them?'); return; }
+
+  var btn = document.getElementById('save-btn');
+  btn.disabled = true;
+  btn.innerHTML = diaryCloudSaveInner('Saving…');
+
+  // seen_at: the entered date + time are Europe/London wall-clock (a UK app,
+  // used anywhere) → the matching UTC instant. Using device-local parsing here
+  // made sightings display an hour early in BST and drift −1h on every edit;
+  // diaryLondonWallMs pins it to London so save + display round-trip cleanly.
+  var _seenMs = diaryLondonWallMs(dateVal, timeVal);
+  var seenAt = (_seenMs && !isNaN(_seenMs)) ? new Date(_seenMs).toISOString() : diaryNow().toISOString();
+
+  var ground = getGroundValue();
+  var notes = document.getElementById('f-notes').value;
+  var lat = (formPinLat != null) ? formPinLat : (lastGpsLat != null ? lastGpsLat : null);
+  var lng = (formPinLng != null) ? formPinLng : (lastGpsLng != null ? lastGpsLng : null);
+
+  // ── Offline: queue tagged kind:'sighting' (flushed by syncOfflineQueue) ──
+  if (!navigator.onLine) {
+    if (editingSightingId) {
+      // Offline edits would enqueue a duplicate insert — require a connection.
+      showToast('⚠️ Editing a sighting needs a connection');
+      btn.disabled = false;
+      btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
+      return;
+    }
+    var offlinePayload = {
+      kind: 'sighting',
+      seen_at: seenAt,
+      species: formSpecies,
+      n_male: flSightingCounts.n_male | 0,
+      n_female: flSightingCounts.n_female | 0,
+      n_young: flSightingCounts.n_young | 0,
+      n_unknown: flSightingCounts.n_unknown | 0,
+      behaviour: flSightingBehaviour || null,
+      ground: ground,
+      stand_id: flFormStandId,
+      lat: lat,
+      lng: lng,
+      notes: notes,
+      _photoDataUrl: null
+    };
+    if (photoFile) {
+      try { offlinePayload._photoDataUrl = await fileToDataUrl(photoFile); }
+      catch (fe) {
+        showToast('⚠️ Could not read photo for offline save');
+        btn.disabled = false;
+        btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
+        return;
+      }
+    }
+    var _qok = await queueOfflineEntry(offlinePayload);
+    if (_qok !== false) {
+      formDirty = false;
+      // SG3: remember this context for the "Same as last" chip.
+      flLastSightingCtx = {
+        species: formSpecies, stand_id: flFormStandId,
+        standName: sightingStandName({ stand_id: flFormStandId }),
+        lat: lat, lng: lng, ground: ground || null
+      };
+      // Round 12: prediction↔outcome pair at queue time (this offline branch
+      // is create-only — edits were rejected above). Raw time field, same
+      // honesty rule as the online path.
+      flLogScoreSnapshot({
+        kind: 'seen', date: dateVal, lat: lat, lng: lng,
+        timeMin: flTimeToMin(document.getElementById('f-time').value),
+        winMins: null, species: formSpecies,
+        n: (flSightingCounts.n_male | 0) + (flSightingCounts.n_female | 0)
+         + (flSightingCounts.n_young | 0) + (flSightingCounts.n_unknown | 0)
+      });
+    }
+    btn.disabled = false;
+    btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
+    return;
+  }
+
+  try {
+    var photoPath = null;
+    if (photoFile) {
+      try {
+        var path = newCullPhotoPath(currentUser.id);
+        var upload = await sb.storage.from('cull-photos').upload(path, photoFile, { upsert: true, contentType: 'image/jpeg' });
+        if (upload.error) {
+          showToast('⚠️ Photo upload failed: ' + friendlyErr(upload.error, 'the photo could not be uploaded — please try again'));
+        } else {
+          photoPath = path;
+          showToast('📷 Photo uploaded');
+        }
+      } catch (uploadErr) {
+        showToast('⚠️ Photo upload error — sighting saved without photo');
+        flDebugLog('error', 'Sighting photo upload exception', uploadErr);
+      }
+    } else if (editingSightingId && photoPreviewUrl) {
+      // Editing with no new file: keep the existing stored photo.
+      var keepPath = cullPhotoStoragePath(photoPreviewUrl);
+      if (keepPath) photoPath = keepPath;
+    } else if (editingSightingId && !photoExplicitlyRemoved && editingOriginalSightingPhotoPath) {
+      // Slot is empty only because the signed-URL fetch failed at edit-open,
+      // not because the user removed the photo — keep the stored one (M3).
+      photoPath = editingOriginalSightingPhotoPath;
+    }
+    var savedSightingRow = await saveSighting(sb, currentUser.id, {
+      id: editingSightingId,
+      seen_at: seenAt,
+      species: formSpecies,
+      n_male: flSightingCounts.n_male,
+      n_female: flSightingCounts.n_female,
+      n_young: flSightingCounts.n_young,
+      n_unknown: flSightingCounts.n_unknown,
+      behaviour: flSightingBehaviour || null,
+      ground: ground,
+      stand_id: flFormStandId,
+      lat: lat,
+      lng: lng,
+      notes: notes,
+      photo_url: photoPath
+    });
+    // SG5: conditions ride every encounter — fire-and-forget, edits included
+    // (the seen time may have changed, and the update just overwrites).
+    if (savedSightingRow && savedSightingRow.id && lat != null && lng != null) {
+      attachWeatherToSighting(savedSightingRow.id, dateVal, timeVal, lat, lng);
+    }
+    if (ground) saveGround(ground);
+    showToast(editingSightingId ? '✅ Sighting updated' : '✅ Sighting saved');
+    flHapticSuccess();
+    // SG3: remember this context for the "Same as last" chip (creates only —
+    // edits are desk work, not the second-group-of-the-evening flow).
+    if (!editingSightingId) {
+      flLastSightingCtx = {
+        species: formSpecies, stand_id: flFormStandId,
+        standName: sightingStandName({ stand_id: flFormStandId }),
+        lat: lat, lng: lng, ground: ground || null
+      };
+    }
+    // Round 12: prediction↔outcome pair (creates only). Raw time field, not
+    // timeVal — its '00:00' default would score midnight for an untimed
+    // sighting; no real time ⇒ no hour ⇒ honestly skipped.
+    if (!editingSightingId) {
+      flLogScoreSnapshot({
+        kind: 'seen', date: dateVal, lat: lat, lng: lng,
+        timeMin: flTimeToMin(document.getElementById('f-time').value),
+        winMins: null, species: formSpecies,
+        n: (flSightingCounts.n_male | 0) + (flSightingCounts.n_female | 0)
+         + (flSightingCounts.n_young | 0) + (flSightingCounts.n_unknown | 0)
+      });
+    }
+    editingSightingId = null;
+    formDirty = false;
+    go('v-sightings');
+  } catch (e) {
+    showToast('⚠️ Save failed: ' + friendlyErr(e, 'Unknown error'));
+    flHapticError();
+  }
+  btn.disabled = false;
+  btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
+}
+
+// ══════════════════════════════════════════════════════════════
+// SIGHTINGS — weather on every encounter (SG5)
+// ══════════════════════════════════════════════════════════════
+// The same JSONB record culls carry, attached after save (forecast API,
+// ≤7 days) and backfilled for older rows (archive API, bounded). Everything
+// here tolerates the column not existing yet: the first 42703 sets a session
+// flag and every weather write/read quietly skips until the owner runs
+// scripts/migrate-sighting-weather.sql.
+
+var _sightWxColMissing = false;      // session: sightings.weather_data absent (pre-migration)
+var flSightWxBackfillTried = {};     // session: sighting id → backfill attempted
+var SIGHT_WX_BACKFILL_MAX = 12;      // per sightings-view open (the R13 bound)
+
+/** True when a Supabase error says the weather_data column doesn't exist. */
+function sightWxColAbsent(err) {
+  if (!err) return false;
+  if (err.code === '42703') return true;
+  var msg = String(err.message || '');
+  return msg.indexOf('weather_data') !== -1 && msg.indexOf('does not exist') !== -1;
+}
+
+/**
+ * Attach conditions to one sighting after save (twin of attachWeatherToEntry;
+ * forecast API covers the last 7 days — the normal field case). Fire-and-forget.
+ */
+async function attachWeatherToSighting(sightingId, dateStr, timeStr, lat, lng) {
+  if (!sb || !currentUser || !sightingId || _sightWxColMissing) return;
+  var wx = await fetchCullWeather(dateStr, timeStr, lat, lng);
+  if (!wx) return; // no pin, outside the 7-day window, or fetch failed
+  try {
+    var upd = await sb.from('sightings')
+      .update({ weather_data: wx })
+      .eq('id', sightingId)
+      .eq('user_id', currentUser.id);
+    if (upd.error) {
+      if (sightWxColAbsent(upd.error)) { _sightWxColMissing = true; return; }
+      console.warn('Sighting weather attach failed:', upd.error);
+    } else {
+      var i = (allSightings || []).findIndex(function(x) { return x.id === sightingId; });
+      if (i !== -1) allSightings[i].weather_data = wx;
+    }
+  } catch (e) {
+    console.warn('Sighting weather attach failed:', e);
+  }
+}
+
+/**
+ * Quiet catch-up on every sightings-view open (SG5): hydrate weather for the
+ * loaded rows (one small query — the list fetch omits the JSONB), then
+ * backfill up to SIGHT_WX_BACKFILL_MAX pinned rows that still lack it —
+ * forecast API first (recent), archive API for the rest. Write-once: only
+ * null rows are touched; failures retry on a later open, never this one.
+ */
+async function flEnsureSightingWeather(preferIds) {
+  if (!sb || !currentUser || _sightWxColMissing) return;
+  if (!navigator.onLine) return;
+  if (!allSightings || !allSightings.length) return;
+  var wxById;
+  try {
+    wxById = await fetchSightingWeatherMap(sb, currentUser.id);
+  } catch (e) {
+    if (sightWxColAbsent(e)) _sightWxColMissing = true;
+    return;
+  }
+  allSightings.forEach(function(s) {
+    if (s.weather_data === undefined) s.weather_data = (s.id in wxById) ? wxById[s.id] : null;
+  });
+  var todo = allSightings.filter(function(s) {
+    return s.weather_data == null && s.lat != null && s.lng != null && s.seen_at
+      && !flSightWxBackfillTried[s.id];
+  });
+  // SG6: a caller (the stand evidence pass) can put ITS rows first in the
+  // bounded queue, so the stand on screen completes before the general tail.
+  if (preferIds && preferIds.length) {
+    var pref = {};
+    preferIds.forEach(function(id) { pref[String(id)] = true; });
+    todo.sort(function(a, b) {
+      return (pref[String(b.id)] ? 1 : 0) - (pref[String(a.id)] ? 1 : 0);
+    });
+  }
+  todo = todo.slice(0, SIGHT_WX_BACKFILL_MAX);
+  for (var i = 0; i < todo.length; i++) {
+    var s = todo[i];
+    flSightWxBackfillTried[s.id] = true;
+    try {
+      var d = sightingDatePart(s), t = sightingTimePart(s);
+      var wx = await fetchCullWeather(d, t, s.lat, s.lng);
+      if (!wx) wx = await fetchCullWeatherArchive(d, t, s.lat, s.lng);
+      if (!wx) continue;
+      var upd = await sb.from('sightings')
+        .update({ weather_data: wx })
+        .eq('id', s.id)
+        .eq('user_id', currentUser.id);
+      if (upd.error) {
+        if (sightWxColAbsent(upd.error)) { _sightWxColMissing = true; return; }
+        continue;
+      }
+      s.weather_data = wx;
+    } catch (e) { /* a later open retries the rest */ }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// SIGHTINGS — view (list + delete) & map-layer helpers (SIGHTINGS-PLAN S4)
+// ══════════════════════════════════════════════════════════════
+// Owner-only sightings live in their own table (modules/sightings.mjs). The
+// list is a dedicated view (v-sightings); the cull map gains a Sightings
+// "heat" layer (weighted density circles) via the Culls/Sightings/Both toggle.
+
+/** Fetch the user's sightings into allSightings (cached; force to refresh). */
+async function loadSightings(force) {
+  if (!sb || !currentUser) return;
+  if (sightingsLoaded && !force) return;
+  try {
+    allSightings = (await fetchSightings(sb, currentUser.id)) || [];
+    sightingsLoaded = true;
+  } catch (e) {
+    if (!Array.isArray(allSightings)) allSightings = [];
+    if (typeof console !== 'undefined' && console.warn) console.warn('loadSightings failed', e);
+  }
+  updateSightingsStrip(); // SG1: keep the diary-header tally honest on every path
+}
+
+// seen_at is a UTC timestamptz; render it in Europe/London (not a raw string
+// slice of the UTC portion, which showed −1h in BST). Falls back to the raw
+// slice only if the value can't be parsed. Fixes display, edit-prefill, CSV
+// and PDF in one place, and corrects historical UK-saved rows too.
+function sightingDatePart(s) {
+  if (!s || !s.seen_at) return '';
+  var d = new Date(s.seen_at);
+  if (isNaN(d.getTime())) return String(s.seen_at).slice(0, 10);
+  var p = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+  var g = function(t) { return p.find(function(x) { return x.type === t; }).value; };
+  return g('year') + '-' + g('month') + '-' + g('day');
+}
+function sightingTimePart(s) {
+  if (!s || !s.seen_at) return '';
+  var d = new Date(s.seen_at);
+  if (isNaN(d.getTime())) return String(s.seen_at).slice(11, 16);
+  var p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d);
+  var h = p.find(function(x) { return x.type === 'hour'; }).value;
+  var m = p.find(function(x) { return x.type === 'minute'; }).value;
+  if (h === '24') h = '00';
+  return ('0' + h).slice(-2) + ':' + ('0' + m).slice(-2);
+}
+function behaviourLabel(b) { return b ? (b.charAt(0).toUpperCase() + b.slice(1)) : ''; }
+
+// Small inline icons for the sighting card meta row (SG2).
+var SVG_S2_PIN = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 1 1 16 0z"/><circle cx="12" cy="10" r="3"/></svg>';
+var SVG_S2_SEAT = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="4" width="10" height="4" rx="1"/><path d="M9 8v12M15 8v12M9 14h6"/></svg>';
+
+/** Inline stroke eye — replaces the &#128065; emoji stragglers (SG2). */
+function svgEyeHtml(px, color) {
+  return '<svg width="' + px + '" height="' + px + '" viewBox="0 0 24 24" fill="none" stroke="' + color + '" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;"><path d="M2 12s3.6-6.2 10-6.2S22 12 22 12s-3.6 6.2-10 6.2S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
+}
+
+/**
+ * Sun-relative time word for a pinned sighting (SG2): 'dawn' | 'day' |
+ * 'dusk' | 'night', or null when there's no pin / date / time to judge by —
+ * the card then shows the clock time alone rather than guessing.
+ */
+function sightingLightWord(s) {
+  if (!s) return null;
+  return lightWordAt(sightingDatePart(s), sightingTimePart(s), s.lat, s.lng);
+}
+
+/**
+ * The one implementation of the sun-relative word, from loose parts: a
+ * 'YYYY-MM-DD' date, an 'HH:MM' (or 'HH:MM:SS') time, and a pin. Sightings
+ * store one `seen_at` and culls store `date` and `time` as separate columns,
+ * so the two callers arrive with different shapes — but they must not arrive
+ * at different words for the same evening on the same ground, which is what
+ * two copies of this arithmetic would eventually produce.
+ *
+ * Null on anything missing or unparseable. A band guessed from a default
+ * latitude is worse than no band: it reads as recorded fact.
+ */
+function lightWordAt(dateStr, timeStr, lat, lng) {
+  // Whole body fail-safe: this is a cosmetic cue — no input may ever cost the
+  // list its render (the SG2 launch bug did exactly that).
+  try {
+    if (lat == null || lng == null) return null;
+    if (!dateStr || !timeStr) return null;
+    // flTimeToMin for the 'HH:MM' STRING; flToMinutes only for the Date
+    // objects calcSunTime returns — flToMinutes(dateObj) goes through
+    // Intl.formatToParts and THROWS RangeError on a string (the launch bug:
+    // the render died to the global handler's "Something went wrong" toast).
+    // Cull rows carry seconds ('HH:MM:SS'); slice before parsing.
+    var tMin = flTimeToMin(String(timeStr).slice(0, 5));
+    if (tMin == null) return null;
+    var noon = new Date(String(dateStr) + 'T12:00:00');
+    if (isNaN(noon.getTime())) return null;
+    var sr = flCalcSunTime(noon, lat, lng, true);
+    var ss = flCalcSunTime(noon, lat, lng, false);
+    if (!sr || !ss) return null;
+    return sightingLightBand(tMin, flToMinutes(sr), flToMinutes(ss));
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Sun-relative word for a CULL entry (A11). Until now the light band was a
+ * sightings-only cue, which had it exactly backwards: on a sighting the band
+ * is context, on a cull it is part of the record. "17:40" tells a reader
+ * nothing without the date and the latitude in their head; "17:40 dusk" tells
+ * them it was the last half hour of the evening.
+ */
+function entryLightWord(e) {
+  if (!e) return null;
+  return lightWordAt(e.date, e.time, e.lat, e.lng);
+}
+
+/**
+ * Name of the stand a sighting is linked to (explicit stand_id provenance,
+ * round 17) — from the live stands list when loaded, else the localStorage
+ * cache (stands.mjs), so the cue works without a stands-tab visit. Null when
+ * unlinked or the stand is gone.
+ */
+function sightingStandName(s) {
+  if (!s || !s.stand_id) return null;
+  var list = flEffectiveStands();
+  var st = (list || []).find(function(x) { return String(x.id) === String(s.stand_id); });
+  return (st && st.name) ? st.name : null;
+}
+
+// SG7: season scope for the whole sightings journey (list, trends, map,
+// header stats, exports). '__all__' preserves the pre-SG7 all-time view.
+var sightSeason = '__all__';
+
+/** Season-scoped (never species-scoped) sightings — the base every surface filters from. */
+function sightingsInScope() {
+  var list = allSightings || [];
+  if (sightSeason === '__all__') return list;
+  var b = seasonBoundsForKey(sightSeason, personalSeasonStartMonth());
+  if (!b) return list;
+  return list.filter(function(s) {
+    var d = sightingDatePart(s);
+    return d && d >= b.startIso && d <= b.endIso;
+  });
+}
+
+/** Rebuild the season dropdown from the seasons that actually hold sightings. */
+function populateSightSeasonSelect() {
+  var sel = document.getElementById('sight-season-sel');
+  if (!sel) return;
+  var sm = personalSeasonStartMonth();
+  var keys = {};
+  (allSightings || []).forEach(function(s) {
+    var d = sightingDatePart(s);
+    if (d) { var k = buildSeasonFromEntry(d, sm); if (k) keys[k] = true; }
+  });
+  var opts = '<option value="__all__">All seasons</option>';
+  Object.keys(keys).sort().reverse().forEach(function(k) {
+    opts += '<option value="' + esc(k) + '">' + esc(seasonLabel(k, sm)) + '</option>';
+  });
+  sel.innerHTML = opts;
+  if (sightSeason !== '__all__' && !keys[sightSeason]) sightSeason = '__all__';
+  sel.value = sightSeason;
+}
+
+function filteredSightingsForView() {
+  var list = sightingsInScope().filter(function(s) {
+    if (sightFilter === 'all') return true;
+    return s.species === sightFilter;
+  });
+  return list.slice().sort(function(a, b) {
+    var av = a.seen_at || '', bv = b.seen_at || '';
+    return sightSortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
+}
+
+/** Heat style for a sighting circle, graded by animals seen (S4). SG8: the
+ *  pixel radius field is gone — both maps size in metres via lib
+ *  sightingHeatRadiusM; this styles colour/opacity only. */
+function sightingHeatStyle(n) {
+  n = n | 0;
+  if (n >= 11) return { fill: '#e2571f', stroke: '#b8431a', opacity: 0.55 };
+  if (n >= 6)  return { fill: '#f57f17', stroke: '#c96a12', opacity: 0.50 };
+  if (n >= 3)  return { fill: '#d8b054', stroke: '#a5883a', opacity: 0.50 };
+  return          { fill: '#5a7a30', stroke: '#48611f', opacity: 0.45 };
+}
+
+function sightingPopupHtml(s) {
+  var comp = sightingCompositionText(s) || (sightingHeadcount(s) + ' seen');
+  var d = sightingDatePart(s), t = sightingTimePart(s), beh = behaviourLabel(s.behaviour);
+  return '<div style="font-size:13px;font-weight:700;color:#3d2b1f;">' + svgEyeHtml(12, '#5a7a30') + ' ' + esc(s.species || 'Deer') + '</div>'
+    + '<div style="font-size:11px;color:#3d2b1f;margin-top:2px;">' + esc(comp) + '</div>'
+    + '<div style="font-size:11px;color:#70685b;margin-top:2px;">' + esc(d || '') + (t ? ' &middot; ' + esc(t) : '') + (beh ? ' &middot; ' + esc(beh) : '') + '</div>'
+    + (s.ground ? '<div style="font-size:11px;color:#3d2b1f;margin-top:3px;">' + esc(s.ground) + '</div>' : '');
+}
+
+function getSightingsEmptyHtml() {
+  // SG2: the + on THIS view opens the sighting form directly — the old copy
+  // described a second tap that doesn't exist.
+  return '<div class="empty-state">'
+    + '<div class="empty-title">No sightings yet</div>'
+    + '<div class="empty-sub">Tap <strong>+</strong> to record live deer you see &mdash; species, how many, and where. They build the map&rsquo;s hotspot picture.</div>'
+    + '</div>';
+}
+
+function renderSightingsList() {
+  // Dispatcher — kept this name so every call site routes through here. The
+  // Sightings view shows either the list or the light trends panel (S5a).
+  ['list', 'trends'].forEach(function(v) {
+    var b = document.getElementById('sv-' + v);
+    if (b) b.className = 'lt-b ' + (v === sightView ? 'on' : 'off');
+  });
+  var sortBtn = document.getElementById('sight-sort-toggle');
+  if (sortBtn) sortBtn.style.display = (sightView === 'trends') ? 'none' : '';
+  populateSightSeasonSelect(); // SG7: options follow the data; selection sticks
+  renderSightMap(); // SG map round: hides itself in Trends / with nothing pinned
+  if (sightView === 'trends') { renderSightingsTrends(); return; }
+  renderSightingsListBody();
+}
+
+/**
+ * Finding 2 (2026-07-25): the three header stats used to be season-scoped and
+ * the body species-filtered, so tapping "Roe Deer" with no Roe in the season
+ * left "2 LOGS / 4 ANIMALS / 2 SPECIES" sitting directly above "No sightings
+ * match this filter". One screen, two scopes, no way to tell which was being
+ * described. The header now counts exactly the set the body draws.
+ *
+ * The third stat swaps with the scope, because "Species: 1" under a species
+ * chip is a box that can only ever say one thing. Filtered, it counts the
+ * distinct DAYS that species was seen — the number a stalker actually wants
+ * from a single-species view, and one the season view can't show.
+ *
+ * Both renderers call this with their own list; before, each carried its own
+ * copy of the header maths and the two had already begun to drift.
+ */
+function renderSightingsHeaderStats(list) {
+  list = list || [];
+  var animals = 0, spSet = new Set(), daySet = new Set();
+  list.forEach(function(s) {
+    animals += sightingHeadcount(s);
+    if (s.species) spSet.add(s.species);
+    var d = sightingDatePart(s);
+    if (d) daySet.add(d);
+  });
+  var filtered = sightFilter !== 'all';
+  var elT = document.getElementById('sgh-total');   if (elT) elT.textContent = String(list.length);
+  var elA = document.getElementById('sgh-animals'); if (elA) elA.textContent = String(animals);
+  var el3 = document.getElementById('sgh-third');
+  if (el3) el3.textContent = String(filtered ? daySet.size : spSet.size);
+  var lb3 = document.getElementById('sgh-third-lbl');
+  if (lb3) lb3.textContent = filtered ? 'Days' : 'Species';
+  document.querySelectorAll('#sightings-filter .fc').forEach(function(c) {
+    c.classList.toggle('on', (c.getAttribute('data-species') || 'all') === sightFilter);
+  });
+}
+
+function renderSightingsListBody() {
+  var container = document.getElementById('sightings-container');
+  if (!container) return;
+
+  var sl = document.getElementById('sight-sort-label'); if (sl) sl.textContent = sightSortAsc ? 'Oldest' : 'Newest';
+
+  var list = filteredSightingsForView();
+  renderSightingsHeaderStats(list);
+  if (!list.length) {
+    container.innerHTML = (allSightings && allSightings.length)
+      ? '<div class="list-search-empty"><strong>No sightings match this filter</strong>Try &ldquo;All&rdquo; or a different species.</div>'
+      : getSightingsEmptyHtml();
+    return;
+  }
+
+  // SG2: month-grouped dark cards (the cull list's rhythm, the stands tab's
+  // language). The card body opens EDIT; the photo thumb opens the LIGHTBOX
+  // (signed lazily in wireSightingThumbs); delete now lives in the edit form
+  // — a destructive action no longer rides every row.
+  var html = '';
+  var curYm = null;
+  list.forEach(function(s) {
+    var d = sightingDatePart(s);
+    var ym = d ? d.slice(0, 7) : '0000-00';
+    if (ym !== curYm) {
+      curYm = ym;
+      if (ym === '0000-00') {
+        html += '<div class="sight-month">Other dates</div>';
+      } else {
+        var mi = parseInt(ym.slice(5, 7), 10);
+        html += '<div class="sight-month">' + esc((FULL_MONTHS[mi - 1] || '') + ' ' + ym.slice(0, 4)) + '</div>';
+      }
+    }
+    var clr = SP_COLORS[s.species] || '#5a7a30';
+    var comp = sightingCompositionText(s) || (sightingHeadcount(s) + ' seen');
+    var t = sightingTimePart(s);
+    var band = sightingLightWord(s);
+    // YR1: within a named season the header disambiguates the year; the
+    // All-seasons list spans years, so each card carries its own.
+    var when = (d ? esc(sightSeason === '__all__' ? fmtDateYear(d) : fmtDate(d)) : '')
+      + (t ? ' &middot; ' + esc(t) : '')
+      + (band ? ' &middot; <span class="s2-band s2-band-' + band + '">' + band + '</span>' : '');
+    var beh = behaviourLabel(s.behaviour);
+    var standNm = sightingStandName(s);
+    var locTxt = standNm || s.ground
+      || ((s.lat != null && s.lng != null) ? flPlaceRef(s.lat, s.lng, 6) : '');
+    var locIco = standNm ? SVG_S2_SEAT : ((s.lat != null && s.lng != null) ? SVG_S2_PIN : '');
+    var note = (s.notes && String(s.notes).trim()) ? String(s.notes).replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+    var metaBits = '';
+    if (beh) metaBits += '<span class="s2-chip">' + esc(beh) + '</span>';
+    if (locTxt) metaBits += '<span class="s2-loc">' + locIco + '<span class="s2-loc-t">' + esc(locTxt) + '</span></span>';
+    html += '<div class="s2" data-sight-id="' + esc(String(s.id)) + '">'
+      + '<div class="s2-accent" style="background:' + clr + ';"></div>'
+      + '<div class="s2-body" data-fl-action="open-sighting-detail" data-sight-id="' + esc(String(s.id)) + '" role="button" tabindex="0" aria-label="View this sighting">'
+        + '<div class="s2-top"><span class="s2-sp">' + esc(s.species || 'Deer') + '</span><span class="s2-when">' + when + '</span></div>'
+        + '<div class="s2-comp">' + esc(comp) + '</div>'
+        + (metaBits ? '<div class="s2-meta">' + metaBits + '</div>' : '')
+        + (note ? '<div class="s2-note">' + esc(note) + (note.length >= 120 ? '&hellip;' : '') + '</div>' : '')
+      + '</div>'
+      + (s.photo_url
+        ? '<div class="s2-thumb" data-fl-action="open-photo-lb" role="button" tabindex="0" aria-label="View sighting photo"><img data-sight-photo="' + esc(String(s.photo_url)) + '" alt=""></div>'
+        : '')
+      + '</div>';
+  });
+  container.innerHTML = html;
+  wireSightingThumbs();
+}
+
+/** Trends panel v2 (SG7): heroes incl. per-outing rate, sun-relative
+ *  activity windows, by-month, rut signal, by-species with recruitment. */
+function renderSightingsTrends() {
+  var container = document.getElementById('sightings-container');
+  if (!container) return;
+
+  var list = sightingsInScope().filter(function(s) {
+    return sightFilter === 'all' || s.species === sightFilter;
+  });
+  renderSightingsHeaderStats(list);
+  if (!list.length) {
+    container.innerHTML = (allSightings && allSightings.length)
+      ? '<div class="list-search-empty"><strong>No sightings match this filter</strong>Try &ldquo;All&rdquo; or a different season / species.</div>'
+      : getSightingsEmptyHtml();
+    return;
+  }
+
+  var sum = summariseSightings(list);
+  // SG2: fill calendar gaps so a quiet month is an honest zero bar, not a
+  // silent join between its neighbours.
+  var months = fillMonthGaps(summariseSightingsByMonth(list));
+  var t = sum.total;
+  var bdText = t.females ? (t.males + ' : ' + t.females) : (t.males ? (t.males + ' : 0') : '—');
+
+  // SG7: deer seen per outing — the effort-honest population signal (raw
+  // counts rise with effort; per-outing rates don't lie). An outing = any
+  // date you were out: a cull, a blank day, or a sighting. Cull/blank dates
+  // come from the all-seasons stub rows (kicked below; loaded season until
+  // they land — the R22 pattern, repainted in place on arrival).
+  flEnsureAllSeasonHistory();
+  var seasonB = sightSeason === '__all__' ? null : seasonBoundsForKey(sightSeason, personalSeasonStartMonth());
+  var outingDates = {};
+  flStandHistSource().rows.forEach(function(e) {
+    if (!e.date) return;
+    if (seasonB && (e.date < seasonB.startIso || e.date > seasonB.endIso)) return;
+    outingDates[e.date] = 1;
+  });
+  list.forEach(function(s) {
+    var d = sightingDatePart(s);
+    if (d) outingDates[d] = 1;
+  });
+  var outings = Object.keys(outingDates).length;
+  var perOuting = outings > 0 ? (t.animals / outings) : null;
+  var perOutingTxt = perOuting == null ? '—'
+    : (perOuting >= 10 ? String(Math.round(perOuting)) : perOuting.toFixed(1));
+
+  // A9: per outing is the honest-ish denominator, but it still counts a
+  // 40-minute evening sit and a dawn-to-dusk day as one unit each. Where the
+  // outing window was actually logged, divide by the hours.
+  //
+  // The two rates are computed over DIFFERENT sets on purpose and must never
+  // be mixed: the hourly rate takes animals seen on timed dates only, over
+  // the hours of those same dates. Dividing all animals by the hours of the
+  // few timed outings would inflate the rate by whatever fraction of the
+  // season went untimed — the exact error the per-outing rate exists to avoid.
+  // The coverage is printed for the same reason.
+  var outingHoursByDate = {};
+  flStandHistSource().rows.forEach(function(e) {
+    if (!e.date || outingHoursByDate[e.date] != null) return;
+    if (seasonB && (e.date < seasonB.startIso || e.date > seasonB.endIso)) return;
+    var a = flTimeToMin(String(e.outing_start_time || '').slice(0, 5));
+    var b = flTimeToMin(String(e.outing_end_time || '').slice(0, 5));
+    if (a == null || b == null) return;
+    // A finish before a start is an outing that ran past midnight, not a
+    // typo to discard — the high-seat sits that end at 00:30 are exactly the
+    // ones worth counting.
+    var mins = (b >= a) ? (b - a) : (b + 1440 - a);
+    // Beyond 18 hours it is a mis-keyed field, not a stalk. Skipped rather
+    // than clamped: a clamp would quietly invent 18 hours of effort.
+    if (mins <= 0 || mins > 1080) return;
+    outingHoursByDate[e.date] = mins / 60;
+  });
+  var timedDates = Object.keys(outingHoursByDate);
+  var hoursOut = 0;
+  timedDates.forEach(function(d) { hoursOut += outingHoursByDate[d]; });
+  var animalsOnTimed = 0;
+  list.forEach(function(s) {
+    var sd = sightingDatePart(s);
+    if (sd && outingHoursByDate[sd] != null) animalsOnTimed += sightingHeadcount(s);
+  });
+  var perHour = hoursOut > 0 ? (animalsOnTimed / hoursOut) : null;
+  var effortLine = '';
+  if (perHour != null) {
+    var perHourTxt = perHour >= 10 ? String(Math.round(perHour)) : perHour.toFixed(1);
+    var hoursTxt = hoursOut >= 100 ? String(Math.round(hoursOut)) : hoursOut.toFixed(1);
+    effortLine = '<div class="strd-effort"><strong>' + esc(perHourTxt) + '</strong> seen / hour out'
+      + ' <span class="strd-effort-sub">' + esc(hoursTxt) + ' h logged across '
+      + timedDates.length + ' of ' + outings + ' outing' + (outings === 1 ? '' : 's') + '</span></div>';
+  } else if (outings >= 3) {
+    effortLine = '<div class="strd-effort strd-effort--empty">Log a start and finish time on a cull or blank day to get a rate per hour'
+      + ' <span class="strd-effort-sub">dates alone count a 40-minute sit and a full day the same</span></div>';
+  }
+
+  // Finding 3: name the sexes correctly. The scope is a single species when
+  // the chip filter is set, and ALSO when the filter is "All" but only one
+  // species has actually been logged - a red-deer-only diary should never be
+  // told about bucks just because the filter says All. A genuinely mixed scope
+  // falls back to the neutral pair (see sightingSexWords).
+  var trendSpKeys = Object.keys(sum.bySpecies);
+  var scopeSpecies = (sightFilter !== 'all') ? sightFilter
+    : (trendSpKeys.length === 1 ? trendSpKeys[0] : null);
+  var scopeWords = sightingSexWords(scopeSpecies);
+
+  var html = '<div class="sight-trends">';
+  html += '<div class="strd-heroes">'
+    + '<div class="strd-hero"><div class="strd-hero-n">' + t.sightings + '</div><div class="strd-hero-l">sightings</div></div>'
+    + '<div class="strd-hero"><div class="strd-hero-n">' + t.animals + '</div><div class="strd-hero-l">animals seen</div></div>'
+    + '<div class="strd-hero"><div class="strd-hero-n">' + esc(bdText) + '</div><div class="strd-hero-l">' + esc(scopeWords.mPl + ' : ' + scopeWords.fPl) + '</div></div>'
+    + '<div class="strd-hero"><div class="strd-hero-n">' + esc(perOutingTxt) + '</div><div class="strd-hero-l">seen / outing</div></div>'
+    + '</div>'
+    + effortLine;
+
+  // SG7: activity windows — WHEN you meet deer, relative to that day's sun
+  // at that pin (a clock histogram lies across a UK season; "dusk" moves
+  // five hours). One row per band, encounters not animals.
+  var bands = { dawn: 0, day: 0, dusk: 0, night: 0 };
+  var unplaced = 0;
+  list.forEach(function(s) {
+    var b = sightingLightWord(s);
+    if (b) bands[b]++; else unplaced++;
+  });
+  var bandTotal = bands.dawn + bands.day + bands.dusk + bands.night;
+  if (bandTotal > 0) {
+    var bandMax = Math.max(bands.dawn, bands.day, bands.dusk, bands.night);
+    html += '<div class="strd-sec">Activity windows <span class="strd-sec-sub">(vs sunrise / sunset at the pin)</span></div><div class="strd-bars">';
+    [['dawn', 'Dawn', true], ['day', 'Day', false], ['dusk', 'Dusk', true], ['night', 'Night', false]].forEach(function(row) {
+      var n = bands[row[0]];
+      var pct = bandMax > 0 ? Math.max(4, Math.round(n / bandMax * 100)) : 0;
+      html += '<div class="strd-bar-row"><span class="strd-bar-lbl' + (row[2] ? ' gold' : '') + '">' + row[1] + '</span>'
+        + '<span class="strd-bar-track"><span class="strd-bar-fill" style="width:' + (n > 0 ? pct : 0) + '%;"></span></span>'
+        + '<span class="strd-bar-val">' + n + '</span></div>';
+    });
+    html += '</div>';
+    if (unplaced > 0) {
+      html += '<div class="strd-note">' + unplaced + ' sighting' + (unplaced === 1 ? '' : 's') + ' without a pin — not placed</div>';
+    }
+  }
+
+  var maxA = 0;
+  months.forEach(function(m) { if (m.animals > maxA) maxA = m.animals; });
+  html += '<div class="strd-sec">Animals seen by month</div><div class="strd-bars">';
+  months.forEach(function(m) {
+    var parts = m.ym.split('-');
+    var mi = parseInt(parts[1], 10);
+    var lbl = (FULL_MONTHS[mi - 1] || '').slice(0, 3) + ' ' + parts[0];
+    var pct = maxA > 0 ? Math.max(4, Math.round(m.animals / maxA * 100)) : 0;
+    html += '<div class="strd-bar-row"><span class="strd-bar-lbl">' + esc(lbl) + '</span>'
+      + '<span class="strd-bar-track"><span class="strd-bar-fill" style="width:' + (m.animals > 0 ? pct : 0) + '%;"></span></span>'
+      + '<span class="strd-bar-val">' + m.animals + '</span></div>';
+  });
+  html += '</div>';
+
+  // SG7: rut signal — rutting-behaviour sightings by month. The data was
+  // captured from v1 and never read again until now. Section earns its place
+  // only when the behaviour has actually been logged.
+  var rutList = list.filter(function(s) { return s.behaviour === 'rutting'; });
+  if (rutList.length) {
+    var rutMonths = fillMonthGaps(summariseSightingsByMonth(rutList));
+    var rutMax = 0;
+    rutMonths.forEach(function(m) { if (m.sightings > rutMax) rutMax = m.sightings; });
+    html += '<div class="strd-sec">Rut signal <span class="strd-sec-sub">(rutting behaviour · sightings by month)</span></div><div class="strd-bars">';
+    rutMonths.forEach(function(m) {
+      var parts = m.ym.split('-');
+      var mi = parseInt(parts[1], 10);
+      var lbl = (FULL_MONTHS[mi - 1] || '').slice(0, 3) + ' ' + parts[0];
+      var pct = rutMax > 0 ? Math.max(4, Math.round(m.sightings / rutMax * 100)) : 0;
+      html += '<div class="strd-bar-row"><span class="strd-bar-lbl">' + esc(lbl) + '</span>'
+        + '<span class="strd-bar-track"><span class="strd-bar-fill strd-fill-rut" style="width:' + (m.sightings > 0 ? pct : 0) + '%;"></span></span>'
+        + '<span class="strd-bar-val">' + m.sightings + '</span></div>';
+    });
+    html += '</div>';
+  }
+
+  var spKeys = Object.keys(sum.bySpecies).sort(function(a, b) { return sum.bySpecies[b].animals - sum.bySpecies[a].animals; });
+  html += '<div class="strd-sec">By species</div><div class="strd-species">';
+  spKeys.forEach(function(sp) {
+    var r = sum.bySpecies[sp];
+    var clr = SP_COLORS[sp] || '#5a7a30';
+    var bd = buckDoeIndex(r);
+    var yh = youngPerHundredFemales(r);
+    // Finding 3: these rows carry the species name two spans to the left, so
+    // there is no excuse for generic vocabulary here - and no ambiguity either.
+    var w = sightingSexWords(sp);
+    var meta = r.sightings + ' log' + (r.sightings === 1 ? '' : 's') + ' · ' + r.animals + ' seen';
+    // Low-sample honesty: per-100 ratios from one buck and one doe read as
+    // "100 bucks/100 does" — technically true, practically absurd. Below five
+    // sexed animals, state the raw composition; the index earns its place
+    // once the sample can bear it.
+    var sexed = (r.males || 0) + (r.females || 0);
+    if (sexed >= 5) {
+      meta += (bd != null ? ' · ' + bd + ' ' + w.mPl + '/100 ' + w.fPl : '')
+        + (yh != null && r.young > 0 ? ' · ' + yh + ' ' + w.yPl + '/100 ' + w.fPl : '');
+    } else {
+      var comp = [];
+      if (r.males > 0) comp.push(r.males + ' ' + (r.males === 1 ? w.m : w.mPl));
+      if (r.females > 0) comp.push(r.females + ' ' + (r.females === 1 ? w.f : w.fPl));
+      if (r.young > 0) comp.push(r.young + ' ' + (r.young === 1 ? w.y : w.yPl));
+      if (comp.length) meta += ' · ' + comp.join(' · ');
+    }
+    html += '<div class="strd-sp-row"><span class="strd-sp-dot" style="background:' + clr + ';"></span>'
+      + '<span class="strd-sp-name">' + esc(sp) + '</span><span class="strd-sp-meta">' + esc(meta) + '</span></div>';
+  });
+  html += '</div>';
+  // Declutter (owner call): the exports live HERE now — a report belongs with
+  // the analysis, and the header keeps its one control line. Same actions,
+  // same filters (season + species) as before.
+  html += '<div class="strd-exports">'
+    + '<button type="button" class="strd-exp-btn" data-fl-action="export-sightings-csv"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M5 21h14"/></svg>Download CSV</button>'
+    + '<button type="button" class="strd-exp-btn" data-fl-action="export-sightings-pdf"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>PDF report</button>'
+    + '</div>';
+  html += '<div class="strd-foot">Live deer seen · kept separate from your cull totals</div></div>';
+  container.innerHTML = html;
+}
+
+function setSightView(v) {
+  sightView = (v === 'trends') ? 'trends' : 'list';
+  renderSightingsList();
+}
+
+/** Sightings CSV — own export, separate from cull exports (S5a). Respects the species filter. */
+function exportSightingsCsv() {
+  var list = filteredSightingsForView();
+  if (!list.length) { showToast('⚠️ No sightings to export'); return; }
+  var HEAD = ['Date', 'Time', 'Species', 'Males', 'Females', 'Young', 'Unknown', 'Total', 'Behaviour', 'Ground', 'Stand', 'Lat', 'Lng', 'Notes'];
+  var lines = [HEAD.map(csvField).join(',')];
+  list.forEach(function(s) {
+    lines.push([
+      sightingDatePart(s), sightingTimePart(s), s.species || '',
+      s.n_male | 0, s.n_female | 0, s.n_young | 0, s.n_unknown | 0, sightingHeadcount(s),
+      s.behaviour || '', s.ground || '', sightingStandName(s) || '',
+      (s.lat == null ? '' : s.lat), (s.lng == null ? '' : s.lng), s.notes || ''
+    ].map(csvField).join(','));
+  });
+  triggerCsvDownload(lines, 'first-light-sightings.csv');
+  showToast('✅ Sightings CSV downloaded · ' + list.length + ' row' + (list.length === 1 ? '' : 's'));
+}
+
+/** Sightings PDF report — own document, separate from cull exports (S5c). Respects the species filter. */
+function exportSightingsPDF() {
+  var list = filteredSightingsForView();
+  if (!list.length) { showToast('⚠️ No sightings to export'); return; }
+  var sum = summariseSightings(list);
+  var months = summariseSightingsByMonth(list);
+  var bySpecies = Object.keys(sum.bySpecies)
+    .sort(function(a, b) { return sum.bySpecies[b].animals - sum.bySpecies[a].animals; })
+    .map(function(sp) {
+      var r = sum.bySpecies[sp];
+      // Finding 3: pdf.mjs is deliberately sightings-agnostic, so the correct
+      // nouns travel WITH the numbers rather than the PDF module learning deer
+      // vocabulary. Same words the on-screen rows use.
+      var pw = sightingSexWords(sp);
+      return { species: sp, sightings: r.sightings, animals: r.animals, bd: buckDoeIndex(r),
+               mPl: pw.mPl, fPl: pw.fPl };
+    });
+  var byMonth = months.map(function(m) {
+    var parts = m.ym.split('-');
+    var mi = parseInt(parts[1], 10);
+    return { label: (FULL_MONTHS[mi - 1] || '').slice(0, 3) + ' ' + parts[0], animals: m.animals };
+  });
+  var rows = list.map(function(s) {
+    var d = sightingDatePart(s);
+    return {
+      date: d ? fmtDateYear(d) : '', // YR1: PDF rows are standalone records
+      time: sightingTimePart(s),
+      species: s.species || 'Deer',
+      composition: sightingCompositionText(s) || (sightingHeadcount(s) + ' seen'),
+      behaviour: behaviourLabel(s.behaviour),
+      ground: s.ground || '',
+      notes: s.notes || ''
+    };
+  });
+  var label = (sightFilter === 'all') ? 'All sightings' : sightFilter;
+  var slug = (sightFilter === 'all') ? null : String(sightFilter).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  var pdfSpKeys = Object.keys(sum.bySpecies);
+  var pdfScopeWords = sightingSexWords((sightFilter !== 'all') ? sightFilter
+    : (pdfSpKeys.length === 1 ? pdfSpKeys[0] : null));
+  try {
+    var res = buildSightingsReportPDF({
+      rows: rows,
+      summary: {
+        sightings: sum.total.sightings, animals: sum.total.animals,
+        males: sum.total.males, females: sum.total.females,
+        bySpecies: bySpecies, byMonth: byMonth,
+        // Aggregate line: exact words when the export resolves to one species
+        // (chip filter set, or only one species logged), neutral pair when mixed.
+        malesLbl: pdfScopeWords.mPl, femalesLbl: pdfScopeWords.fPl
+      },
+      label: label,
+      filenameSlug: slug
+    });
+    if (res) { showToast('✅ Sightings PDF ready · ' + res.count); flHapticSuccess(); }
+  } catch (e) {
+    showToast('⚠️ PDF failed: ' + friendlyErr(e, 'try again online'));
+    flHapticError();
+  }
+}
+
+async function refreshSightingsView() {
+  renderSightingsList();       // paint from cache immediately
+  await loadSightings(true);   // then refresh from Supabase
+  renderSightingsList();
+  flEnsureSightingWeather();   // SG5: quiet hydrate + bounded backfill
+}
+
+function filterSightings(species) {
+  sightFilter = species || 'all';
+  renderSightingsList();
+}
+
+function toggleSightSort() {
+  sightSortAsc = !sightSortAsc;
+  renderSightingsList();
+}
+
+async function openNewSighting() {
+  await openNewEntry();
+  // Only flip into Sighting mode if the form actually opened (clock guard).
+  var vf = document.getElementById('v-form');
+  if (vf && vf.classList.contains('active')) enterSighting();
+}
+
+/** Open the Sighting form pre-filled to edit an existing sighting (polish). */
+async function openEditSighting(id) {
+  var s = (allSightings || []).find(function(x) { return String(x.id) === String(id); });
+  if (!s) return;
+  await openNewEntry();
+  var vf = document.getElementById('v-form');
+  if (!vf || !vf.classList.contains('active')) return; // clock guard
+  enterSighting();
+  flFormStandId = s.stand_id || null; // preserve an existing stand link on edit
+  editingSightingId = String(id);
+  // Species
+  formSpecies = s.species || '';
+  document.querySelectorAll('.sp-btn').forEach(function(b) {
+    var nm = b.querySelector('.sp-name');
+    b.classList.toggle('on', !!nm && nm.textContent === s.species);
+  });
+  renderSightingLabels();
+  // Composition
+  flSightingCounts = { n_male: s.n_male | 0, n_female: s.n_female | 0, n_young: s.n_young | 0, n_unknown: s.n_unknown | 0 };
+  SIGHTING_COUNT_KEYS.forEach(function(k) { var el = document.getElementById('sight-val-' + k); if (el) el.textContent = String(flSightingCounts[k]); });
+  updateSightingTotal();
+  // Behaviour
+  flSightingBehaviour = s.behaviour || '';
+  document.querySelectorAll('#beh-chips .beh-chip').forEach(function(c) { c.classList.toggle('on', c.getAttribute('data-b') === flSightingBehaviour); });
+  // Date + time (from seen_at)
+  var d = sightingDatePart(s), t = sightingTimePart(s);
+  if (d) { var fd = document.getElementById('f-date'); if (fd) fd.value = d; }
+  if (t) { var ftm = document.getElementById('f-time'); if (ftm) ftm.value = t; }
+  // Location
+  if (s.lat != null && s.lng != null) {
+    formPinLat = s.lat; formPinLng = s.lng;
+    showPinnedStrip(s.ground || flPlaceRef(s.lat, s.lng, 6), s.lat, s.lng);
+  } else {
+    clearPinnedLocation();
+  }
+  // Ground + notes
+  if (s.ground) setGroundValue(s.ground);
+  var nEl = document.getElementById('f-notes'); if (nEl) nEl.value = s.notes || '';
+  // Existing photo → sign + show in the slot (kept unless the user replaces/removes it)
+  editingOriginalSightingPhotoPath = s.photo_url ? (cullPhotoStoragePath(s.photo_url) || s.photo_url) : null;
+  if (s.photo_url && sb) {
+    try {
+      var pth = cullPhotoStoragePath(s.photo_url) || s.photo_url;
+      var sh = await sb.storage.from('cull-photos').createSignedUrl(pth, CULL_PHOTO_SIGN_EXPIRES);
+      if (sh && sh.data && sh.data.signedUrl && !sh.error) {
+        photoPreviewUrl = sh.data.signedUrl;
+        var slot = document.getElementById('photo-slot');
+        if (slot) {
+          slot.className = 'photo-slot filled';
+          slot.innerHTML = '<div class="diary-img-skeleton diary-img-skeleton-slot" aria-hidden="true"></div><img class="diary-img diary-img-fade" src="' + esc(photoPreviewUrl) + '" alt=""><button type="button" class="photo-slot-rm" data-fl-action="remove-photo">✕</button>';
+          diaryWireDiaryImages(slot);
+          var rmb = document.getElementById('photo-rm-btn'); if (rmb) rmb.style.display = 'block';
+        }
+      }
+    } catch (e) { /* non-fatal — save keeps the existing photo via photoPreviewUrl path */ }
+  }
+  var ttl = document.getElementById('form-title'); if (ttl) ttl.textContent = 'Edit sighting';
+  var saveB = document.getElementById('save-btn'); if (saveB) saveB.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
+  // SG2: enterSighting() ran before editingSightingId was set — show the
+  // form's delete button now that this is definitely an edit. SG3: same
+  // ordering for the stand select + the again-chip (edits never show it).
+  var delB = document.getElementById('sight-delete-btn'); if (delB) delB.style.display = '';
+  populateSightStandSelect();
+  updateSightAgainChip();
+  formDirty = false;
+}
+
+/**
+ * A4: turn a sighting into a cull entry.
+ *
+ * The sequence a stalker actually performs is: log the group at 06:40, shoot
+ * one of them at 06:52, log the cull. Until now the second half meant typing
+ * the species, the date, the time, the ground and the pin again — the same
+ * five facts, twelve minutes apart, about the same animal. Across the whole
+ * surveyed market not one live product joins these two records, which is why
+ * the pairing was worth building rather than worth buying.
+ *
+ * What carries over is only what a sighting can actually testify to: what,
+ * when, and where. What does NOT carry over is the deliberate part.
+ *
+ *   * Sex and age class stay blank even when the composition is unambiguous.
+ *     A lone male seen at 300 m in failing light is an identification; the sex
+ *     on a cull record is a statement about a carcass. Those are different
+ *     claims, and the second one is settled at the gralloch. Carrying the
+ *     first across would let a guess through the glass end up in a statutory
+ *     return wearing the authority of a measurement.
+ *   * Notes, behaviour, composition and the photo stay with the sighting.
+ *     They describe the group that was watched, not the animal that was
+ *     taken, and copying them would file one observation twice under two
+ *     headings that would then drift apart at the first edit.
+ *
+ * The sighting row is left exactly as it was — no converted flag, no deletion.
+ * The group was still seen, one of them being shot does not unsee the rest,
+ * and the sightings series is the effort record the trends panel divides by.
+ */
+async function openCullFromSighting(id) {
+  var s = (allSightings || []).find(function(x) { return String(x.id) === String(id); });
+  if (!s) return;
+  await openNewEntry();                 // resets to a clean form in CULL mode
+  var vf = document.getElementById('v-form');
+  if (!vf || !vf.classList.contains('active')) return;   // clock guard
+
+  // Species, by the same three steps a cull edit takes: paint the chip, open
+  // the collapsed Pest Control group if the chip lives inside it, then re-run
+  // the per-species gates so weight, tag and sex show or hide correctly for
+  // what was actually chosen.
+  formSpecies = s.species || '';
+  document.querySelectorAll('.sp-btn').forEach(function(b) {
+    var nm = b.querySelector('.sp-name');
+    b.classList.toggle('on', !!nm && !!formSpecies && nm.textContent === formSpecies);
+  });
+  setPestSpeciesGridOpen(!!formSpecies && isPestSpecies(formSpecies));
+  applyFormSpeciesMode();
+  updateFormSexLabels(formSpecies);
+
+  // When. Date and time move together or not at all — taking the date from the
+  // sighting and leaving the clock at "now" would stamp last Tuesday's date
+  // with this morning's time, which is worse than either alone. The sighting
+  // is not the moment of the shot, but it is the nearest recorded one and it
+  // is bounded; "now" could be three hours later back at the truck.
+  var d = sightingDatePart(s), t = sightingTimePart(s);
+  var fd = document.getElementById('f-date'); if (fd && d) fd.value = d;
+  var ftm = document.getElementById('f-time'); if (ftm && t) ftm.value = t;
+
+  // Where.
+  if (s.ground) setGroundValue(s.ground);
+  if (s.lat != null && s.lng != null) {
+    formPinLat = s.lat; formPinLng = s.lng;
+    showPinnedStrip(s.ground || flPlaceRef(s.lat, s.lng, 6), s.lat, s.lng);
+  }
+
+  // Prefilled but unsaved: a back-swipe has to warn rather than bin it.
+  formDirty = true;
+  requestFormProgressUpdate();
+  // Re-run with a species in hand — openNewEntry queued this while the form
+  // was still blank, so the close-season advisory had nothing to rule on.
+  queueCullSeasonAdvisory();
+  showToast('Species, date, time and place carried over — sex and age are yours to confirm');
+}
+
+/** Sign the sighting-card thumbnails (cull-photos bucket) after a list render.
+ *  SG2: the signed URL also lands on the thumb wrapper as data-photo-url so
+ *  its open-photo-lb action opens the lightbox (a tap before signing lands is
+ *  a quiet no-op — the stands unsigned-tile contract). */
+function wireSightingThumbs() {
+  if (!sb) return;
+  document.querySelectorAll('#sightings-container img[data-sight-photo]').forEach(function(img) {
+    if (img.getAttribute('data-signed')) return;
+    img.setAttribute('data-signed', '1');
+    var raw = img.getAttribute('data-sight-photo');
+    var path = cullPhotoStoragePath(raw) || raw;
+    if (!path) return;
+    sb.storage.from('cull-photos').createSignedUrl(path, CULL_PHOTO_SIGN_EXPIRES).then(function(sh) {
+      if (sh && sh.data && sh.data.signedUrl && !sh.error) {
+        img.src = sh.data.signedUrl;
+        img.classList.add('is-loaded');
+        var wrap = img.closest('.s2-thumb');
+        if (wrap) wrap.setAttribute('data-photo-url', encodeURIComponent(sh.data.signedUrl));
+      }
+    }).catch(function() {});
+  });
+}
+
+// ── SG4: read-only sighting detail ───────────────────────────────
+// Card tap lands HERE now, not on the edit form: a sighting with a photo
+// deserves a reading surface. Edit + Delete live inside it.
+
+var flSightingDetailId = null;
+
+function openSightingDetail(id) {
+  var s = (allSightings || []).find(function(x) { return String(x.id) === String(id); });
+  if (!s) return;
+  flSightingDetailId = String(id);
+  renderSightingDetail(s);
+  go('v-sighting-detail');
+  // SG5: list loads omit weather_data (undefined = never fetched) — hydrate
+  // this one row and repaint in place if the user is still looking at it
+  // (the cull openDetail pattern).
+  if (s.weather_data === undefined && sb && currentUser && !_sightWxColMissing) {
+    sb.from('sightings').select('weather_data').eq('id', s.id).single().then(function(r) {
+      if (r.error) {
+        if (sightWxColAbsent(r.error)) _sightWxColMissing = true;
+        s.weather_data = null;
+        return;
+      }
+      s.weather_data = (r.data && 'weather_data' in r.data) ? r.data.weather_data : null;
+      if (!s.weather_data) return;
+      if (String(flSightingDetailId) !== String(s.id)) return;
+      var vd = document.getElementById('v-sighting-detail');
+      if (vd && vd.classList.contains('active')) renderSightingDetail(s);
+    });
+  }
+}
+
+function renderSightingDetail(s) {
+  var ttl = document.getElementById('sgd-title');
+  var sub = document.getElementById('sgd-sub');
+  var body = document.getElementById('sgd-body');
+  if (!ttl || !body) return;
+  var clr = SP_COLORS[s.species] || '#5a7a30';
+  ttl.innerHTML = '<span class="sgd-dot" style="background:' + clr + ';"></span>' + esc(s.species || 'Deer');
+  var d = sightingDatePart(s), t = sightingTimePart(s), band = sightingLightWord(s);
+  if (sub) {
+    sub.innerHTML = (d ? esc(fmtDateYear(d)) : '') // YR1: detail = standalone record
+      + (t ? ' · ' + esc(t) : '')
+      + (band ? ' · <span class="s2-band s2-band-' + band + '">' + band + '</span>' : '');
+  }
+  var comp = sightingCompositionText(s) || (sightingHeadcount(s) + ' seen');
+  var n = sightingHeadcount(s);
+  var sid = esc(String(s.id));
+
+  var html = '<div class="sgd-card">'
+    + '<div class="sgd-comp">' + esc(comp) + '</div>'
+    + '<div class="sgd-comp-sub">' + n + ' animal' + (n === 1 ? '' : 's')
+    + (s.behaviour ? ' <span class="s2-chip">' + esc(behaviourLabel(s.behaviour)) + '</span>' : '')
+    + '</div></div>';
+
+  if (s.photo_url) {
+    html += '<div class="sgd-card sgd-photo-card">'
+      + '<div class="sgd-photo" data-fl-action="open-photo-lb" role="button" tabindex="0" aria-label="View photo full size">'
+      + '<img data-sgd-photo="' + esc(String(s.photo_url)) + '" alt="">'
+      + '</div></div>';
+  }
+
+  // SG5: conditions card — the cull weather strip with a sighting title.
+  if (s.weather_data && typeof s.weather_data === 'object') {
+    var wxHtml = renderWeatherStrip({ weather_data: s.weather_data, time: t }, 'Conditions at this sighting');
+    if (wxHtml) html += '<div class="sgd-card sgd-wx-card">' + wxHtml + '</div>';
+  }
+
+  function sgdRow(label, valueHtml) {
+    return '<div class="sgd-row"><div class="sgd-row-l">' + label + '</div><div class="sgd-row-v">' + valueHtml + '</div></div>';
+  }
+  var standNm = sightingStandName(s);
+  var rows = '';
+  if (s.ground) rows += sgdRow('Ground', esc(s.ground));
+  if (standNm) rows += sgdRow('Stand', esc(standNm));
+  if (s.lat != null && s.lng != null) {
+    rows += sgdRow(flPlaceRefLabel(s.lat, s.lng, 8), esc(flPlaceRef(s.lat, s.lng, 8))
+      + ' <span class="sgd-maplink" role="button" tabindex="0" data-fl-action="sight-show-on-map" data-sight-id="' + sid + '">show on map ›</span>');
+  }
+  if (rows) html += '<div class="sgd-card">' + rows + '</div>';
+
+  if (s.notes && String(s.notes).trim()) {
+    html += '<div class="sgd-card"><div class="sgd-row-l" style="margin-bottom:6px;">Notes</div>'
+      + '<div class="sgd-notes">' + esc(String(s.notes).trim()) + '</div></div>';
+  }
+
+  html += '<div class="sgd-convert">'
+    + '<button type="button" class="sgd-cull-btn" data-fl-action="sight-to-cull" data-sight-id="' + sid + '">Log a cull from this sighting</button>'
+    + '<div class="sgd-convert-note">Carries the species, date, time, ground and pin into a new cull entry. Sex and age stay blank &mdash; those are settled at the carcass, not through the glass. This sighting stays exactly as it is.</div>'
+    + '</div>';
+
+  html += '<div class="sgd-actions">'
+    + '<button type="button" class="sgd-edit-btn" data-fl-action="edit-sighting" data-sight-id="' + sid + '">Edit sighting</button>'
+    + '<button type="button" class="sgd-del-btn" data-fl-action="delete-sighting" data-sight-id="' + sid + '">Delete</button>'
+    + '</div>';
+
+  body.innerHTML = html;
+  // Sign the photo (same bucket + lightbox contract as the list thumbs).
+  if (s.photo_url && sb) {
+    var img = body.querySelector('img[data-sgd-photo]');
+    if (img) {
+      var path = cullPhotoStoragePath(s.photo_url) || s.photo_url;
+      sb.storage.from('cull-photos').createSignedUrl(path, CULL_PHOTO_SIGN_EXPIRES).then(function(sh) {
+        if (sh && sh.data && sh.data.signedUrl && !sh.error) {
+          img.src = sh.data.signedUrl;
+          img.classList.add('is-loaded');
+          var wrap = img.closest('.sgd-photo');
+          if (wrap) wrap.setAttribute('data-photo-url', encodeURIComponent(sh.data.signedUrl));
+        }
+      }).catch(function() {});
+    }
+  }
+}
+
+/** Detail's "show on map": land on the sightings view with this circle centred + popped. */
+function focusSightingOnMap(id) {
+  if (!id) return;
+  flSightFocusId = String(id);
+  go('v-sightings');
+}
+
+function deleteSightingPrompt(id) {
+  if (!id) return;
+  var s = (allSightings || []).find(function(x) { return String(x.id) === String(id); });
+  var label = s ? (s.species + ' · ' + (sightingCompositionText(s) || (sightingHeadcount(s) + ' seen'))) : 'this sighting';
+  flConfirm({ title: 'Delete sighting?', body: label, action: 'Delete' }).then(function(ok) {
+    if (!ok) return;
+    if (!sb) { showToast('⚠️ Supabase not configured'); return; }
+    deleteSighting(sb, id).then(function() {
+      showToast('🗑 Sighting deleted');
+      return loadSightings(true);
+    }).then(function() {
+      renderSightingsList();
+      if (cullMap && cullMapMode !== 'culls') renderCullMapPins();
+      // SG2: deleting from the edit form — clear the edit state and leave the
+      // form for the sightings list (nothing left to edit).
+      if (editingSightingId && String(editingSightingId) === String(id)) {
+        editingSightingId = null;
+        formDirty = false;
+        var vf = document.getElementById('v-form');
+        if (vf && vf.classList.contains('active')) go('v-sightings');
+      }
+      // SG4: deleting from the detail surface — same rule, nothing left to show.
+      if (flSightingDetailId && String(flSightingDetailId) === String(id)) {
+        flSightingDetailId = null;
+        var vd = document.getElementById('v-sighting-detail');
+        if (vd && vd.classList.contains('active')) go('v-sightings');
+      }
+    }).catch(function(e) {
+      showToast('⚠️ Could not delete: ' + friendlyErr(e, 'please try again'));
+    });
+  });
+}
+
+// ── In-view sightings map (SG map round) — the hotspot picture lives WITH
+// the log, stands-style. Lazy Leaflet init on first show; heat circles are
+// METRE-true (lib sightingHeatRadiusM) so a blob means the same thing at
+// every zoom; follows the species filter chips; List view only.
+var sightMap = null, sightMapStdLayer = null, sightMapSatLayer = null, sightMapHeatGroup = null;
+
+function initSightMap() {
+  if (sightMap) return;
+  if (typeof L === 'undefined') return;
+  if (!document.getElementById('sight-map-div')) return;
+  sightMap = L.map('sight-map-div', { zoomControl: true, attributionControl: false })
+    .setView([54.0, -2.0], 6); // UK overview until fitBounds
+  var tiles = mapProviderTileUrls();
+  sightMapStdLayer = L.tileLayer(tiles.std, tileOptsForUrl(tiles.std)).addTo(sightMap);
+  sightMapSatLayer = L.tileLayer(tiles.sat, tileOptsForUrl(tiles.sat));
+  attachSightMapTileErrorHandlers(); // SG3b: joins the Mapbox→legacy fallback family
+  bumpMapLoadEstimate('sight-map');
+  renderGroundBoundaries(sightMap); // G3: boundaries under the heat blobs
+  // The toggle overlays the map; clicks don't reach the body delegator
+  // (stands-map precedent) — bind directly.
+  var mBtn = document.getElementById('sgl-map');
+  var sBtn = document.getElementById('sgl-sat');
+  if (mBtn) mBtn.addEventListener('click', function() { setSightMapLayer('map'); });
+  if (sBtn) sBtn.addEventListener('click', function() { setSightMapLayer('sat'); });
+  setTimeout(function() { if (sightMap) sightMap.invalidateSize(); }, 80);
+}
+
+/** Map / Satellite base-layer toggle for the sightings map (mirrors setStandsLayer). */
+function setSightMapLayer(type) {
+  if (!sightMap) return;
+  var mBtn = document.getElementById('sgl-map');
+  var sBtn = document.getElementById('sgl-sat');
+  if (type === 'sat') {
+    if (sightMapStdLayer) sightMap.removeLayer(sightMapStdLayer);
+    if (sightMapSatLayer) sightMapSatLayer.addTo(sightMap);
+    if (mBtn) mBtn.className = 'lt-b off';
+    if (sBtn) sBtn.className = 'lt-b on';
+  } else {
+    if (sightMapSatLayer) sightMap.removeLayer(sightMapSatLayer);
+    if (sightMapStdLayer) sightMapStdLayer.addTo(sightMap);
+    if (mBtn) mBtn.className = 'lt-b on';
+    if (sBtn) sBtn.className = 'lt-b off';
+  }
+}
+
+/**
+ * Show/refresh the in-view hotspot map for the current filter. Hidden in
+ * Trends view and when no pinned sighting matches the filter (an empty map
+ * earns no glass). Unpinned matches are counted in a note, never silently
+ * dropped (the no-silent-caps rule).
+ */
+var sightMapCircleById = {};   // SG4: circle registry for "show on map" focus
+var flSightFocusId = null;     // SG4: sighting to centre + pop after render
+// SG8: the map lens — a spatial "when" on top of the species/season filters.
+// Map-only on purpose (a lens over the picture, not a fourth list filter);
+// the chips themselves say what's filtered. Session state.
+var flSightMapBand = 'all';    // 'all' | 'dawn' | 'day' | 'dusk' | 'night'
+var flSightMapMonth = 'all';   // 'all' | 1..12 (calendar month of seen_at)
+
+function renderSightMap() {
+  var wrap = document.getElementById('sight-map-wrap');
+  if (!wrap) return;
+  var list = (sightView === 'list') ? filteredSightingsForView() : [];
+  var pinned = list.filter(function(s) { return s.lat != null && s.lng != null; });
+  if (!pinned.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  initSightMap();
+  if (!sightMap) { wrap.style.display = 'none'; return; }
+  // SG8: apply the lens AFTER the visibility test — the controls must stay
+  // on screen when the lens empties the map, or there is no way back.
+  var lensed = pinned;
+  if (flSightMapBand !== 'all') {
+    lensed = lensed.filter(function(s) { return sightingLightWord(s) === flSightMapBand; });
+  }
+  if (flSightMapMonth !== 'all') {
+    lensed = lensed.filter(function(s) {
+      var d = sightingDatePart(s);
+      return d && parseInt(d.slice(5, 7), 10) === flSightMapMonth;
+    });
+  }
+  // Sync the lens controls to state.
+  document.querySelectorAll('#sight-map-lens .sml-chip').forEach(function(c) {
+    c.classList.toggle('on', (c.getAttribute('data-band') || 'all') === flSightMapBand);
+  });
+  var mSel = document.getElementById('sight-map-month');
+  if (mSel) mSel.value = String(flSightMapMonth);
+  if (sightMapHeatGroup) { sightMap.removeLayer(sightMapHeatGroup); sightMapHeatGroup = null; }
+  sightMapHeatGroup = L.layerGroup();
+  sightMapCircleById = {};
+  var bounds = [];
+  lensed.forEach(function(s) {
+    var n = sightingHeadcount(s);
+    var heat = sightingHeatStyle(n);
+    var c = L.circle([s.lat, s.lng], {
+      radius: sightingHeatRadiusM(n),
+      color: heat.stroke, weight: 1,
+      fillColor: heat.fill, fillOpacity: heat.opacity
+    }).bindPopup(sightingPopupHtml(s));
+    c.addTo(sightMapHeatGroup);
+    sightMapCircleById[String(s.id)] = c;
+    bounds.push([s.lat, s.lng]);
+  });
+  sightMapHeatGroup.addTo(sightMap);
+  // SG4: a pending focus (detail's "show on map") beats fitBounds. Not
+  // consumed here — the post-fetch re-render re-applies it; go() clears it
+  // whenever the user leaves the sightings view.
+  var focusC = flSightFocusId ? sightMapCircleById[String(flSightFocusId)] : null;
+  if (focusC) {
+    sightMap.setView(focusC.getLatLng(), 15);
+    setTimeout(function() { try { focusC.openPopup(); } catch (e) { /* fine */ } }, 150);
+  } else if (bounds.length) {
+    sightMap.fitBounds(bounds, { padding: [28, 28], maxZoom: 15 });
+  }
+  var note = document.getElementById('sight-map-note');
+  if (note) {
+    var noPin = list.length - pinned.length;
+    var lensActive = flSightMapBand !== 'all' || flSightMapMonth !== 'all';
+    var noteTxt = '';
+    if (lensActive && !lensed.length) {
+      noteTxt = 'No pinned sightings in this window — widen the time / month lens';
+    } else if (noPin > 0) {
+      noteTxt = noPin + ' sighting' + (noPin === 1 ? '' : 's') + ' without a pin not shown';
+    }
+    note.textContent = noteTxt;
+    note.style.display = noteTxt ? '' : 'none';
+  }
+  setTimeout(function() { try { if (sightMap) sightMap.invalidateSize(); } catch (e) { /* fine */ } }, 120);
+}
+
+/**
+ * "Compare with culls" (SG1, retitled in the map round): open the stats map
+ * already flipped to the Sightings layer, then bring the map into view — the
+ * seen-vs-culled comparison lives with the cull stats; the hotspot picture
+ * itself now lives on the Sightings tab.
+ */
+function openSightingsMap() {
+  setCullMode('sightings');
+  go('v-stats');
+  setTimeout(function() {
+    var mc = document.getElementById('cull-map-container');
+    if (mc && mc.scrollIntoView) mc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 350); // after go()'s 150 ms map invalidate/fast-path
+}
+
+/**
+ * Diary-header Sightings strip (SG1): once sightings are loaded the sub-line
+ * carries the live tally; until then (or with none logged) it teaches the
+ * feature instead. Called from loadSightings so every refresh path updates it.
+ */
+function updateSightingsStrip() {
+  var el = document.getElementById('sight-strip-sub');
+  if (!el) return;
+  var n = (allSightings || []).length;
+  if (!sightingsLoaded || !n) { el.textContent = 'Log live deer you see'; return; }
+  var animals = 0;
+  (allSightings || []).forEach(function(s) { animals += sightingHeadcount(s); });
+  el.textContent = n + ' log' + (n === 1 ? '' : 's') + ' · ' + animals + ' deer seen';
+}
+
+/** Cull map layer toggle: Culls / Sightings / Both (S4). */
+function setCullMode(mode) {
+  if (mode !== 'culls' && mode !== 'sightings' && mode !== 'both') mode = 'culls';
+  cullMapMode = mode;
+  ['culls', 'sightings', 'both'].forEach(function(m) {
+    var b = document.getElementById('cmm-' + m);
+    if (b) b.className = 'lt-b ' + (m === mode ? 'on' : 'off');
+  });
+  // Pins/Heat only governs the cull layer, so it's meaningless when culls are
+  // hidden (Sightings-only) — hide it there rather than leave a dead control.
+  var dispTog = document.getElementById('cullmap-display-tog');
+  if (dispTog) dispTog.style.display = (mode === 'sightings') ? 'none' : '';
+  // Legend text/visibility is state-dependent (culls-heat vs sightings-heat vs
+  // both) so renderCullMapPins owns it now — see setCullMapLegend().
+  if (mode !== 'culls' && !sightingsLoaded) {
+    loadSightings().then(function() { renderCullMapPins(); });
+  } else {
+    renderCullMapPins();
+  }
+}
+
+/** Cull layer representation toggle: Pins / Heat density (Batch 2). */
+function setCullDisplay(mode) {
+  if (mode !== 'pins' && mode !== 'heat') mode = 'pins';
+  cullDisplay = mode;
+  ['pins', 'heat'].forEach(function(m) {
+    var b = document.getElementById('cmd-' + m);
+    if (b) b.className = 'lt-b ' + (m === mode ? 'on' : 'off');
+  });
+  renderCullMapPins();
+}
+
+// ── No-GPS recovery (Batch 3) ────────────────────────────────────────────────
+// A cull or sighting logged without a pin used to be dead data: it inflated the
+// "No GPS" count and could never appear on the map. This flow lets you place it
+// after the fact — tap the No-GPS cell → pick each entry → drop a pin → it's
+// saved and the map updates. Scoped to whatever the map is showing (culls and/
+// or sightings), so the list length always matches the No-GPS count beside it.
+
+/** Un-pinned entries the current map mode is responsible for. */
+function flNoGpsEntries() {
+  var showCulls  = (cullMapMode === 'culls' || cullMapMode === 'both');
+  var showSights = (cullMapMode === 'sightings' || cullMapMode === 'both');
+  var out = [];
+  if (showCulls) {
+    (allEntries || []).forEach(function(e) {
+      if ((e.lat == null || e.lng == null) && !isBlankDayEntry(e)) {
+        out.push({ id: e.id, kind: 'cull', species: e.species, date: e.date, time: e.time, sex: e.sex });
+      }
+    });
+  }
+  if (showSights) {
+    (allSightings || []).forEach(function(s) {
+      if (s.lat == null || s.lng == null) {
+        out.push({ id: s.id, kind: 'sight', species: s.species, date: sightingDatePart(s), time: sightingTimePart(s), sex: null });
+      }
+    });
+  }
+  return out;
+}
+
+function renderNoGpsList() {
+  var wrap = document.getElementById('nogps-list');
+  if (!wrap) return;
+  var items = flNoGpsEntries();
+  var sub = document.getElementById('nogps-sub');
+  if (sub) sub.textContent = items.length
+    ? (items.length + ' entr' + (items.length === 1 ? 'y' : 'ies') + ' without a location')
+    : 'All caught up';
+  if (!items.length) {
+    wrap.innerHTML = '<div class="nogps-empty"><span class="fl-ic fl-target"></span> Nothing left to place — every entry on this map has a location.</div>';
+    return;
+  }
+  var h = '';
+  items.forEach(function(it) {
+    var clr = SP_COLORS[it.species] || '#5a7a30';
+    var sexSym = it.kind === 'cull' ? (it.sex === 'm' ? ' ♂' : (it.sex === 'f' ? ' ♀' : '')) : '';
+    var meta = esc(it.date || 'No date') + (it.time ? ' · ' + esc(it.time) : '') + (it.kind === 'sight' ? ' · sighting' : '');
+    h += '<div class="nogps-row">'
+      + '<span class="nogps-dot" style="background:' + clr + '" aria-hidden="true"></span>'
+      + '<div class="nogps-meta"><div class="nogps-sp">' + esc(it.species || (it.kind === 'sight' ? 'Sighting' : 'Cull')) + sexSym + '</div>'
+      + '<div class="nogps-sub2">' + meta + '</div></div>'
+      + '<button type="button" class="nogps-place" data-fl-action="place-nogps" data-entry-id="' + esc(it.id) + '" data-kind="' + it.kind + '"><span class="fl-ic fl-pin" aria-hidden="true"></span> Place</button>'
+      + '</div>';
+  });
+  wrap.innerHTML = h;
+}
+
+function openNoGpsRecovery() {
+  renderNoGpsList();
+  var ov = document.getElementById('nogps-ov');
+  if (ov) ov.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeNoGpsRecovery() {
+  var ov = document.getElementById('nogps-ov');
+  if (ov) ov.classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+/** Place one un-pinned entry: the pin-drop overlay (z-index 600) opens ABOVE the
+ *  recovery sheet (z-index 300), so on cancel the sheet is simply revealed again
+ *  and on confirm we save + re-render it in place. */
+function placeNoGpsEntry(id, kind) {
+  openPinDrop({
+    onConfirm: function(lat, lng, name) { saveNoGpsLocation(id, kind, lat, lng, name); }
+  });
+}
+
+async function saveNoGpsLocation(id, kind, lat, lng, name) {
+  if (!sb || !currentUser) { showToast('⚠️ Sign in to save a location'); return; }
+  if (!navigator.onLine)   { showToast('📶 Offline — placing a pin needs a connection'); return; }
+  var table = (kind === 'sight') ? 'sightings' : 'cull_entries';
+  var patch = { lat: round6(lat), lng: round6(lng) }; // finding G: one rounder
+  // Culls carry a human location_name; the sightings table has no such column.
+  if (kind !== 'sight') patch.location_name = name || null;
+  try {
+    var res = await sb.from(table).update(patch).eq('id', id).eq('user_id', currentUser.id);
+    if (res.error) throw res.error;
+  } catch (e) {
+    flDebugLog('error', 'No-GPS location save failed', e);
+    showToast('⚠️ Could not save the location');
+    return;
+  }
+  // Patch the in-memory row so the map + list update without a full refetch.
+  var arr = (kind === 'sight') ? allSightings : allEntries;
+  var i = (arr || []).findIndex(function(x){ return String(x.id) === String(id); });
+  if (i !== -1) {
+    arr[i].lat = patch.lat; arr[i].lng = patch.lng;
+    if (kind !== 'sight') arr[i].location_name = patch.location_name;
+  }
+  showToast('📍 Location saved');
+  // confirmPinDrop already closed the picker (and reset body overflow); the
+  // recovery sheet is still open beneath, so re-lock scroll and refresh both.
+  document.body.style.overflow = 'hidden';
+  renderCullMapPins();
+  renderNoGpsList();
+}
+
 async function saveEntry() {
+  if (formIsSighting) { await saveSightingEntry(); return; }
   if (!sb)          { showToast('⚠️ Supabase not configured'); return; }
   if (!formIsBlank) {
     if (!formSpecies) { showToast('⚠️ Please select a species'); return; }
-    if (!formSex)     { showToast('⚠️ Please select sex'); return; }
+    // Sex is only required for sexed species (all deer + fox); the other
+    // Pest Control species are count-style records (PEST-CODE-MAP §2).
+    if (speciesIsSexed(formSpecies) && !formSex) { showToast('⚠️ Please select sex'); return; }
   }
   var btn = document.getElementById('save-btn');
   btn.disabled = true;
@@ -3766,15 +7680,16 @@ async function saveEntry() {
     if (formIsBlank) {
       offlinePayload = {
         is_blank: true,
+        quantity: 1,
         species: null,
         sex: null,
         date: dateVal,
-        time: document.getElementById('f-time').value,
+        time: (document.getElementById('f-time').value || '').trim() || null,
         outing_start_time: getOutingTimeValue('f-outing-start'),
         outing_end_time: getOutingTimeValue('f-outing-end'),
         location_name: document.getElementById('f-location').value,
-        lat: formPinLat || lastGpsLat || null,
-        lng: formPinLng || lastGpsLng || null,
+        lat: pickCoord(formPinLat, lastGpsLat),
+        lng: pickCoord(formPinLng, lastGpsLng),
         weight_kg: null,
         calibre: null,
         distance_m: null,
@@ -3795,14 +7710,16 @@ async function saveEntry() {
       offlinePayload = {
         is_blank: false,
         species: formSpecies,
-        sex: formSex,
+        quantity: speciesUsesQuantity(formSpecies) ? formQuantity : 1,
+        // Sex-less pests store NULL (same convention as blank-day rows).
+        sex: speciesIsSexed(formSpecies) ? formSex : null,
         date: dateVal,
-        time: document.getElementById('f-time').value,
+        time: (document.getElementById('f-time').value || '').trim() || null,
         outing_start_time: getOutingTimeValue('f-outing-start'),
         outing_end_time: getOutingTimeValue('f-outing-end'),
         location_name: document.getElementById('f-location').value,
-        lat: formPinLat || lastGpsLat || null,
-        lng: formPinLng || lastGpsLng || null,
+        lat: pickCoord(formPinLat, lastGpsLat),
+        lng: pickCoord(formPinLng, lastGpsLng),
         weight_kg: wtVal,
         calibre: getCalibreValue(),
         distance_m: distVal,
@@ -3835,8 +7752,14 @@ async function saveEntry() {
         }
       }
     }
-    await queueOfflineEntry(offlinePayload);
-    formDirty = false;
+    var _qok = await queueOfflineEntry(offlinePayload);
+    if (_qok !== false) {
+      formDirty = false;
+      // Round 12: log the prediction↔outcome pair at queue time too — the
+      // cached forecast is the freshest this offline hillside will get.
+      flLogScoreSnapshot(flSnapshotInfoFromEntry(offlinePayload));
+      flStandHistAll.rows = null; // round 22: history cache stale
+    }
     btn.disabled = false;
     btn.innerHTML = diaryCloudSaveInner(diaryFormSaveButtonLabel());
     return;
@@ -3848,15 +7771,19 @@ async function saveEntry() {
       payload = {
         user_id:         currentUser.id,
         is_blank:        true,
+        // Reset the bag count: converting a pest bag (quantity>1) to a blank day
+        // must clear quantity or the cull_entries_quantity_species_check CHECK
+        // (species NULL + quantity>1) rejects the UPDATE with a raw DB error.
+        quantity:        1,
         species:         null,
         sex:             null,
         date:            dateVal,
-        time:            document.getElementById('f-time').value,
+        time:            (document.getElementById('f-time').value || '').trim() || null,
         outing_start_time: getOutingTimeValue('f-outing-start'),
         outing_end_time:   getOutingTimeValue('f-outing-end'),
         location_name:   document.getElementById('f-location').value,
-        lat:             formPinLat || lastGpsLat || null,
-        lng:             formPinLng || lastGpsLng || null,
+        lat:             pickCoord(formPinLat, lastGpsLat),
+        lng:             pickCoord(formPinLng, lastGpsLng),
         weight_kg:       null,
         calibre:         null,
         distance_m:      null,
@@ -3877,14 +7804,16 @@ async function saveEntry() {
         user_id:         currentUser.id,
         is_blank:        false,
         species:         formSpecies,
-        sex:             formSex,
+        quantity:        speciesUsesQuantity(formSpecies) ? formQuantity : 1,
+        // Sex-less pests store NULL (same convention as blank-day rows).
+        sex:             speciesIsSexed(formSpecies) ? formSex : null,
         date:            dateVal,
-        time:            document.getElementById('f-time').value,
+        time:            (document.getElementById('f-time').value || '').trim() || null,
         outing_start_time: getOutingTimeValue('f-outing-start'),
         outing_end_time:   getOutingTimeValue('f-outing-end'),
         location_name:   document.getElementById('f-location').value,
-        lat:             formPinLat || lastGpsLat || null,
-        lng:             formPinLng || lastGpsLng || null,
+        lat:             pickCoord(formPinLat, lastGpsLat),
+        lng:             pickCoord(formPinLng, lastGpsLng),
         weight_kg:       wtVal,
         calibre:         getCalibreValue(),
         distance_m:      distVal,
@@ -3908,7 +7837,7 @@ async function saveEntry() {
           });
           if (upload.error) {
             flDebugLog('error', 'Photo upload error', upload.error);
-            showToast('⚠️ Photo upload failed: ' + (upload.error.message || 'Check storage policies'));
+            showToast('⚠️ Photo upload failed: ' + friendlyErr(upload.error, 'the photo could not be uploaded — please try again'));
           } else {
             payload.photo_url = path;
             showToast('📷 Photo uploaded');
@@ -3920,8 +7849,15 @@ async function saveEntry() {
       } else if (photoPreviewUrl) {
         var keepPath = cullPhotoStoragePath(photoPreviewUrl);
         if (keepPath) payload.photo_url = keepPath;
-      } else if (!photoPreviewUrl) {
+      } else if (photoExplicitlyRemoved) {
+        // User tapped remove: null the column (the storage object is deleted
+        // below because payload.photo_url !== editingOriginalPhotoPath).
         payload.photo_url = null;
+      } else if (editingId && editingOriginalPhotoPath) {
+        // Slot is empty only because the signed-URL fetch failed at edit-open,
+        // NOT because the user removed the photo — keep the stored photo so a
+        // routine edit (e.g. fixing a weight) doesn't null + delete it (M3).
+        payload.photo_url = editingOriginalPhotoPath;
       }
     }
 
@@ -3940,6 +7876,13 @@ async function saveEntry() {
     }
     if (result.error) throw result.error;
 
+    // Round 12: pair this outcome with the model's prediction (creates only;
+    // silent no-op when no stand/cached forecast covers it).
+    if (!editingId) flLogScoreSnapshot(flSnapshotInfoFromEntry(payload));
+    // Round 22: the all-seasons history cache is now stale — refetch on next
+    // stand-detail open so the record card includes this entry.
+    flStandHistAll.rows = null;
+
     // Keep the season-dropdown cache fresh so a backdated entry grows the
     // dropdown without a full re-probe on the next loadEntries() call.
     if (payload && payload.date) extendSeasonCacheForDate(payload.date);
@@ -3952,7 +7895,12 @@ async function saveEntry() {
     }
     editingOriginalPhotoPath = null;
 
-    showToast(editingId ? '✅ Entry updated' : '✅ Entry saved');
+    if (editingId) {
+      showToast('✅ Entry updated');
+    } else {
+      // BB-2: new captures get an Undo on the success toast; edits don't (nothing to undo).
+      showUndoToast('✅ Entry saved', (result.data && result.data[0] && result.data[0].id) || null);
+    }
     flHapticSuccess();
     formDirty = false;
     // Save new ground name if not already in list
@@ -3979,7 +7927,7 @@ async function saveEntry() {
       }
     }
   } catch(e) {
-    showToast('⚠️ Save failed: ' + (e.message || 'Unknown error'));
+    showToast('⚠️ Save failed: ' + friendlyErr(e, 'Unknown error'));
     flHapticError();
   }
   btn.disabled = false;
@@ -4003,12 +7951,12 @@ function deleteEntry(id) {
       if (isBlankDayEntry(e)) {
         parts.push('<span class="del-sp">Blank day</span>');
         if (e.ground) parts.push(esc(e.ground));
-        if (e.date) parts.push(esc(fmtDate(e.date)));
+        if (e.date) parts.push(esc(fmtDateYear(e.date)));
       } else {
         if (e.species) parts.push('<span class="del-sp">' + esc(e.species) + '</span>');
         var sl = sexLabel(e.sex, e.species);
         if (sl) parts.push(esc(sl));
-        if (e.date) parts.push(esc(fmtDate(e.date)));
+        if (e.date) parts.push(esc(fmtDateYear(e.date)));
         if (e.location_name) parts.push(esc(e.location_name));
       }
       summary.innerHTML = parts.join(' · ');
@@ -4048,6 +7996,7 @@ async function confirmDeleteEntry() {
       // One LIMIT-1 query is cheap; a stale dropdown reading from months of
       // a now-empty season is not.
       invalidateSeasonCache();
+      flStandHistAll.rows = null; // round 22: stand history cache stale too
       showToast('🗑 Entry deleted');
       closeDeleteEntryModal();
       await loadEntries();
@@ -4080,10 +8029,12 @@ function initStatsMoreSection() {
     btn.setAttribute('aria-label', opened ? 'Hide charts and breakdowns' : 'Show charts and breakdowns');
     body.hidden = !opened;
     var cta = document.getElementById('stats-more-cta');
-    if (cta) cta.textContent = opened ? 'Tap to hide' : 'Tap to show';
-    try {
-      localStorage.setItem('fl-stats-more', opened ? '1' : '0');
-    } catch (e) { /* private mode */ }
+    // Section 6: was "Tap to hide"/"Tap to show". The app installs as a PWA on
+    // desktop, where there is nothing to tap; the caret and the button already
+    // carry the affordance, so the label only needs to name the action.
+    if (cta) cta.textContent = opened ? 'Hide' : 'Show';
+    // ST2: no localStorage write — the stored value was never read back
+    // (load always opens for quicker scanning), so persisting it was dead.
   }
   apply(true); // Always default open on load for quicker stats scanning
   btn.addEventListener('click', function() {
@@ -4105,7 +8056,7 @@ function initPlanCollapse() {
       btn.setAttribute('aria-expanded', opened ? 'true' : 'false');
       btn.setAttribute('aria-label', (opened ? 'Hide ' : 'Show ') + a11yLabel);
       var cta = document.getElementById(ctaId);
-      if (cta) cta.textContent = opened ? 'Tap to hide' : 'Tap to show';
+      if (cta) cta.textContent = opened ? 'Hide' : 'Show';   // see initStatsMoreSection
       try {
         localStorage.setItem(storageKey, opened ? '1' : '0');
       } catch (e) { /* private mode */ }
@@ -4154,7 +8105,10 @@ function computeSeasonTargetKpi(totalActual) {
      */
     paceState: null,
     paceDelta: 0,
-    paceDaysToStart: 0
+    paceDaysToStart: 0,
+    // Design pass: fraction (0..1) through the season = where an even-paced
+    // trajectory would sit; used to position the "on pace" marker on the hero bar.
+    paceFrac: null
   };
   if (currentSeason === '__all__') return out;
   var effective = cullTargets || {};
@@ -4188,6 +8142,7 @@ function computeSeasonTargetKpi(totalActual) {
         if (now < startMs) {
           out.paceState = 'pre';
           out.paceDaysToStart = Math.max(1, Math.ceil((startMs - now) / 86400000));
+          out.paceFrac = 0;
         } else if (now > endMs) {
           if (totalActual >= out.targetTotal) {
             out.paceState = totalActual > out.targetTotal ? 'final-over' : 'final-met';
@@ -4196,10 +8151,12 @@ function computeSeasonTargetKpi(totalActual) {
             out.paceState = 'final-short';
             out.paceDelta = out.targetTotal - totalActual;
           }
+          out.paceFrac = 1;
         } else {
           var progress = (now - startMs) / (endMs - startMs);
           if (progress < 0) progress = 0;
           if (progress > 1) progress = 1;
+          out.paceFrac = progress;
           var expected = out.targetTotal * progress;
           var delta = totalActual - expected;
           var rounded = Math.round(delta);
@@ -4217,48 +8174,141 @@ function computeSeasonTargetKpi(totalActual) {
 }
 
 /**
- * Format the "Season target" KPI subtext including the pace indicator.
- * Kept separate from computeSeasonTargetKpi so buildStats() and refreshSeasonTargetKpi()
- * share one formatter and stay in sync.
- */
-function formatSeasonTargetSub(totalActual, calc) {
-  if (calc.targetTotal <= 0) return 'Set targets to track progress';
-  var base = totalActual + '/' + calc.targetTotal + ' target' + (calc.targetTotal === 1 ? '' : 's');
-  var pace = '';
-  switch (calc.paceState) {
-    case 'pre':
-      pace = ' · opens in ' + calc.paceDaysToStart + ' day' + (calc.paceDaysToStart === 1 ? '' : 's');
-      break;
-    case 'on':     pace = ' · on pace'; break;
-    case 'ahead':  pace = ' · +' + calc.paceDelta + ' ahead of pace'; break;
-    case 'behind': pace = ' · ' + calc.paceDelta + ' behind pace'; break;
-    case 'final-met':   pace = ' · target met'; break;
-    case 'final-over':  pace = ' · +' + calc.paceDelta + ' over target'; break;
-    case 'final-short': pace = ' · ' + calc.paceDelta + ' short of target'; break;
-    default:
-      // No pace (e.g. clock not ready): fall back to the classic "N left / +N over".
-      pace = (calc.targetOver > 0 ? ' · +' + calc.targetOver + ' over' : ' · ' + calc.targetRemaining + ' left');
-  }
-  return base + pace;
-}
-
-/**
  * Re-paint the Season target KPI card. Called after `loadTargets` / `loadGroundTargets`
  * resolve, since `buildStats` writes the initial KPI synchronously before targets load.
  */
 function refreshSeasonTargetKpi() {
-  // Mirror whatever count is currently displayed in the Total cull KPI (honours any
-  // active species chip filter) so the two cards stay in agreement.
+  // Mirror the cull-ROW count backing the Total cull KPI (honours any active species
+  // chip filter) — NOT the displayed headline. Since PQ2b the headline counts ANIMALS
+  // (pest-bag quantity included), but the Season target is deer-based, so feeding
+  // animals here would let a 200-bird pigeon bag inflate the target %. renderStatsTabBody
+  // stashes the row count on st-total's data-rows attribute for exactly this read.
   var totalEl = document.getElementById('st-total');
-  var total = totalEl ? (parseInt(totalEl.textContent, 10) || 0) : (allEntries ? allEntries.length : 0);
+  var rowsAttr = totalEl ? totalEl.getAttribute('data-rows') : null;
+  var total = rowsAttr != null ? (parseInt(rowsAttr, 10) || 0) : (allEntries ? allEntries.length : 0);
   var calc = computeSeasonTargetKpi(total);
-  var tEl = document.getElementById('st-target');
-  var tSub = document.getElementById('st-target-sub');
-  if (tEl) tEl.textContent = calc.targetPct == null ? '–' : (calc.targetPct + '%');
-  if (tSub) tSub.textContent = formatSeasonTargetSub(total, calc);
+  // Finding 34: the "legacy KPI cell" writes that used to sit here were guarded
+  // no-ops against ids diary.html no longer has. Removed rather than resurrected -
+  // the hero re-paint below is the only Season-target display there is.
+  // Adaptive hero: targets load async, so re-paint it once they resolve — this is
+  // what flips a season from the species-split view to the pace-bar view.
+  if (flLastHeroData) { flLastHeroData.targetCalc = calc; flLastHeroData.targetRows = total; renderSeasonHero(flLastHeroData); }
 }
 
-function buildStats(speciesFilter) {
+// ── Adaptive Stats season hero (design pass) ─────────────────────────────────
+// Replaces the old six equal KPI boxes with one headline + one adaptive visual:
+//   • target set   → pace bar (progress fill + an "on pace" marker)
+//   • no target    → species split (segments coloured by SP_COLORS) + legend
+//   • nothing yet  → an empty track
+// Painted from renderStatsTabBody (initial) and re-painted by refreshSeasonTargetKpi
+// once async targets resolve. `#st-total` is the shared big-number element.
+var flLastHeroData = null;
+
+function flHeroPaceLabel(calc) {
+  switch (calc.paceState) {
+    case 'pre':         return { txt: 'opens in ' + calc.paceDaysToStart + ' day' + (calc.paceDaysToStart === 1 ? '' : 's'), cls: 'shc-mute' };
+    case 'on':          return { txt: 'on pace', cls: 'shc-ok' };
+    case 'ahead':       return { txt: '+' + calc.paceDelta + ' ahead of pace', cls: 'shc-ok' };
+    case 'behind':      return { txt: calc.paceDelta + ' behind pace', cls: 'shc-warn' };
+    case 'final-met':   return { txt: 'target met', cls: 'shc-ok' };
+    case 'final-over':  return { txt: '+' + calc.paceDelta + ' over target', cls: 'shc-ok' };
+    case 'final-short': return { txt: calc.paceDelta + ' short of target', cls: 'shc-warn' };
+    default:            return null;
+  }
+}
+
+function renderSeasonHero(d) {
+  if (!d) return;
+  flLastHeroData = d;
+  var labEl = document.getElementById('sh-lab');
+  var nEl   = document.getElementById('st-total'); // shared: also carries data-rows
+  var ofEl  = document.getElementById('sh-of');
+  var vizEl = document.getElementById('sh-viz');
+  var capEl = document.getElementById('sh-cap');
+  var setEl = document.getElementById('sh-settarget');
+  var noteEl = document.getElementById('sh-note');
+  if (!vizEl || !nEl) return; // legacy cached HTML — the null-safe stats writes already filled the old cells
+  var calc = d.targetCalc || {};
+  var hasTarget = (calc.targetTotal || 0) > 0;
+  // Season-target numerator is DEER-ONLY (matches the Plan card): fox + pest cull
+  // rows must not count toward a deer target. d.targetRows carries that count;
+  // d.total (all cull rows) still drives the no-target "This season" split below.
+  var rows = (hasTarget && d.targetRows != null) ? d.targetRows : (d.total || 0);
+  // A3: with a target set the hero counts DEER CULL ROWS while every chart below
+  // counts ANIMALS, so the page could read "6 / 21" over a species chart totalling
+  // 10. Two correct numbers, no stated relationship - which reads as one of them
+  // being wrong. Default to silence and let the target branch speak if they differ.
+  if (noteEl) { noteEl.textContent = ''; noteEl.style.display = 'none'; }
+
+  if (hasTarget) {
+    if (labEl) labEl.textContent = 'Season progress';
+    nEl.textContent = String(rows);
+    if (ofEl) { ofEl.textContent = ' / ' + calc.targetTotal; ofEl.style.display = ''; }
+    if (setEl) setEl.style.display = 'none';
+    var pct = Math.max(0, Math.min(100, calc.targetPct || 0));
+    var markHtml = '';
+    if (calc.paceFrac != null) {
+      var mp = Math.max(0, Math.min(100, Math.round(calc.paceFrac * 100)));
+      // Neutral marker: it's the even-pace REFERENCE point for this stage of the
+      // season, not a status. Labelling it "on pace" read as a claim and clashed
+      // with the status text (e.g. marker "on pace" while the caption says "15
+      // behind pace"). "pace" + a tooltip reads as a reference line; the on/behind/
+      // ahead status lives in the caption on the right.
+      markHtml = '<div class="shp-mark" style="left:' + mp + '%" title="Even-pace mark for this point in the season"><span>pace</span></div>';
+    }
+    vizEl.className = 'sh-viz';
+    vizEl.innerHTML = '<div class="shp-track"><div class="shp-fill" style="width:' + pct + '%"></div>' + markHtml + '</div>';
+    var right = flHeroPaceLabel(calc);
+    if (capEl) capEl.innerHTML = '<span class="shc-l">' + pct + '% of target</span>'
+      + (right ? '<span class="shc-r ' + right.cls + '">' + esc(right.txt) + '</span>' : '');
+    var heroAnimals = (d.animals != null) ? d.animals : d.total;
+    if (noteEl && heroAnimals != null && heroAnimals !== rows) {
+      noteEl.textContent = 'Target counts deer culls only \u2014 ' + heroAnimals + ' animal'
+        + (heroAnimals === 1 ? '' : 's') + ' logged this season in total';
+      noteEl.style.display = '';
+    }
+  } else if (rows === 0) {
+    if (labEl) labEl.textContent = 'This season';
+    nEl.textContent = '0';
+    if (ofEl) ofEl.style.display = 'none';
+    vizEl.className = 'sh-viz';
+    vizEl.innerHTML = '<div class="shp-track"></div>';
+    if (capEl) capEl.innerHTML = '<span class="shc-quiet">Nothing logged yet — your first cull will show here.</span>';
+    if (setEl) setEl.style.display = '';
+  } else {
+    if (labEl) labEl.textContent = 'This season';
+    nEl.textContent = String(d.animals != null ? d.animals : rows);
+    if (ofEl) ofEl.style.display = 'none';
+    var counts = d.speciesCounts || {};
+    var species = Object.keys(counts).filter(function(s){ return counts[s] > 0; })
+      .sort(function(a, b){ return counts[b] - counts[a] || a.localeCompare(b); });
+    var totalC = species.reduce(function(s, k){ return s + counts[k]; }, 0) || 1;
+    var segs = '', leg = '';
+    species.forEach(function(s){
+      var clr = SP_COLORS[s] || '#5a7a30';
+      var w = counts[s] * 100 / totalC;
+      segs += '<div class="shp-seg" style="width:' + w + '%;background:' + clr + '"></div>';
+      leg += '<span class="shc-it"><span class="shc-d" style="background:' + clr + '"></span>' + esc(s) + ' <span class="shc-n">' + counts[s] + '</span></span>';
+    });
+    vizEl.className = 'sh-viz';
+    vizEl.innerHTML = '<div class="shp-track shp-split">' + segs + '</div>';
+    if (capEl) capEl.innerHTML = '<div class="shc-leg">' + leg + '</div>';
+    if (setEl) setEl.style.display = '';
+  }
+
+  // Keep the collapsed Season Plan card's subtitle live (render order between
+  // the hero and renderPlanCard isn't guaranteed, so both sides write it).
+  // Current season only — past/next seasons keep their contextual labels.
+  var planSubEl = document.getElementById('plan-sub');
+  if (planSubEl && typeof isCurrentSeason === 'function' && isCurrentSeason(currentSeason)) {
+    var liveSub = flPlanSubSummary();
+    if (liveSub) planSubEl.textContent = liveSub;
+  }
+}
+
+// ST2: the speciesFilter param retired — map chips repaint pins only (never
+// rebuild stats) since the chip-scope change, so no caller ever passed one.
+function buildStats() {
   // Schedule map init FIRST so the map/satellite/fullscreen controls always get wired,
   // even if a later DOM write in this function throws (e.g. transient HTML/JS cache skew
   // after a deploy). Previously this setTimeout sat at the end of buildStats and any
@@ -4267,8 +8317,8 @@ function buildStats(speciesFilter) {
     try {
       initCullMap();
       renderCullMapPins();
-      var _sub = document.getElementById('cullmap-sub');
-      if (_sub) _sub.textContent = 'Location history · ' + currentSeason;
+      // ST1: #cullmap-sub is static ("chips filter the map only") — the season
+      // already has one home, the header select. No overwrite.
 
       // First open of Stats: Leaflet often measures #cull-map-div before the stats flex
       // layout has a stable size — tiles/clusters can render blank until invalidateSize().
@@ -4298,8 +8348,10 @@ function buildStats(speciesFilter) {
   if (currentSeason === '__all__') {
     var planCard = document.getElementById('plan-card');
     if (planCard) planCard.style.display = 'none';
+    // ST1: the select already reads "All seasons" — an identical label under
+    // the title is the same fact twice. Empty.
     var _ssl0 = document.getElementById('stats-season-lbl');
-    if (_ssl0) _ssl0.textContent = 'All Seasons';
+    if (_ssl0) _ssl0.textContent = '';
   } else {
     var planCard2 = document.getElementById('plan-card');
     if (planCard2) planCard2.style.display = '';
@@ -4314,32 +8366,51 @@ function buildStats(speciesFilter) {
     }).then(function() {
       void updateSyndicateExportVisibility();
     });
+    // ST1: the label keeps only what the select can't say — the month range
+    // (which moves with the user's season-start setting). The years were the
+    // select's own text repeated.
     var d = seasonDates(currentSeason);
-    var parts = currentSeason.split('-');
-    var y1 = parts[0];
-    var y2 = parts[1].length === 2 ? '20' + parts[1] : parts[1];
-    var startDate = new Date(d.start);
-    var endDate = new Date(d.end);
     var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    var seasonDateStr = months[startDate.getMonth()] + ' ' + startDate.getFullYear()
-      + ' – ' + months[endDate.getMonth()] + ' ' + endDate.getFullYear();
+    // Parse the YYYY-MM-DD parts directly — new Date('YYYY-MM-DD') is UTC midnight,
+    // so local getters shift it to the previous month for users west of UTC.
+    var _sp = String(d.start).split('-'), _ep = String(d.end).split('-');
+    var seasonDateStr = months[(parseInt(_sp[1], 10) || 1) - 1] + ' ' + _sp[0]
+      + ' – ' + months[(parseInt(_ep[1], 10) || 1) - 1] + ' ' + _ep[0];
     var _ssl1 = document.getElementById('stats-season-lbl');
-    if (_ssl1) _ssl1.textContent = y1 + '–' + y2 + ' · ' + seasonDateStr;
+    if (_ssl1) _ssl1.textContent = seasonDateStr;
   }
 
   // Pure paint half — hand off to modules/stats.mjs. Charts and cull KPIs use
   // cull rows only; outing totals are passed separately.
-  var rawForStats = speciesFilter ? allEntries.filter(function(e){ return e.species === speciesFilter; }) : allEntries;
+  var rawForStats = allEntries;
   var cullForStats = rawForStats.filter(function(e) { return !isBlankDayEntry(e); });
   var blankOutingCount = rawForStats.filter(isBlankDayEntry).length;
+  // Deer-only cull-row count for the Season-target KPI numerator (matches the Plan
+  // card, which iterates PLAN_SPECIES): fox + pest rows have no deer target and must
+  // not inflate the "N / target" progress. stats.mjs keeps `total` (all cull rows)
+  // for the "across N entries" sub and the no-target species split.
+  var _planDeerNames = PLAN_SPECIES.map(function(sp){ return sp.name; });
+  var deerTargetRows = cullForStats.filter(function(e){ return e && e.sex && _planDeerNames.indexOf(e.species) !== -1; }).length;
+  // Weighable rows for the "missing weight" card = deer only (all pests are
+  // weight:false), so a pest bag can't read as an unweighed carcass.
+  var weighableRows = cullForStats.filter(function(e){ return e && !isPestSpecies(e.species); }).length;
   renderStatsTabBody(cullForStats, {
     currentSeason:          currentSeason,
     computeSeasonTargetKpi: computeSeasonTargetKpi,
-    formatSeasonTargetSub:  formatSeasonTargetSub,
+    targetRows:             deerTargetRows,
+    weighableRows:          weighableRows,
     hasValue:               hasValue,
     statsChartEmpty:        statsChartEmpty,
     outingTotal:            rawForStats.length,
     outingBlank:            blankOutingCount,
+    // G3: real boundary areas → cull density per 100 ha on the ground card.
+    groundAreasHa:          groundAreasHaFrom(groundFeaturesNow()),
+    // Stats is personal-only: trends bucketing/labels + monthly column order
+    // follow the USER's season start month (season-year feature, step 5).
+    seasonStartMonth:       personalSeasonStartMonth(),
+    // Design pass: diary.js owns the adaptive season-hero paint; stats.mjs hands
+    // it the numbers (see the call after the KPI writes).
+    renderSeasonHero:       renderSeasonHero,
   });
 
   statsNeedsFullRebuild = false;
@@ -4369,6 +8440,74 @@ function checkDeleteInput() {
   btn.disabled = !ready;
 }
 
+// ── Photo sweeps for account deletion ──────────────────────────────────────
+// PostgREST answers a select with at most the server's max-rows setting and
+// says nothing about having done so: no error, no truncation flag, just a short
+// array. The sweeps below read the storage path of every photo the account
+// owns, and step 3 of deleteAccount() then deletes the rows those paths came
+// from. A silently truncated page therefore does not orphan a photo for this
+// session, it orphans it FOREVER — after step 3 there is nothing left to
+// enumerate from, and privacy.html promises those photos go. So page it.
+var DEL_SWEEP_PAGE = 500;
+
+// remove() posts every path in one request body, and a sweep that pages can now
+// legitimately return thousands of them.
+var DEL_REMOVE_CHUNK = 100;
+
+// Reads `column` for every row this user owns, page by page, mapping each row
+// through `toPaths` (which returns an array, because one stand row holds
+// several). Returns {paths, error}. The error is handed back rather than
+// swallowed, because the caller is about to do something it cannot undo.
+async function deleteAccountSweep(table, column, toPaths) {
+  var paths = [], from = 0, guard = 0;
+  for (;;) {
+    // count:'exact' is what makes this loop provable rather than hopeful. A
+    // short page is ambiguous on its own — it means either the end of the data
+    // or the server's max-rows ceiling, and guessing wrong is the original bug
+    // moved one level down. The row count for the filter comes back in
+    // Content-Range on every page, so there is nothing to guess.
+    var res = await sb.from(table)
+      .select(column, { count: 'exact' })
+      .eq('user_id', currentUser.id)
+      .not(column, 'is', null)
+      .range(from, from + DEL_SWEEP_PAGE - 1);
+    if (res.error) {
+      // A range starting past the last row comes back as 416 / PGRST103 rather
+      // than as an empty page. Once at least one page is in hand, that is the
+      // end of the list and not a failure.
+      var msg = String((res.error && (res.error.code || res.error.message)) || '');
+      if (from > 0 && /PGRST103|range not satisfiable/i.test(msg)) return { paths: paths, error: null };
+      return { paths: paths, error: res.error };
+    }
+    var rows = res.data || [];
+    for (var i = 0; i < rows.length; i++) {
+      var got = toPaths(rows[i]) || [];
+      // A path is a string or it is nothing: cullPhotoStoragePath() returns null
+      // on a URL it cannot parse, and a text[] column can arrive holding anything.
+      for (var j = 0; j < got.length; j++) if (typeof got[j] === 'string' && got[j]) paths.push(got[j]);
+    }
+    if (!rows.length) return { paths: paths, error: null };
+    from += rows.length;
+    // With a count, stop on the arithmetic. Without one — an older PostgREST,
+    // or a proxy that drops the header — keep going until a page comes back
+    // empty, which costs one extra round trip and never truncates.
+    if (typeof res.count === 'number' && from >= res.count) return { paths: paths, error: null };
+    if (++guard > 400) return { paths: paths, error: { message: 'photo sweep did not terminate' } };
+  }
+}
+
+// Removes in batches. A storage failure stays non-fatal and is reported to the
+// console, exactly as it was before paging: it must not trap someone inside an
+// account they have asked to delete.
+async function deleteAccountRemove(paths) {
+  for (var i = 0; i < paths.length; i += DEL_REMOVE_CHUNK) {
+    var res = await sb.storage.from('cull-photos').remove(paths.slice(i, i + DEL_REMOVE_CHUNK));
+    if (res && res.error && typeof console !== 'undefined' && console.warn) {
+      console.warn('cull-photos remove:', res.error.message || res.error);
+    }
+  }
+}
+
 async function deleteAccount() {
   if (!sb || !currentUser) return;
   var btn = document.getElementById('delete-confirm-btn');
@@ -4376,28 +8515,52 @@ async function deleteAccount() {
   btn.disabled = true;
 
   try {
-    // 1. Delete all photos from storage
+    // 1. Delete all photos from storage.
+    // Three tables hold photos and all three land in the same 'cull-photos'
+    // bucket: cull_entries and sightings as public URLs (hence
+    // cullPhotoStoragePath), stands (round 32) as bucket-relative paths in a
+    // text[] column. Neither of the first two sweeps reaches the third, and the
+    // account cascade drops all three sets of rows — so anything missed here
+    // orphans in storage and makes privacy.html's "stands, their photos"
+    // erasure promise untrue (audit P1 / M6).
     showToast('🗑 Deleting photos…');
-    var photos = await sb.from('cull_entries')
-      .select('photo_url')
-      .eq('user_id', currentUser.id)
-      .not('photo_url', 'is', null);
-
-    if (photos.data && photos.data.length > 0) {
-      var paths = photos.data
-        .filter(function(e) { return e.photo_url; })
-        .map(function(e) { return cullPhotoStoragePath(e.photo_url); })
-        .filter(Boolean);
-      if (paths.length > 0) {
-        await sb.storage.from('cull-photos').remove(paths);
+    var DEL_SWEEPS = [
+      ['cull_entries', 'photo_url', function(r) { return [cullPhotoStoragePath(r.photo_url)]; }],
+      ['sightings',    'photo_url', function(r) { return [cullPhotoStoragePath(r.photo_url)]; }],
+      ['stands',       'photos',    function(r) { return Array.isArray(r.photos) ? r.photos : []; }]
+    ];
+    var photoPaths = [];
+    for (var swi = 0; swi < DEL_SWEEPS.length; swi++) {
+      var sw = await deleteAccountSweep(DEL_SWEEPS[swi][0], DEL_SWEEPS[swi][1], DEL_SWEEPS[swi][2]);
+      if (sw.error) {
+        // Abort before anything irreversible happens. Enumeration is the one
+        // step that cannot be redone: step 3 deletes the rows these paths live
+        // on, so a read that failed here would orphan every photo permanently
+        // and quietly break the erasure promise. Same call as the syndicate-
+        // tallies abort below — let the user retry rather than swallow it.
+        if (typeof console !== 'undefined' && console.warn) console.warn('deleteAccount sweep ' + DEL_SWEEPS[swi][0] + ':', sw.error.message || sw.error);
+        showToast('⚠️ Could not list your photos — try again');
+        btn.textContent = 'Delete everything';
+        btn.disabled = false;
+        return;
       }
+      photoPaths = photoPaths.concat(sw.paths);
     }
+    if (photoPaths.length > 0) await deleteAccountRemove(photoPaths);
 
     // 2. Anonymised syndicate tallies (species / sex / date only) — must run before cull_entries delete
     showToast('🗑 Saving syndicate totals…');
     var retainRes = await sb.rpc('retain_syndicate_anonymous_culls');
-    if (retainRes.error && typeof console !== 'undefined' && console.warn) {
-      console.warn('retain_syndicate_anonymous_culls:', retainRes.error.message || retainRes.error);
+    if (retainRes.error) {
+      // Abort: this RPC is the only thing preserving the user's contribution to
+      // syndicate season tallies. Proceeding would delete the source rows and
+      // permanently lose those totals for the whole syndicate (M7) — let the
+      // user retry instead of silently swallowing the failure.
+      if (typeof console !== 'undefined' && console.warn) console.warn('retain_syndicate_anonymous_culls:', retainRes.error.message || retainRes.error);
+      showToast('⚠️ Could not save syndicate totals — try again');
+      btn.textContent = 'Delete everything';
+      btn.disabled = false;
+      return;
     }
 
     // 3. Delete all entries
@@ -4410,23 +8573,28 @@ async function deleteAccount() {
     var rpcResult = await sb.rpc('delete_user');
     if (rpcResult.error) {
       // RPC may not exist — sign out and inform user to contact support
+      await clearOfflineLocalData();
       await sb.auth.signOut();
       destroyCullMapLeaflet();
+      closeSettingsSheet();
       showToast('⚠️ Entries deleted. Contact support to remove auth account.');
       setTimeout(function() { go('v-auth'); }, 3000);
       return;
     }
 
-    // 5. Sign out and redirect
+    // 5. Sign out and redirect (clear this device's offline queue + photo blobs
+    // too, so nothing from the deleted account survives locally — M6).
+    await clearOfflineLocalData();
     await sb.auth.signOut();
     destroyCullMapLeaflet();
     closeDeleteModal();
+    closeSettingsSheet();
     showToast('✅ Account deleted. Goodbye.');
     setTimeout(function() { go('v-auth'); }, 2000);
 
   } catch(e) {
     // Fallback — sign out even if delete fails
-    showToast('⚠️ ' + (e.message || 'Could not fully delete. Contact support.'));
+    showToast('⚠️ ' + friendlyErr(e, 'Could not fully delete. Contact support.'));
     btn.textContent = 'Delete everything';
     btn.disabled = false;
   }
@@ -4485,7 +8653,7 @@ async function openExportModal(format) {
       // for DMG funding reports). `is_blank` is needed so the "Is blank day"
       // CSV column reflects reality — without it every row read "no".
       var r = await sb.from('cull_entries')
-        .select('date, time, outing_start_time, outing_end_time, species, sex, location_name, lat, lng, ground, weight_kg, tag_number, calibre, distance_m, shot_placement, age_class, shooter, destination, notes, abnormalities, abnormalities_other, is_blank')
+        .select('date, time, outing_start_time, outing_end_time, species, sex, location_name, lat, lng, ground, weight_kg, tag_number, calibre, distance_m, shot_placement, age_class, shooter, destination, notes, abnormalities, abnormalities_other, quantity, is_blank')
         .eq('user_id', currentUser.id)
         .order('date', { ascending: false });
       if (r.error) throw r.error;
@@ -4519,10 +8687,11 @@ async function openExportModal(format) {
   });
   if (currentSeason && currentSeason !== '__all__') seasonSet[currentSeason] = true;
   var seasons = Object.keys(seasonSet).sort().reverse();
+  var exportSm = personalSeasonStartMonth();
   seasons.forEach(function(s) {
     var opt = document.createElement('option');
     opt.value = s;
-    opt.textContent = seasonLabel(s);
+    opt.textContent = seasonLabel(s, exportSm);
     if (s === currentSeason) opt.selected = true;
     seasonSel.appendChild(opt);
   });
@@ -4588,7 +8757,7 @@ async function doExportFiltered() {
   // Human-readable label: shown in the PDF title and success toast ("CSV
   // downloaded — N entries"). Grounded exports get the ground appended so it
   // reads naturally in the exported document.
-  var titleLabel = isAllSeasons ? 'All Seasons' : seasonLabel(season);
+  var titleLabel = isAllSeasons ? 'All Seasons' : seasonLabel(season, personalSeasonStartMonth());
   if (!isAllGrounds) titleLabel += ' — ' + ground;
 
   // Slug for filename: "cull-diary-<seasonSlug>[-<groundSlug>]".
@@ -4610,13 +8779,20 @@ async function doExportFiltered() {
     // Builder handles its own "Left on hill" exclusion + chronological sort,
     // and understands `__all__` for the season argument (renders a date-range
     // scope line instead of a single-season label).
+    // v3: Pest Control species never enter the larder book (no weights, no
+    // carcass documents — PEST-CODE-MAP §5).
+    var larderEligible = entries.filter(function(le) { return !isPestSpecies(le.species); });
+    if (!larderEligible.length) {
+      showToast('⚠️ No larder-eligible entries — the Larder Book covers deer only');
+      return;
+    }
     var lardRes = buildLarderBookPDF({
-      filteredEntries: entries,
+      filteredEntries: larderEligible,
       user: currentUser,
       season: isAllSeasons ? '__all__' : season
     });
     if (lardRes) {
-      showToast('✅ Larder Book PDF downloaded');
+      showToast('✅ Larder Book PDF ready');
     } else {
       // buildLarderBookPDF returns null when every entry in the filtered set
       // is "Left on hill" — surface that specifically rather than a generic
@@ -4643,15 +8819,17 @@ function exportCSVData(entries, label) {
   // → Latitude → Longitude → Ground). Coordinates are exported alongside the
   // place name because government / DMG funding reports need the numeric
   // values for spatial analysis — place names alone are too ambiguous.
-  var headers = ['Date','Time','Outing start','Outing finish','Is blank day','Species','Sex','Location','Latitude','Longitude','Ground','Weight(kg)','Tag','Calibre','Distance(m)','Placement','Age class','Shooter','Destination','Notes'];
+  var headers = ['Date','Time','Outing start','Outing finish','Is blank day','Species','Quantity','Sex','Location','Latitude','Longitude','Grid ref','Ground','Weight(kg)','Tag','Calibre','Distance(m)','Placement','Age class','Shooter','Destination','Notes'];
   var rows = entries.map(function(e) {
     return [
       csvField(e.date), csvField(e.time),
       csvField(formatCsvTime(e.outing_start_time)),
       csvField(formatCsvTime(e.outing_end_time)),
       csvField(isBlankDayEntry(e) ? 'yes' : 'no'), csvField(e.species),
+      csvField(entryQty(e)),
       csvField(sexLabel(e.sex, e.species)), csvField(e.location_name),
       csvField(formatCsvCoord(e.lat)), csvField(formatCsvCoord(e.lng)),
+      csvField(csvGridRef(e)),
       csvField(e.ground||''),
       csvField(e.weight_kg), csvField(e.tag_number||''),
       csvField(e.calibre), csvField(e.distance_m), csvField(e.shot_placement),
@@ -4660,6 +8838,18 @@ function exportCSVData(entries, label) {
   });
   triggerCsvDownload([headers.join(',')].concat(rows), 'cull-diary-' + label + '.csv');
   showToast('✅ CSV downloaded — ' + entries.length + ' entries');
+}
+
+/** Eight-figure OS grid reference for CSV. The entry card has shown one since
+ *  grid refs went in, but every export emitted raw decimal degrees — and a grid
+ *  ref is the reference a deer manager, a DMG return and a police wildlife
+ *  officer all actually speak. Blank when the entry has no pin, and blank
+ *  outside the OS grid rather than silently falling back to degrees, since the
+ *  Latitude and Longitude columns already carry that. */
+function csvGridRef(e) {
+  var lat = Number(e && e.lat), lng = Number(e && e.lng);
+  if (!isFinite(lat) || !isFinite(lng)) return '';
+  return latLngToOsGrid(lat, lng, 8) || '';
 }
 
 /** Format a stored lat/lng for CSV. 6dp ≈ 11 cm — way more than the GPS pin's
@@ -4672,6 +8862,11 @@ function formatCsvCoord(v) {
   if (!Number.isFinite(n)) return '';
   return n.toFixed(6);
 }
+
+// Pick the first non-null coordinate. `a || b || null` drops a legitimate 0 —
+// the Greenwich meridian (longitude 0) runs through the UK, so a real pin/GPS
+// longitude can be exactly 0 and must not be treated as "no value".
+function pickCoord(a, b) { return a != null ? a : (b != null ? b : null); }
 
 /** Trim a Postgres `time` column value to HH:MM for CSV. The DB returns
  *  'HH:MM:SS' (or 'HH:MM:SS.SSSSSS') but stalkers don't enter seconds and
@@ -4718,14 +8913,18 @@ function triggerCsvDownload(rowLines, filename) {
 function csvField(v) {
   var raw = v === null || v === undefined ? '' : flPdfSafeText(String(v));
   var first = raw.charAt(0);
-  var needsGuard = first === '=' || first === '+' || first === '-' || first === '@' || first === '\t' || first === '\r';
+  var needsGuard = (first === '=' || first === '+' || first === '-' || first === '@' || first === '\t' || first === '\r') &&
+    // …but never a plain number like -2.583400 / +51.48 (a UK coordinate is
+    // data, not a formula — prefixing it corrupts the value). The OWASP guard
+    // still fires on -2+3, =SUM(), @cmd, etc.
+    !/^[+-]?(\d+\.?\d*|\.\d+)$/.test(raw);
   var guarded = needsGuard ? "'" + raw : raw;
   return '"' + guarded.replace(/"/g, '""').replace(/\r\n|\r|\n/g, ' ') + '"';
 }
 
 function exportPDF() {
   if (!allEntries.length) { showToast('⚠️ No entries to export'); return; }
-  exportPDFData(allEntries, seasonLabel(currentSeason));
+  exportPDFData(allEntries, seasonLabel(currentSeason, personalSeasonStartMonth()));
 }
 
 function exportPDFData(entries, label, seasonOverride, filenameSlug) {
@@ -4741,7 +8940,7 @@ function exportPDFData(entries, label, seasonOverride, filenameSlug) {
     season: seasonOverride || currentSeason,
     filenameSlug: filenameSlug || null
   });
-  if (res) showToast('✅ PDF downloaded - ' + res.count + ' entries');
+  if (res) showToast('✅ PDF ready - ' + res.count + ' entries');
 }
 
 // ── Season Summary PDF ────────────────────────────────────────
@@ -4766,7 +8965,7 @@ function exportSeasonSummary() {
     planSpecies: PLAN_SPECIES,
     now: diaryNow(),
   });
-  if (res) showToast('✅ Season summary downloaded');
+  if (res) showToast('✅ Season summary ready');
 }
 
 // ── Syndicate manager export (species, sex, date, culled-by only) ──
@@ -4796,8 +8995,11 @@ function sortSeasonLabelsDesc(labels) {
   });
 }
 
-async function getSyndicateSeasonValues(syndicateId, fallbackSeason) {
-  var seed = fallbackSeason || currentSeason;
+async function getSyndicateSeasonValues(syndicateId, fallbackSeason, startMonth) {
+  // `startMonth` (step 4): the syndicate's own start month — dates bucket by
+  // IT, and the seed defaults to the syndicate-current season, so the list is
+  // correct for syndicates whose year differs from the viewer's personal one.
+  var seed = fallbackSeason || getCurrentSeason(startMonth);
   if (!sb || !syndicateId) return [seed];
   var set = {};
   if (seed) set[String(seed)] = 1;
@@ -4808,7 +9010,7 @@ async function getSyndicateSeasonValues(syndicateId, fallbackSeason) {
   }
   function addSeasonFromDate(ymd) {
     if (!ymd) return;
-    addSeason(buildSeasonFromEntry(ymd));
+    addSeason(buildSeasonFromEntry(ymd, startMonth));
   }
 
   try {
@@ -4834,10 +9036,14 @@ async function getSyndicateSeasonValues(syndicateId, fallbackSeason) {
   } catch (e) { /* optional source */ }
 
   try {
+    // Bucket anonymous culls by their stored cull_date, NOT the stored
+    // `season` string — those labels were baked under Aug–Jul at write time
+    // (fl_date_to_season) and mis-bucket under other start months. Same fix
+    // the step-2 migration applied to the read RPCs (plan §3.4).
     var anon = await sb.from('syndicate_anonymous_culls')
-      .select('season')
+      .select('cull_date')
       .eq('syndicate_id', syndicateId);
-    if (anon.data) anon.data.forEach(function(r) { addSeason(r.season); });
+    if (anon.data) anon.data.forEach(function(r) { addSeasonFromDate(r.cull_date); });
   } catch (e) { /* optional source */ }
 
   var out = sortSeasonLabelsDesc(Object.keys(set));
@@ -4888,6 +9094,9 @@ async function fetchSyndicateManagerExportRowsRaw(syndicateId, season, nameMap) 
       species: row.species,
       sex: row.sex,
       cull_date: row.cull_date,
+      // Pest bags: animals, not rows. Pre-migration RPCs return no quantity
+      // — null (not a false "1") until the SQL is run; renderers skip it.
+      quantity: row.quantity == null ? null : ((row.quantity | 0) > 0 ? (row.quantity | 0) : 1),
       culledBy: syndicateCulledByLabel(row, nameMap)
     };
   });
@@ -4940,12 +9149,12 @@ function sortSyndicateExportRows(rows) {
   });
 }
 
-async function fetchSyndicateExportRowsForScope(syndicateId, season, scope, nameMap) {
+async function fetchSyndicateExportRowsForScope(syndicateId, season, scope, nameMap, startMonth) {
   if (scope === 'season') {
     return sortSyndicateExportRows(await fetchSyndicateManagerExportRowsRaw(syndicateId, season, nameMap));
   }
   var merged = [];
-  var seasons = await getSyndicateSeasonValues(syndicateId, season);
+  var seasons = await getSyndicateSeasonValues(syndicateId, season, startMonth);
   for (var i = 0; i < seasons.length; i++) {
     var part = await fetchSyndicateManagerExportRowsRaw(syndicateId, seasons[i], nameMap);
     merged = merged.concat(part);
@@ -4994,9 +9203,29 @@ function openSyndicateExportModal(format) {
     sel.innerHTML = mgr.map(function(x) {
       return '<option value="' + esc(x.syndicate.id) + '">' + esc(x.syndicate.name) + '</option>';
     }).join('');
-    var listSel = document.getElementById('season-select');
-    sea.innerHTML = listSel ? listSel.innerHTML : '<option value="' + esc(currentSeason) + '">' + esc(currentSeason) + '</option>';
-    sea.value = currentSeason;
+    // Seasons follow the SELECTED syndicate's start month (§2 context rule) —
+    // step 4 removed the old clone of the personal #season-select, which
+    // seeded personal keys/labels and broke for non-August syndicates.
+    // Repopulated on syndicate change; the current season shows immediately
+    // while the full list (targets/allocs/culls/anon sources) loads.
+    function repopulateSeasons() {
+      var pick = mgr.find(function(x) { return String(x.syndicate.id) === String(sel.value); }) || mgr[0];
+      var syn = pick.syndicate;
+      var month = syndicateSeasonStartMonth(syn);
+      var synSeason = getCurrentSeason(month);
+      sea.innerHTML = '<option value="' + esc(synSeason) + '">' + esc(seasonLabel(synSeason, month)) + '</option>';
+      sea.value = synSeason;
+      getSyndicateSeasonValues(syn.id, synSeason, month).then(function(seasons) {
+        // The user may have switched syndicate while this fetched — drop stale fills.
+        if (String(sel.value) !== String(syn.id)) return;
+        sea.innerHTML = seasons.map(function(sk) {
+          return '<option value="' + esc(sk) + '">' + esc(seasonLabel(sk, month)) + '</option>';
+        }).join('');
+        sea.value = seasons.indexOf(synSeason) >= 0 ? synSeason : seasons[0];
+      }).catch(function() { /* keep the single current-season option */ });
+    }
+    sel.onchange = repopulateSeasons;
+    repopulateSeasons();
     var modal = document.getElementById('syndicate-export-modal');
     if (modal) modal.style.display = 'flex';
   }).catch(function() {
@@ -5038,7 +9267,8 @@ async function doSyndicateExport() {
     return;
   }
   var s = pick.syndicate;
-  var season = sea.value || currentSeason;
+  var synMonth = syndicateSeasonStartMonth(s);
+  var season = sea.value || getCurrentSeason(synMonth);
   var scopeEl = document.querySelector('input[name="syndicate-export-scope"]:checked');
   var scope = scopeEl ? scopeEl.value : 'season';
   closeSyndicateExportModal();
@@ -5056,6 +9286,8 @@ async function doSyndicateExport() {
     if (syndicateExportFormat === 'larder') {
       showToast('⏳ Building team larder…');
       var larderRows = await fetchSyndicateLarderRows(syndicateId, season, nameMap);
+      // v3: Team Larder is deer-only — pest rows carry no weights/tags.
+      larderRows = larderRows.filter(function(r) { return !isPestSpecies(r.species); });
       if (!larderRows.length) {
         showToast('⚠️ No larder entries for this syndicate & season');
         return;
@@ -5064,30 +9296,38 @@ async function doSyndicateExport() {
       return;
     }
     showToast('⏳ Preparing export…');
-    var rows = await fetchSyndicateExportRowsForScope(syndicateId, season, scope, nameMap);
+    var rows = await fetchSyndicateExportRowsForScope(syndicateId, season, scope, nameMap, synMonth);
+    if (!rows.length) {
+      showToast('⚠️ No listable culls for this selection — group-mode tallies are anonymous; the Team Summary carries the totals');
+      return;
+    }
     var slug = syndicateFileSlug(s.name);
     var label = scope === 'all' ? 'all-seasons' : season;
     if (syndicateExportFormat === 'csv') {
       exportSyndicateCSVData(rows, 'syndicate-' + slug + '-' + label);
     } else {
-      var titleExtra = scope === 'all' ? 'All seasons' : seasonLabel(season);
+      var titleExtra = scope === 'all' ? 'All seasons' : seasonLabel(season, synMonth);
       exportSyndicateListPDF(rows, s.name, titleExtra, 'syndicate-' + slug + '-' + label);
     }
   } catch (e) {
     if (typeof console !== 'undefined' && console.warn) console.warn('syndicate export', e);
-    showToast('⚠️ ' + (e.message || 'Export failed'));
+    showToast('⚠️ ' + friendlyErr(e, 'Export failed'));
   }
 }
 
 function exportSyndicateCSVData(rows, filenameBase) {
-  var headers = ['Species', 'Sex', 'Date', 'Culled by'];
+  // The Quantity column appears only when the RPC supplies quantities
+  // (migrate-syndicate-manager-quantity.sql) — an always-on column would
+  // print a false "1" against a pest bag of 4 on a pre-migration database.
+  var withQty = rows.some(function(r) { return r.quantity != null; });
+  var headers = withQty
+    ? ['Species', 'Quantity', 'Sex', 'Date', 'Culled by']
+    : ['Species', 'Sex', 'Date', 'Culled by'];
   var lines = rows.map(function(r) {
-    return [
-      csvField(r.species),
-      csvField(sexLabel(r.sex, r.species)),
-      csvField(r.cull_date || ''),
-      csvField(r.culledBy)
-    ].join(',');
+    var cells = [csvField(r.species)];
+    if (withQty) cells.push(csvField((r.quantity | 0) > 0 ? (r.quantity | 0) : 1));
+    cells.push(csvField(sexLabel(r.sex, r.species)), csvField(r.cull_date || ''), csvField(r.culledBy));
+    return cells.join(',');
   });
   triggerCsvDownload([headers.join(',')].concat(lines), filenameBase + '.csv');
   showToast('✅ CSV downloaded — ' + rows.length + ' rows');
@@ -5096,7 +9336,7 @@ function exportSyndicateCSVData(rows, filenameBase) {
 function exportSyndicateListPDF(rows, syndicateName, seasonLabelStr, filenameBase) {
   // Thin shim over modules/pdf.mjs → buildSyndicateListPDF.
   var res = buildSyndicateListPDF({ rows: rows, syndicateName: syndicateName, seasonLabelStr: seasonLabelStr, filenameBase: filenameBase });
-  if (res) showToast('✅ PDF downloaded — ' + res.count + ' rows');
+  if (res) showToast('✅ PDF ready — ' + res.count + ' rows');
 }
 
 function exportSyndicateSeasonSummaryPdf(syndicate, season, entries, summaryRows) {
@@ -5111,7 +9351,7 @@ function exportSyndicateSeasonSummaryPdf(syndicate, season, entries, summaryRows
     planSpeciesMeta: planSpeciesMeta,
     now: diaryNow(),
   });
-  showToast('✅ Syndicate summary downloaded');
+  showToast('✅ Syndicate summary ready');
 }
 
 function exportSinglePDF(id) {
@@ -5122,7 +9362,7 @@ function exportSinglePDF(id) {
     return;
   }
   var res = buildSingleEntryPDF({ entry: e });
-  if (res) showToast('✅ PDF downloaded');
+  if (res) showToast('✅ PDF ready');
 }
 
 /** Profile name for PDFs — not email (email is identity only, not a legal "name"). */
@@ -5157,7 +9397,7 @@ function userProfileDisplayName() {
 function exportSyndicateLarderBookPDF(syndicate, season, rows) {
   // Thin shim over modules/pdf.mjs → buildSyndicateLarderBookPDF.
   var res = buildSyndicateLarderBookPDF({ syndicate: syndicate, season: season, rows: rows });
-  if (res) showToast('✅ Team Larder Book PDF downloaded · ' + res.count + ' carcasses');
+  if (res) showToast('✅ Team Larder Book PDF ready · ' + res.count + ' carcasses');
   else    showToast('⚠️ No larder entries for this syndicate & season');
 }
 
@@ -5169,8 +9409,14 @@ function exportGameDealerDeclaration(id) {
     showToast('⚠️ Declaration is for cull entries only');
     return;
   }
+  if (isPestSpecies(e.species)) {
+    // v3: the trained-hunter declaration is a wild-game (deer) document;
+    // the button is hidden for pest entries — this guards direct calls.
+    showToast('⚠️ Declarations cover deer only');
+    return;
+  }
   var res = buildGameDealerDeclarationPDF({ entry: e, user: currentUser });
-  if (res) showToast('✅ Game dealer declaration PDF downloaded');
+  if (res) showToast('✅ Game dealer declaration PDF ready');
 }
 
 /**
@@ -5193,6 +9439,12 @@ function exportConsignmentDealerPdf() {
     return;
   }
   var picked = allEntries.filter(function(e) { return flSelection.ids.has(e.id); });
+  // v3: pests can never join a dealer consignment (deer-only document).
+  picked = picked.filter(function(e) { return !isPestSpecies(e.species); });
+  if (!picked.length) {
+    showToast('⚠️ Consignment declarations cover deer only');
+    return;
+  }
   var res = buildConsignmentDealerDeclarationPDF({ entries: picked, user: currentUser });
   if (!res) {
     showToast('⚠️ No entries selected');
@@ -5202,7 +9454,7 @@ function exportConsignmentDealerPdf() {
     showToast('⚠️ All selected entries are marked "Left on hill" — not eligible for a dealer declaration');
     return;
   }
-  showToast('✅ Consignment declaration PDF downloaded · ' + res.count + ' carcass' + (res.count === 1 ? '' : 'es'));
+  showToast('✅ Consignment declaration PDF ready · ' + res.count + ' carcass' + (res.count === 1 ? '' : 'es'));
   exitSelectMode();
 }
 
@@ -5312,7 +9564,7 @@ async function confirmBulkDelete() {
       .eq('user_id', currentUser.id);
     if (r.error) {
       if (typeof console !== 'undefined' && console.warn) console.warn('bulk delete:', r.error);
-      showToast('⚠️ ' + (r.error.message || 'Could not delete'));
+      showToast('⚠️ ' + friendlyErr(r.error, 'Could not delete'));
       flHapticError();
       return;
     }
@@ -5336,6 +9588,9 @@ async function confirmBulkDelete() {
 // relationship explicit: the `lat` / `lng` / `location` fields are all
 // side outputs of the same `navigator.geolocation` call.
 var flQuickEntry = { species: null, sex: null, location: '', lat: null, lng: null };
+// Bumped on every quick-sheet open AND close; a slow GPS/geocode callback captures
+// the value at open and bails if it changed (sheet closed or reopened meanwhile).
+var flQuickEntryOpenSeq = 0;
 
 async function openQuickEntry() {
   if (!isDiaryUkClockReady()) {
@@ -5350,6 +9605,7 @@ async function openQuickEntry() {
   updateQuickSexLabels(null);
   document.getElementById('qs-wt').value = '';
   document.getElementById('qs-tag').value = '';
+  qsSyncSaveBtn();
 
   // Pre-fill date/time/location in meta line
   var now = diaryNow();
@@ -5366,9 +9622,12 @@ async function openQuickEntry() {
   qs.style.transform = 'translateX(-50%)';
   document.body.style.overflow = 'hidden';
 
-  // Silently fetch GPS location
+  // Silently fetch GPS location. Bump + capture the open sequence so a slow fix
+  // that resolves after the sheet was closed or reopened can't overwrite state.
+  var _qsSeq = ++flQuickEntryOpenSeq;
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(function(pos) {
+      if (_qsSeq !== flQuickEntryOpenSeq) return;
       flQuickEntry.lat = pos.coords.latitude.toFixed(4);
       flQuickEntry.lng = pos.coords.longitude.toFixed(4);
       nominatimFetch('https://nominatim.openstreetmap.org/reverse?lat=' + flQuickEntry.lat + '&lon=' + flQuickEntry.lng + '&format=jsonv2&addressdetails=1&zoom=15')
@@ -5381,6 +9640,7 @@ async function openQuickEntry() {
           document.getElementById('qs-meta').textContent = dateStr + ' · ' + timeStr + ' · ' + flQuickEntry.location;
         });
     }, function() {
+      if (_qsSeq !== flQuickEntryOpenSeq) return;
       flQuickEntry.location = '';
       document.getElementById('qs-meta').textContent = dateStr + ' · ' + timeStr;
     }, { timeout: 6000, maximumAge: 60000 });
@@ -5394,6 +9654,7 @@ function closeQuickEntry() {
   document.getElementById('quick-sheet').style.display = 'none';
   document.body.style.overflow = '';
   flQuickEntry.species = null; flQuickEntry.sex = null;
+  flQuickEntryOpenSeq++; // invalidate any in-flight GPS callback from this open
 }
 
 function qsPick(el, name) {
@@ -5401,12 +9662,41 @@ function qsPick(el, name) {
   el.classList.add('on');
   flQuickEntry.species = name;
   updateQuickSexLabels(name);
+  qsSyncSaveBtn();
+}
+
+/**
+ * SYS78 (finding 81): the save button IS the requirement notice.
+ *
+ * Before this, "Log cull" was rendered as a fully saturated green primary from
+ * the moment the sheet opened; tapping it with nothing chosen answered
+ * "Please select a species". The affordance promised success and delivered
+ * rejection - the worst order to learn a rule in. Now the button reports the
+ * one thing still outstanding, in the order the sheet asks for it, and only
+ * turns green when a tap will actually succeed.
+ *
+ * It stays clickable on purpose (aria-disabled, never the `disabled`
+ * attribute): a real `disabled` button is unfocusable and silent, so a user
+ * who taps it anyway - which people do - would get nothing at all. This way
+ * the existing toast still fires as a second line of explanation, and the
+ * control keeps its place in the tab order for screen readers.
+ */
+function qsSyncSaveBtn() {
+  var btn = document.getElementById('qs-save-btn');
+  if (!btn) return;
+  var need = !flQuickEntry.species ? 'Select a species'
+    : !flQuickEntry.sex ? 'Select sex'
+    : null;
+  btn.classList.toggle('qs-save--wait', !!need);
+  btn.setAttribute('aria-disabled', need ? 'true' : 'false');
+  btn.innerHTML = need ? esc(need) : diaryCloudSaveInner('Log cull');
 }
 
 function qsSex(s) {
   flQuickEntry.sex = s;
   document.getElementById('qs-m').classList.toggle('on', s === 'm');
   document.getElementById('qs-f').classList.toggle('on', s === 'f');
+  qsSyncSaveBtn();
 }
 
 async function resolveQuickEntrySyndicateId() {
@@ -5440,7 +9730,7 @@ async function saveQuickEntry() {
   if (!isDiaryUkClockReady()) {
     var okClock = await syncDiaryTrustedUkClock();
     if (!okClock) {
-      btn.disabled = false; btn.innerHTML = diaryCloudSaveInner('Save to Cloud');
+      btn.disabled = false; btn.innerHTML = diaryCloudSaveInner('Log cull');
       showToast('⚠️ UK time unavailable — connect to internet');
       return;
     }
@@ -5475,7 +9765,11 @@ async function saveQuickEntry() {
       location_name:payload.location_name, lat:payload.lat, lng:payload.lng,
       weight_kg:payload.weight_kg, tag_number:payload.tag_number,
       syndicate_id:payload.syndicate_id });
-    btn.disabled = false; btn.innerHTML = diaryCloudSaveInner('Save to Cloud');
+    // Mirror the online path: dismiss the quick sheet so it can't be re-submitted.
+    // Otherwise the pills stay lit + the button re-enables and a second tap queues
+    // a duplicate offline entry (each queued row gets a fresh _id, so no dedupe).
+    closeQuickEntry();
+    btn.disabled = false; btn.innerHTML = diaryCloudSaveInner('Log cull');
     return;
   }
 
@@ -5483,8 +9777,9 @@ async function saveQuickEntry() {
     payload.syndicate_id = await resolveQuickEntrySyndicateId();
     var result = await sb.from('cull_entries').insert(payload).select('id');
     if (result.error) throw result.error;
+    var qsSavedId = (result.data && result.data[0] && result.data[0].id) || null;
     if (payload && payload.date) extendSeasonCacheForDate(payload.date);
-    showToast('✅ ' + flQuickEntry.species + ' saved');
+    showUndoToast('✅ ' + flQuickEntry.species + ' saved', qsSavedId);
     flHapticSuccess();
     // Attach weather in background (last 7 days only; no-op otherwise). We only
     // have the inserted id here via the `.select('id')` — no "most recent row"
@@ -5494,7 +9789,6 @@ async function saveQuickEntry() {
     // flQuickEntry.lat/lng stay null and we fall back to lastGpsLat/lastGpsLng, and if
     // that's also missing we simply skip the weather attach.
     try {
-      var qsSavedId = (result.data && result.data[0] && result.data[0].id) || null;
       var qsWxLat = payload.lat != null ? payload.lat : numOrNull(lastGpsLat);
       var qsWxLng = payload.lng != null ? payload.lng : numOrNull(lastGpsLng);
       if (qsSavedId && qsWxLat != null && qsWxLng != null) {
@@ -5504,10 +9798,10 @@ async function saveQuickEntry() {
     closeQuickEntry();
     await loadEntries();
   } catch(e) {
-    showToast('⚠️ Save failed: ' + (e.message || 'Unknown error'));
+    showToast('⚠️ Save failed: ' + friendlyErr(e, 'Unknown error'));
     flHapticError();
   }
-  btn.disabled = false; btn.innerHTML = diaryCloudSaveInner('Save to Cloud');
+  btn.disabled = false; btn.innerHTML = diaryCloudSaveInner('Log cull');
 }
 
 
@@ -5524,7 +9818,11 @@ async function saveQuickEntry() {
 async function attachWeatherToEntry(entryId, date, time, lat, lng) {
   if (!sb || !currentUser || !entryId) return;
   var wx = await fetchCullWeather(date, time, lat, lng);
-  if (!wx) return; // silently skip if outside 7-day window or fetch failed
+  // A cull backdated past the forecast endpoint's 7-day reach used to get no
+  // weather at all, while sightings quietly fell back to the archive. Same
+  // fallback here, so a late-entered cull is not left blank.
+  if (!wx) wx = await fetchCullWeatherArchive(date, time, lat, lng);
+  if (!wx) return; // silently skip if both endpoints came back empty
   try {
     var upd = await sb.from('cull_entries')
       .update({ weather_data: wx })
@@ -5540,7 +9838,7 @@ async function attachWeatherToEntry(entryId, date, time, lat, lng) {
   }
 }
 
-function renderWeatherStrip(e) {
+function renderWeatherStrip(e, titleOverride) {
   var wx = e.weather_data;
   if (!wx || typeof wx !== 'object') return '';
 
@@ -5566,7 +9864,7 @@ function renderWeatherStrip(e) {
 
   var html = '<div class="wx-strip-hdr">'
     + '<div class="wx-strip-hdr-main">'
-    + '<div class="wx-strip-title">Conditions at time of cull</div>'
+    + '<div class="wx-strip-title">' + esc(titleOverride || 'Conditions at time of cull') + '</div>'
     + '<span class="wx-added-tag"' + (wxTagTitle ? ' title="' + esc(wxTagTitle) + '"' : '') + '>Weather added</span>'
     + '</div>'
     + (e.time ? '<div class="wx-strip-time">' + esc(e.time) + '</div>' : '')
@@ -5577,7 +9875,7 @@ function renderWeatherStrip(e) {
     + '<div class="wx-sky-bar" style="background:' + wc.barBg + '" aria-hidden="true"></div>'
     + '<div class="wx-cell-val wx-cell-val--sky"><div class="wx-sky-abbr">' + esc(wc.abbrev) + '</div><div class="wx-sky-full">' + esc(wc.label) + '</div></div>'
     + '<div class="wx-cell-lbl">Sky</div></div>'
-    + '<div class="wx-cell"><div class="wx-cell-icon">' + SVG_WX_TEMP + '</div><div class="wx-cell-val">' + tempStr + '</div><div class="wx-cell-lbl">Temp</div></div>'
+    + '<div class="wx-cell"><div class="wx-cell-icon">' + SVG_WX_TEMP + '</div><div class="wx-cell-val">' + esc(tempStr) + '</div><div class="wx-cell-lbl">Temp</div></div>'
     + '<div class="wx-cell"><div class="wx-cell-icon">' + SVG_WX_WIND + '</div><div class="wx-cell-val" style="font-size:10px;">' + esc(windStr) + '</div><div class="wx-cell-lbl">Wind</div></div>'
     + '<div class="wx-cell"><div class="wx-cell-icon">' + SVG_WX_PRESSURE + '</div><div class="wx-cell-val" style="font-size:10px;">' + esc(pressStr) + '</div><div class="wx-cell-lbl">Pressure</div></div>'
     + '</div>';
@@ -5613,7 +9911,10 @@ var _mapboxFallbackDone = false;
 
 var SP_COLORS = {
   'Red Deer':'#c8a84b','Roe Deer':'#5a7a30','Fallow':'#f57f17',
-  'Muntjac':'#6a1b9a','Sika':'#1565c0','CWD':'#00695c'
+  'Muntjac':'#6a1b9a','Sika':'#1565c0','CWD':'#00695c',
+  // Pest Control (v3) — matches lib/fl-pure.mjs QUARRY_SPECIES colours.
+  'Fox':'#b45f2a','Rabbit':'#c9a05a','Grey Squirrel':'#8a8f98',
+  'Pigeon':'#46688a','Corvid':'#2f3237','Wild Boar':'#5c4a38'
 };
 
 // ── PIN DROP ──────────────────────────────────────────────────
@@ -5621,14 +9922,40 @@ var pinMap = null, pinMapLayer = null, pinSatLayer = null;
 var formPinLat = null, formPinLng = null;
 var pinNominatimTimer = null;
 var _pinMapTileErrorCount = 0;
+// Section 6 (2026-07-26): consecutive tiles that LOADED. Only the two maps
+// that show a failure banner need one — the others just feed the Mapbox
+// fallback, which is one-way by design. How many in a row it takes to believe
+// the map has recovered: one proves nothing (a single tile can come from cache
+// while every other request 403s), six is a screenful.
+var GMAP_TILE_OK_STREAK = 6;
+var _pinMapTileOkStreak = 0;
 var _cullMapTileErrorCount = 0;
+var _standsMapTileErrorCount = 0;
+var _sightMapTileErrorCount = 0;
 
 function mapboxTileOpts() {
   return { maxZoom: 20, tileSize: 512, zoomOffset: -1 };
 }
 
-function legacyTileOpts() {
-  return { maxZoom: 20 };
+// G6c (owner: "zoom a little more in and you get a gray screen"): every
+// provider has a deepest REAL zoom — OS Maps API free plan serves z5-16
+// only (17-20 are Premium, so requests 403 → gray), Esri imagery bottoms
+// out ~z19 in rural UK. maxNativeZoom makes Leaflet SCALE the deepest real
+// tiles past that point instead of requesting blanks: blurrier, never gray.
+// Section 6 (2026-07-26): the SHALLOW end had the same hole and nobody had
+// noticed, because only one screen ever opens that far out — a brand-new
+// ground, which seeds the UK overview at z6. Measured live against the raster
+// API: z4/z5/z6 all return nothing, z7 upward serve. So the free plan's real
+// floor is 7, not the documented 5. minNativeZoom is maxNativeZoom's mirror —
+// Leaflet requests z7 and scales it DOWN for z4-6 instead of asking for tiles
+// that do not exist. Fixes every map at once (editor, pin drop, stands, cull),
+// not just the one where it was spotted.
+function osTileOpts() {
+  return { minNativeZoom: 7, maxZoom: 20, maxNativeZoom: 16 };
+}
+
+function esriTileOpts() {
+  return { maxZoom: 20, maxNativeZoom: 19 };
 }
 
 function mapProviderTileUrls() {
@@ -5643,7 +9970,9 @@ function mapProviderTileUrls() {
 }
 
 function tileOptsForUrl(url) {
-  return (url && url.indexOf('api.mapbox.com/styles/v1/') !== -1) ? mapboxTileOpts() : legacyTileOpts();
+  if (url && url.indexOf('api.mapbox.com/styles/v1/') !== -1) return mapboxTileOpts();
+  if (url && url.indexOf('api.os.uk/') !== -1) return osTileOpts();
+  return esriTileOpts();
 }
 
 function bumpMapLoadEstimate(context) {
@@ -5675,14 +10004,15 @@ function maybeFallbackFromMapbox(reason) {
 
   var pinWasSat = document.getElementById('plt-sat') && document.getElementById('plt-sat').classList.contains('on');
   var cullWasSat = document.getElementById('clt-sat') && document.getElementById('clt-sat').classList.contains('on');
+  var standsWasSat = document.getElementById('slt-sat') && document.getElementById('slt-sat').classList.contains('on');
 
   if (pinMap) {
     try {
       if (pinMapLayer) pinMap.removeLayer(pinMapLayer);
       if (pinSatLayer) pinMap.removeLayer(pinSatLayer);
     } catch (_) {}
-    pinMapLayer = L.tileLayer(TILE_OS_STD, legacyTileOpts()).addTo(pinMap);
-    pinSatLayer = L.tileLayer(TILE_SAT_ESRI, legacyTileOpts());
+    pinMapLayer = L.tileLayer(TILE_OS_STD, osTileOpts()).addTo(pinMap);
+    pinSatLayer = L.tileLayer(TILE_SAT_ESRI, esriTileOpts());
     attachPinMapTileErrorHandlers();
     setPinLayer(pinWasSat ? 'sat' : 'map');
   }
@@ -5691,18 +10021,89 @@ function maybeFallbackFromMapbox(reason) {
       if (cullMapLayer) cullMap.removeLayer(cullMapLayer);
       if (cullSatLayer) cullMap.removeLayer(cullSatLayer);
     } catch (_) {}
-    cullMapLayer = L.tileLayer(TILE_OS_STD, legacyTileOpts()).addTo(cullMap);
-    cullSatLayer = L.tileLayer(TILE_SAT_ESRI, legacyTileOpts());
+    cullMapLayer = L.tileLayer(TILE_OS_STD, osTileOpts()).addTo(cullMap);
+    cullSatLayer = L.tileLayer(TILE_SAT_ESRI, esriTileOpts());
     attachCullMapTileErrorHandlers();
     setCullLayer(cullWasSat ? 'sat' : 'map');
   }
+  if (standsMap) {
+    try {
+      if (standsMapLayer) standsMap.removeLayer(standsMapLayer);
+      if (standsSatLayer) standsMap.removeLayer(standsSatLayer);
+    } catch (_) {}
+    standsMapLayer = L.tileLayer(TILE_OS_STD, osTileOpts()).addTo(standsMap);
+    standsSatLayer = L.tileLayer(TILE_SAT_ESRI, esriTileOpts());
+    attachStandsMapTileErrorHandlers();
+    setStandsLayer(standsWasSat ? 'sat' : 'map');
+  }
+  // SG3b: the sightings map joins the fallback family — without this block a
+  // sightings map initialised BEFORE the fallback kept its dead Mapbox
+  // satellite layer forever (stands/stats fell back, sightings stayed blank).
+  if (sightMap) {
+    var sightWasSat = document.getElementById('sgl-sat') && document.getElementById('sgl-sat').classList.contains('on');
+    try {
+      if (sightMapStdLayer) sightMap.removeLayer(sightMapStdLayer);
+      if (sightMapSatLayer) sightMap.removeLayer(sightMapSatLayer);
+    } catch (_) {}
+    sightMapStdLayer = L.tileLayer(TILE_OS_STD, osTileOpts()).addTo(sightMap);
+    sightMapSatLayer = L.tileLayer(TILE_SAT_ESRI, esriTileOpts());
+    attachSightMapTileErrorHandlers();
+    setSightMapLayer(sightWasSat ? 'sat' : 'map');
+  }
+  // G2: the boundary editor joins the fallback family (SG3b lesson — a map
+  // initialised before the fallback must not keep a dead Mapbox layer).
+  if (gmap) {
+    var gmapWasSat = document.getElementById('glt-sat') && document.getElementById('glt-sat').classList.contains('on');
+    try {
+      if (gmapStdLayer) gmap.removeLayer(gmapStdLayer);
+      if (gmapSatLayer) gmap.removeLayer(gmapSatLayer);
+    } catch (_) {}
+    gmapStdLayer = L.tileLayer(TILE_OS_STD, osTileOpts()).addTo(gmap);
+    gmapSatLayer = L.tileLayer(TILE_SAT_ESRI, esriTileOpts());
+    attachGmapTileErrorHandlers();
+    setGmapLayer(gmapWasSat ? 'sat' : 'map');
+  }
 
-  showToast('⚠️ Mapbox unavailable — switched to fallback map (' + reason + ')');
+  // SYS78 (finding 86): the old copy leaked a vendor name and an internal
+  // diagnostic string ("detail mini-map tile errors") into a toast read on a
+  // hillside before dawn. The user needs one thing: what changed and whether it
+  // matters. The reason code is a developer's concern and moves to the console.
+  console.warn('[map] premium tiles unavailable, using fallback —', reason);
+  showToast('ℹ️ Switched to backup maps — the imagery is less detailed. Nothing else changes.');
 }
 
+/**
+ * Finding 7: wherever the app has coordinates and no better name for a place,
+ * this is what it says. An OS grid reference in Great Britain, degrees with
+ * hemisphere letters everywhere else - never two bare decimals, which are a
+ * storage format rather than somewhere a stalker can go.
+ *
+ * `digits` follows the OS convention: 6 = 100 m for a list row, 8 = 10 m for a
+ * detail view. Returns '' when there is no location, so callers can use it in
+ * a `||` chain exactly like the strings it replaced.
+ */
+function flPlaceRef(lat, lng, digits) {
+  return formatPlaceRef(lat, lng, digits || 6);
+}
+
+/**
+ * The right label for a flPlaceRef value. "Coordinates" over a grid reference
+ * reads as a category error to anyone who uses OS maps, and "Grid ref" over a
+ * pair of degrees would be a lie, so the label follows the value.
+ */
+function flPlaceRefLabel(lat, lng, digits) {
+  return latLngToOsGrid(lat, lng, digits || 6) ? 'Grid ref' : 'Coordinates';
+}
+
+/**
+ * The pin-map readout carries both forms deliberately: the grid reference is
+ * what you write in a larder book or read out on a radio, the degrees are what
+ * the app actually stores and what a phone or another app will want back.
+ */
 function formatPinMapCoordLine(lat, lng) {
-  return Math.abs(lat).toFixed(5) + '°' + (lat >= 0 ? 'N' : 'S')
-    + ' · ' + Math.abs(lng).toFixed(5) + '°' + (lng >= 0 ? 'E' : 'W');
+  var deg = formatLatLngDegrees(lat, lng, 5);
+  var grid = latLngToOsGrid(lat, lng, 8);
+  return grid ? grid + ' · ' + deg : deg;
 }
 
 function refreshPinMapFallbackBanner() {
@@ -5738,21 +10139,32 @@ function applyManualPinCoords() {
     showToast('⚠️ Open the map first');
     return;
   }
+  // Apply MOVES THE PIN AND NOTHING ELSE. It used to write formPinLat /
+  // formPinLng / lastGpsLat / lastGpsLng right here, which quietly made it a
+  // second commit point: closePinDrop() has no undo, so typing a coordinate,
+  // tapping Apply and then backing out with the X relocated the entry to a
+  // point the stalker had abandoned - while the pinned strip still showed the
+  // OLD one, because only showPinnedStrip() repaints it. The two lines of that
+  // strip could then contradict each other outright: coordinates that sit
+  // inside a ground, and the boundary advisory beneath them saying the pin was
+  // outside it. It leaked across consumers too - a stand position picked by
+  // typed coordinates overwrote the entry form's pin, which is the one thing
+  // pinDropConsumer exists to prevent. confirmPinDrop() reads
+  // pinMap.getCenter(), which is exactly where setView has just put us, so
+  // Confirm still commits these coordinates to the pixel. One commit point,
+  // and no undo left to write.
   pinMap.setView([lat, lng], Math.max(pinMap.getZoom(), 12));
   document.getElementById('pinmap-coords').textContent = formatPinMapCoordLine(lat, lng);
-  document.getElementById('pinmap-name').textContent = lat.toFixed(5) + ', ' + lng.toFixed(5);
-  formPinLat = lat;
-  formPinLng = lng;
-  lastGpsLat = lat;
-  lastGpsLng = lng;
+  document.getElementById('pinmap-name').textContent = flPlaceRef(lat, lng, 8);
   setTimeout(function() { if (pinMap) pinMap.invalidateSize(); }, 80);
-  showToast('✓ Coordinates applied');
+  showToast('✓ Pin moved - tap Confirm location to use it');
 }
 
 function attachPinMapTileErrorHandlers() {
   if (!pinMapLayer || !pinSatLayer || pinMapLayer._flTileErrBound) return;
   pinMapLayer._flTileErrBound = true;
   function bump() {
+    _pinMapTileOkStreak = 0;
     _pinMapTileErrorCount++;
     refreshPinMapFallbackBanner();
     var satActive = !!(pinMap && pinSatLayer && pinMap.hasLayer(pinSatLayer));
@@ -5760,8 +10172,19 @@ function attachPinMapTileErrorHandlers() {
       maybeFallbackFromMapbox('tile errors');
     }
   }
+  // Section 6 (2026-07-26): twin of the editor's recovery — see
+  // attachGmapTileErrorHandlers. A banner that never clears is furniture.
+  function ok() {
+    if (!_pinMapTileErrorCount) return;
+    if (++_pinMapTileOkStreak < GMAP_TILE_OK_STREAK) return;
+    _pinMapTileErrorCount = 0;
+    _pinMapTileOkStreak = 0;
+    refreshPinMapFallbackBanner();
+  }
   pinMapLayer.on('tileerror', bump);
   pinSatLayer.on('tileerror', bump);
+  pinMapLayer.on('tileload', ok);
+  pinSatLayer.on('tileload', ok);
 }
 
 function attachCullMapTileErrorHandlers() {
@@ -5778,16 +10201,64 @@ function attachCullMapTileErrorHandlers() {
   cullSatLayer.on('tileerror', bump);
 }
 
-function makeMarkerIcon(color) {
+/** SG3b: sightings-map twin of the stands handler — ≥6 Mapbox tile errors
+ *  trips the app-wide legacy fallback, same thresholds, same rules. */
+function attachSightMapTileErrorHandlers() {
+  if (!sightMapStdLayer || !sightMapSatLayer || sightMapStdLayer._flTileErrBound) return;
+  sightMapStdLayer._flTileErrBound = true;
+  function bump() {
+    _sightMapTileErrorCount++;
+    var satActive = !!(sightMap && sightMapSatLayer && sightMap.hasLayer(sightMapSatLayer));
+    if (_sightMapTileErrorCount >= 6 && (mapProvider === 'mapbox' || (mapProvider === 'hybrid' && satActive))) {
+      maybeFallbackFromMapbox('tile errors');
+    }
+  }
+  sightMapStdLayer.on('tileerror', bump);
+  sightMapSatLayer.on('tileerror', bump);
+}
+
+function attachStandsMapTileErrorHandlers() {
+  if (!standsMapLayer || !standsSatLayer || standsMapLayer._flTileErrBound) return;
+  standsMapLayer._flTileErrBound = true;
+  function bump() {
+    _standsMapTileErrorCount++;
+    var satActive = !!(standsMap && standsSatLayer && standsMap.hasLayer(standsSatLayer));
+    if (_standsMapTileErrorCount >= 6 && (mapProvider === 'mapbox' || (mapProvider === 'hybrid' && satActive))) {
+      maybeFallbackFromMapbox('tile errors');
+    }
+  }
+  standsMapLayer.on('tileerror', bump);
+  standsSatLayer.on('tileerror', bump);
+}
+
+function makeMarkerIcon(color, sex) {
+  // Cull-map pin: species COLOUR (matches the legend chips) + a ♂/♀ glyph in
+  // the centre. The glyph adds the sex dimension AND a non-colour (shape) cue,
+  // so the pin isn't decoded by hue alone. No sex on record → the plain dot.
+  var glyph = sex === 'm' ? '♂' : (sex === 'f' ? '♀' : '');
+  var centre = glyph
+    ? '<circle cx="13" cy="12" r="7" fill="#fff" opacity="0.96"/>'
+      + '<text x="13" y="12.7" text-anchor="middle" dominant-baseline="middle" font-family="DM Sans,Arial,sans-serif" font-size="10.5" font-weight="700" fill="' + color + '">' + glyph + '</text>'
+    : '<circle cx="13" cy="12" r="4.5" fill="#fff" opacity="0.92"/>';
   var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="26" height="34" viewBox="0 0 26 34">'
     + '<filter id="ms"><feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-opacity="0.3"/></filter>'
     + '<path d="M13 2C7.5 2 3 6.5 3 12c0 8 10 20 10 20s10-12 10-20C23 6.5 18.5 2 13 2z" fill="' + color + '" stroke="white" stroke-width="1.8" filter="url(#ms)"/>'
-    + '<circle cx="13" cy="12" r="4.5" fill="white" opacity="0.92"/>'
+    + centre
     + '</svg>';
   return L.divIcon({ html:svg, iconSize:[26,34], iconAnchor:[13,34], popupAnchor:[0,-34], className:'' });
 }
 
-function openPinDrop() {
+/**
+ * When set, confirmPinDrop routes the picked point here instead of into the
+ * entry-form state (v3 Stands reuse — STANDS-CODE-MAP §2). Cleared on every
+ * close so a cancelled pick can never leak into the next consumer.
+ */
+var pinDropConsumer = null;
+
+function openPinDrop(opts) {
+  pinDropConsumer = (opts && opts.onConfirm) ? opts.onConfirm : null;
+  var seedLat = (opts && opts.lat != null) ? opts.lat : (formPinLat != null ? formPinLat : lastGpsLat);
+  var seedLng = (opts && opts.lng != null) ? opts.lng : (formPinLng != null ? formPinLng : lastGpsLng);
   _pinMapTileErrorCount = 0;
   var overlay = document.getElementById('pinmap-overlay');
   overlay.style.display = 'flex';
@@ -5796,16 +10267,16 @@ function openPinDrop() {
   var mLat = document.getElementById('pinmap-manual-lat');
   var mLng = document.getElementById('pinmap-manual-lng');
   if (mLat && mLng) {
-    var pLat = formPinLat != null ? formPinLat : lastGpsLat;
-    var pLng = formPinLng != null ? formPinLng : lastGpsLng;
+    var pLat = seedLat;
+    var pLng = seedLng;
     mLat.value = pLat != null ? String(pLat) : '';
     mLng.value = pLng != null ? String(pLng) : '';
   }
 
   if (!pinMap) {
     // Default centre: UK midpoint, or last known location
-    var startLat = formPinLat || lastGpsLat || 52.5;
-    var startLng = formPinLng || lastGpsLng || -1.5;
+    var startLat = (seedLat != null ? seedLat : 52.5);
+    var startLng = (seedLng != null ? seedLng : -1.5);
 
     pinMap = L.map('pin-map-div', { zoomControl:true, attributionControl:false })
       .setView([startLat, startLng], 14);
@@ -5820,6 +10291,12 @@ function openPinDrop() {
       var c = pinMap.getCenter();
       document.getElementById('pinmap-coords').textContent = formatPinMapCoordLine(c.lat, c.lng);
       document.getElementById('pinmap-name').textContent = 'Locating…';
+      // G14: keep the manual lat/lng fields tracking the pin so they never
+      // disagree with the readout/pin (unless you're mid-typing in one).
+      var _ml = document.getElementById('pinmap-manual-lat');
+      var _mg = document.getElementById('pinmap-manual-lng');
+      if (_ml && document.activeElement !== _ml) _ml.value = c.lat.toFixed(6);
+      if (_mg && document.activeElement !== _mg) _mg.value = c.lng.toFixed(6);
       clearTimeout(pinNominatimTimer);
     });
 
@@ -5834,15 +10311,15 @@ function openPinDrop() {
             document.getElementById('pinmap-name').textContent = name;
           }).catch(function() {
             var c2 = pinMap.getCenter();
-            document.getElementById('pinmap-name').textContent = c2.lat.toFixed(4)+', '+c2.lng.toFixed(4);
+            document.getElementById('pinmap-name').textContent = flPlaceRef(c2.lat, c2.lng, 6);
           });
       }, 600); // debounce 600ms
       var _h = document.getElementById('pinmap-hint'); if(_h){ _h.style.opacity='0'; setTimeout(function(){ _h.style.display='none'; }, 300); }
     });
   } else {
     // Re-centre on last pin or current location
-    var startLat = formPinLat || lastGpsLat || 52.5;
-    var startLng = formPinLng || lastGpsLng || -1.5;
+    var startLat = (seedLat != null ? seedLat : 52.5);
+    var startLng = (seedLng != null ? seedLng : -1.5);
     pinMap.setView([startLat, startLng], 14);
     // Reset hint — remove inline style so CSS controls it
     var hint = document.getElementById('pinmap-hint');
@@ -5851,9 +10328,11 @@ function openPinDrop() {
 
   setTimeout(function(){ pinMap.invalidateSize(); }, 80);
   refreshPinMapFallbackBanner();
+  renderGroundBoundaries(pinMap); // G3: see the edge while pinning (repaints per open — features may have changed)
 }
 
 function closePinDrop() {
+  pinDropConsumer = null;
   document.getElementById('pinmap-overlay').style.display = 'none';
   document.body.style.overflow = '';
   var s = document.getElementById('pinmap-search');
@@ -5877,12 +10356,28 @@ function setPinLayer(type) {
 
 function confirmPinDrop() {
   var c = pinMap.getCenter();
-  formPinLat = c.lat; formPinLng = c.lng;
-  lastGpsLat = c.lat; lastGpsLng = c.lng;
+  // Finding G: round ONCE, here, before any consumer sees the number. The
+  // map centre is a raw float carrying fifteen decimals of invented
+  // precision, and each consumer downstream used to apply — or forget to
+  // apply — its own rounding, so the same tap stored a different value
+  // depending on which door it came through. 6 dp is the app's standard:
+  // the same precision every boundary vertex is stored at.
+  var lat = round6(c.lat), lng = round6(c.lng);
   var name = document.getElementById('pinmap-name').textContent;
-  if (name === 'Locating…') name = c.lat.toFixed(4) + ', ' + c.lng.toFixed(4);
+  if (name === 'Locating…') name = flPlaceRef(lat, lng, 6);
+  if (pinDropConsumer) {
+    // Non-form consumer (stands): capture, close (which clears the consumer),
+    // then deliver — the entry form is untouched.
+    var consume = pinDropConsumer;
+    closePinDrop();
+    consume(lat, lng, name);
+    return;
+  }
+  formPinLat = lat; formPinLng = lng;
+  lastGpsLat = lat; lastGpsLng = lng;
   document.getElementById('f-location').value = name;
-  showPinnedStrip(name, c.lat, c.lng);
+  showPinnedStrip(name, lat, lng);
+  maybeAutoSelectGroundFromPin(lat, lng); // G3: boundary → Ground select
   closePinDrop();
 }
 
@@ -5893,6 +10388,8 @@ function showPinnedStrip(name, lat, lng) {
     Math.abs(lat).toFixed(4) + '°' + (lat>=0?'N':'S') +
     ' · ' + Math.abs(lng).toFixed(4) + '°' + (lng>=0?'E':'W');
   strip.style.display = 'flex';
+  queueGroundPinWarning();
+  queueCullSeasonAdvisory();   // a new pin can change the jurisdiction
 }
 
 function clearPinnedLocation() {
@@ -5900,11 +10397,16 @@ function clearPinnedLocation() {
   lastGpsLat = null; lastGpsLng = null;
   var strip = document.getElementById('loc-pinned-strip');
   if (strip) strip.style.display = 'none';
+  refreshGroundPinWarning();
+  queueCullSeasonAdvisory();
 }
 
 // ── CULL MAP ──────────────────────────────────────────────────
 var cullMap = null, cullMapLayer = null, cullSatLayer = null;
+var FL_CULL_LAYER_KEY = 'fl-cull-layer'; // Batch 4: remembered Map/Satellite choice
 var cullMarkers = [];
+var cullMarkerById = {}; // detail "Open map" focus → marker lookup by entry id
+var flCullFocusId = null; // set by flOpenCullOnMap; consumed once by renderCullMapPins
 var cullClusterGroup = null;
 var cullFilter = 'all';
 var cullMapFullscreen = false;
@@ -5924,7 +10426,11 @@ function initCullMap() {
   cullMapLayer = L.tileLayer(cullTiles.std, tileOptsForUrl(cullTiles.std)).addTo(cullMap);
   cullSatLayer = L.tileLayer(cullTiles.sat, tileOptsForUrl(cullTiles.sat));
   attachCullMapTileErrorHandlers();
+  // Batch 4: reopen on the last-used layer (Map is the default; only act on a
+  // saved 'sat' so the fresh-install experience is unchanged).
+  try { if (localStorage.getItem(FL_CULL_LAYER_KEY) === 'sat') setCullLayer('sat'); } catch (_) {}
   bumpMapLoadEstimate('cull-map');
+  renderGroundBoundaries(cullMap); // G3: boundaries under pins/clusters
 
   // Leaflet zoom +/- uses <a href="#"> which can take focus and scroll the stats panel
   // (or the window) so the Cull Map toolbar looks like it vanished. Mitigations: keep
@@ -5989,21 +10495,18 @@ function setCullLayer(type) {
   if (!cullMap) return;
   var mapBtn = document.getElementById('clt-map');
   var satBtn = document.getElementById('clt-sat');
-  var mapBtnFs = document.getElementById('clt-map-fs');
-  var satBtnFs = document.getElementById('clt-sat-fs');
   if (type === 'sat') {
     cullMap.removeLayer(cullMapLayer); cullSatLayer.addTo(cullMap);
     if (mapBtn) mapBtn.className = 'lt-b off';
     if (satBtn) satBtn.className = 'lt-b on';
-    if (mapBtnFs) mapBtnFs.className = 'lt-b off';
-    if (satBtnFs) satBtnFs.className = 'lt-b on';
   } else {
     cullMap.removeLayer(cullSatLayer); cullMapLayer.addTo(cullMap);
     if (mapBtn) mapBtn.className = 'lt-b on';
     if (satBtn) satBtn.className = 'lt-b off';
-    if (mapBtnFs) mapBtnFs.className = 'lt-b on';
-    if (satBtnFs) satBtnFs.className = 'lt-b off';
   }
+  // Batch 4: remember the choice device-locally, so the cull map reopens on the
+  // layer you last used (owner pick over a fixed Map/Satellite default).
+  try { localStorage.setItem(FL_CULL_LAYER_KEY, type === 'sat' ? 'sat' : 'map'); } catch (_) {}
 }
 
 function filterCullMap(filter, el) {
@@ -6020,77 +10523,258 @@ function filterCullMap(filter, el) {
   renderCullMapPins();
 }
 
+// Fullscreen isn't just a bigger map — it's where Heat, Satellite and cross-
+// species comparison actually pay off, so it needs every control to hand. We
+// MOVE the real data controls (#cullmap-mode = Culls/Sightings/Both + Pins/Heat,
+// and #cullmap-filter = the species chips) into an on-map bottom tray, then put
+// them back in the card on exit. The base-map toggle + this button already float
+// top-right (they live in .cullmap-ctrl inside the container), so they ride into
+// fullscreen for free — no clones to keep in sync. The button itself flips to a
+// filled "compress/exit" affordance while fullscreen.
+var FL_FS_EXPAND_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>';
+var FL_FS_COMPRESS_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3m8 0v-3a2 2 0 0 1 2-2h3"/></svg>';
 function toggleMapFullscreen() {
   var container = document.getElementById('cull-map-container');
+  var wrap = document.getElementById('cullmap-wrap');
   if (!container || !cullMap) return;
   cullMapFullscreen = !cullMapFullscreen;
 
+  var fsBtn = document.getElementById('map-fs-btn');
+  var mode = document.getElementById('cullmap-mode');
+  var filter = document.getElementById('cullmap-filter');
+
   if (cullMapFullscreen) {
     container.classList.add('map-fullscreen');
-    var isSat = !!(document.getElementById('clt-sat') && document.getElementById('clt-sat').classList.contains('on'));
-    var fsLayer = document.createElement('div');
-    fsLayer.className = 'layer-tog';
-    fsLayer.id = 'map-fs-layer-tog';
-    fsLayer.style.position = 'absolute';
-    // Dock beside Leaflet zoom control (top-left) in fullscreen.
-    fsLayer.style.top = '12px';
-    fsLayer.style.left = '58px';
-    fsLayer.style.right = 'auto';
-    fsLayer.style.zIndex = '9999';
-    fsLayer.style.boxShadow = '0 2px 12px rgba(0,0,0,0.35)';
-    fsLayer.style.border = '1.5px solid rgba(255,255,255,0.12)';
-    fsLayer.innerHTML = ''
-      + '<button class="lt-b ' + (isSat ? 'off' : 'on') + '" id="clt-map-fs" type="button" aria-label="Show map layer">Map</button>'
-      + '<div class="lt-div"></div>'
-      + '<button class="lt-b ' + (isSat ? 'on' : 'off') + '" id="clt-sat-fs" type="button" aria-label="Show satellite layer">Satellite</button>';
-    container.appendChild(fsLayer);
-    var mapFsBtn = document.getElementById('clt-map-fs');
-    var satFsBtn = document.getElementById('clt-sat-fs');
-    if (mapFsBtn) mapFsBtn.onclick = function() { setCullLayer('map'); };
-    if (satFsBtn) satFsBtn.onclick = function() { setCullLayer('sat'); };
-
-    var closeBtn = document.createElement('button');
-    closeBtn.className = 'map-fs-close';
-    closeBtn.id = 'map-fs-close';
-    closeBtn.setAttribute('aria-label', 'Exit fullscreen map');
-    closeBtn.title = 'Exit fullscreen';
-    closeBtn.innerHTML = '✕';
-    closeBtn.onclick = toggleMapFullscreen;
-    container.appendChild(closeBtn);
+    var tray = document.getElementById('cullmap-fs-tray');
+    if (!tray) {
+      tray = document.createElement('div');
+      tray.className = 'cullmap-fs-tray';
+      tray.id = 'cullmap-fs-tray';
+      container.appendChild(tray);
+    }
+    // Order in the tray: toggles (Show/Style) then the species chips.
+    if (mode) tray.appendChild(mode);
+    if (filter) tray.appendChild(filter);
+    if (fsBtn) {
+      fsBtn.innerHTML = FL_FS_COMPRESS_SVG;
+      fsBtn.title = 'Exit fullscreen';
+      fsBtn.setAttribute('aria-label', 'Exit fullscreen map');
+      fsBtn.classList.add('is-exit');
+    }
   } else {
     container.classList.remove('map-fullscreen');
-    var fsTog = document.getElementById('map-fs-layer-tog');
-    if (fsTog) fsTog.remove();
-    var cb = document.getElementById('map-fs-close');
-    if (cb) cb.remove();
+    // Put the controls back in their in-card home (order: mode, filter, map).
+    if (wrap) {
+      if (mode) wrap.insertBefore(mode, container);
+      if (filter) wrap.insertBefore(filter, container);
+    }
+    var tray2 = document.getElementById('cullmap-fs-tray');
+    if (tray2) tray2.remove();
+    if (fsBtn) {
+      fsBtn.innerHTML = FL_FS_EXPAND_SVG;
+      fsBtn.title = 'Fullscreen map';
+      fsBtn.setAttribute('aria-label', 'Toggle fullscreen map');
+      fsBtn.classList.remove('is-exit');
+    }
   }
   setTimeout(function(){ if(cullMap) cullMap.invalidateSize(); }, 150);
 }
 
+// ST4: the map chip row follows YOUR pins — DL6's law applied to the map:
+// All + species that actually have pins this season (canonical order), Pests
+// only when pest pins exist. Chips for species with nothing on the map were
+// dead controls filtering to an empty map. The row is mode-agnostic (union of
+// cull + sighting pins) so chips don't appear/vanish when toggling
+// Culls/Sightings/Both; an active filter whose species loses its pins resets
+// to All before the pin pass below reads it.
+function renderCullMapChips() {
+  var bar = document.getElementById('cullmap-filter');
+  if (!bar) return;
+  // A5: the chip row must describe the layer that is actually drawn. Built
+  // from culls UNION sightings regardless of mode, it offered species with
+  // zero pins in the current mode - tapping one blanked the map and read as
+  // data loss. Gate each source on the live mode instead.
+  var _showCulls  = (cullMapMode === 'culls' || cullMapMode === 'both');
+  var _showSights = (cullMapMode === 'sightings' || cullMapMode === 'both');
+  var sightSeasonB = currentSeason === '__all__' ? null
+    : seasonBoundsForKey(currentSeason, personalSeasonStartMonth());
+  var present = {};
+  var pestPins = false;
+  if (_showCulls) (allEntries || []).forEach(function(e) {
+    if (e.lat == null || e.lng == null || isBlankDayEntry(e) || !e.species) return;
+    if (isPestSpecies(e.species)) { pestPins = true; return; }
+    present[e.species] = true;
+  });
+  if (_showSights) (allSightings || []).forEach(function(s) {
+    if (s.lat == null || s.lng == null || !s.species) return;
+    if (sightSeasonB) {
+      var sd = sightingDatePart(s);
+      if (!sd || sd < sightSeasonB.startIso || sd > sightSeasonB.endIso) return;
+    }
+    present[s.species] = true;
+  });
+  var deer = FL_DEER_CHIP_ORDER.filter(function(s) { return present[s]; })
+    .concat(Object.keys(present).filter(function(s) {
+      return FL_DEER_CHIP_ORDER.indexOf(s) === -1;
+    }).sort());
+  if (cullFilter !== 'all') {
+    if (cullFilter === '__pests__' ? !pestPins : !present[cullFilter]) cullFilter = 'all';
+  }
+  if (!deer.length && !pestPins) { bar.style.display = 'none'; return; }
+  bar.style.display = '';
+  var h = '<button class="cmf-chip' + (cullFilter === 'all' ? ' on' : '') + '" type="button" data-fl-action="filter-cull-map" data-species="all" aria-pressed="' + (cullFilter === 'all') + '">All</button>';
+  deer.forEach(function(s) {
+    var on = cullFilter === s;
+    var dot = SP_COLORS_D[s] || '#5a7a30';
+    var short = s === 'Red Deer' ? 'Red' : (s === 'Roe Deer' ? 'Roe' : s);
+    h += '<button class="cmf-chip' + (on ? ' on' : '') + '" type="button" data-fl-action="filter-cull-map" data-species="' + esc(s) + '" aria-pressed="' + on + '"><span class="cmf-spec-dot" style="background-color:' + dot + '" aria-hidden="true"></span>' + esc(short) + '</button>';
+  });
+  if (pestPins) {
+    var onP = cullFilter === '__pests__';
+    h += '<button class="cmf-chip' + (onP ? ' on' : '') + '" type="button" data-fl-action="filter-cull-map" data-species="__pests__" aria-pressed="' + onP + '" title="All Pest Control species"><span class="cmf-spec-dot" style="background-color:#b45f2a" aria-hidden="true"></span>Pests</button>';
+  }
+  bar.innerHTML = h;
+}
+
+/** Cull-map legend text/visibility — depends on which heat layers are live
+ *  (cull density, sightings density, or both). Owned here so it stays correct
+ *  when either the mode (Culls/Sightings/Both) or display (Pins/Heat) changes. */
+function setCullMapLegend(showCulls, showSights, cullHeat) {
+  var legend = document.getElementById('cullmap-heat-legend');
+  if (!legend) return;
+  var cullHeatOn = showCulls && cullHeat;
+  var txt = '';
+  if (cullHeatOn && showSights) txt = 'Warmer &amp; denser = more activity here';
+  else if (cullHeatOn)          txt = 'Denser = where you cull most';
+  else if (showSights)          txt = 'Warmer &amp; larger = more deer seen';
+  if (!txt) { legend.style.display = 'none'; return; }
+  legend.style.display = '';
+  legend.innerHTML = '<span class="chl-swatch" aria-hidden="true"></span> ' + txt;
+}
+
+/** A6: the cull-map empty overlay carries two very different meanings and had
+ *  one message. With nothing pinned it is an onboarding prompt; with pins
+ *  present it means the current mode/filter matched nothing, and telling that
+ *  user to "start pinning entries" reads as silent data loss. Three states,
+ *  each with the action that actually helps. */
+function cullMapEmptyHtml(state, showCulls, showSights) {
+  var h = '<div class="cull-map-empty-icon" aria-hidden="true">' + SVG_CULL_MAP_EMPTY_PIN + '</div>';
+  if (state === 'filter') {
+    h += '<div class="cull-map-empty-t">Nothing matches this filter</div>' +
+      '<div class="cull-map-empty-s">You have mapped locations \u2014 just none for this species in this view.</div>' +
+      '<button class="cull-map-empty-btn" type="button" data-fl-action="filter-cull-map" data-species="all">Show all species</button>';
+  } else if (state === 'mode') {
+    var what = (showCulls && showSights) ? 'culls or sightings' : (showSights ? 'sightings' : 'culls');
+    h += '<div class="cull-map-empty-t">No ' + what + ' mapped here</div>' +
+      '<div class="cull-map-empty-s">You have mapped locations in other views \u2014 try the mode buttons above, or a different season.</div>';
+  } else {
+    h += '<div class="cull-map-empty-t">No mapped locations yet</div>' +
+      '<div class="cull-map-empty-s">Use the <strong>Pin</strong> or <strong>GPS</strong> button when logging entries to build your location history.</div>';
+  }
+  return h;
+}
+
 function renderCullMapPins() {
   if (!cullMap) return;
+  renderCullMapChips(); // chips + vanish-reset first — the filter below reads cullFilter
   // Remove existing markers and cluster group
   if (cullClusterGroup) { cullMap.removeLayer(cullClusterGroup); cullClusterGroup = null; }
   cullMarkers.forEach(function(m){ cullMap.removeLayer(m); });
   cullMarkers = [];
+  // Remove the sightings "heat" layer (S4) — rebuilt below when shown.
+  if (sightHeatLayer) { cullMap.removeLayer(sightHeatLayer); sightHeatLayer = null; }
+  // Remove the cull density "heat" layer (Batch 2) — rebuilt below when shown.
+  if (cullHeatLayer) { cullMap.removeLayer(cullHeatLayer); cullHeatLayer = null; }
 
-  var entries = allEntries.filter(function(e) {
+  var showCulls  = (cullMapMode === 'culls' || cullMapMode === 'both');
+  var showSights = (cullMapMode === 'sightings' || cullMapMode === 'both');
+  var cullHeat   = (cullDisplay === 'heat');
+  setCullMapLegend(showCulls, showSights, cullHeat);
+
+  var entries = !showCulls ? [] : allEntries.filter(function(e) {
     if (e.lat == null || e.lng == null) return false;
-    if (cullFilter === 'all') return true;
+    // A blank day is "I sat, no shot" — it has a location but is NOT a cull, so
+    // it no longer drops a pin on the CULL map (it used to under the 'all' chip,
+    // quietly conflating "where I culled" with "where I've been").
     if (isBlankDayEntry(e)) return false;
+    if (cullFilter === 'all') return true;
+    // '__pests__' chip: any Pest Control species (single map chip, v3).
+    if (cullFilter === '__pests__') return isPestSpecies(e.species);
     return e.species === cullFilter;
   });
 
-  var noGps = allEntries.filter(function(e){ return e.lat == null || e.lng == null; }).length;
-  var spSet = new Set(allEntries.filter(function(e){
-    if (e.lat == null || e.lng == null) return false;
-    if (isBlankDayEntry(e)) return false;
-    return e.species;
-  }).map(function(e){ return e.species; }));
+  // Sightings (live deer) share the map as a weighted density layer (S4).
+  // SG8: scoped to the STATS season selector like the cull pins beside them —
+  // the layers of one map must tell the same season's story (allEntries is
+  // already season-bounded by loadEntries; sightings now match).
+  var sightSeasonB = currentSeason === '__all__' ? null
+    : seasonBoundsForKey(currentSeason, personalSeasonStartMonth());
+  var sights = !showSights ? [] : (allSightings || []).filter(function(s) {
+    if (s.lat == null || s.lng == null) return false;
+    if (sightSeasonB) {
+      var sd = sightingDatePart(s);
+      if (!sd || sd < sightSeasonB.startIso || sd > sightSeasonB.endIso) return false;
+    }
+    if (cullFilter === 'all') return true;
+    if (cullFilter === '__pests__') return false; // sightings are deer-only
+    return s.species === cullFilter;
+  });
 
-  document.getElementById('cms-pinned').textContent = entries.length;
+  // ST1: the strip owns pin coverage only (Pinned / No GPS). Its old Species
+  // cell shared a label with the season KPI while counting something else
+  // (map-scoped, mode-dependent) — two numbers, one name. The KPI owns species.
+  var noGps = 0;
+  if (showCulls) {
+    // Batch 3: exclude blank days here too — the pinned side already does
+    // (via `entries`), so counting blank-day no-GPS rows made the two halves
+    // of the same strip disagree. Now both count actual culls only, and this
+    // matches the recovery list (flNoGpsEntries) exactly.
+    noGps += allEntries.filter(function(e){ return (e.lat == null || e.lng == null) && !isBlankDayEntry(e); }).length;
+  }
+  if (showSights) {
+    noGps += (allSightings || []).filter(function(s){ return s.lat == null || s.lng == null; }).length;
+  }
+
+  document.getElementById('cms-pinned').textContent = entries.length + sights.length;
   document.getElementById('cms-nogps').textContent = noGps;
-  document.getElementById('cms-species').textContent = spSet.size;
+  // Batch 3: when there are un-pinned entries, the No-GPS cell becomes a way IN
+  // to place them (was a dead count). renderCullMapPins re-runs on every mode/
+  // filter change, so this stays in sync.
+  var ngCell = document.getElementById('cms-nogps-cell');
+  if (ngCell) {
+    if (noGps > 0) {
+      ngCell.setAttribute('data-fl-action', 'open-nogps-recovery');
+      ngCell.setAttribute('role', 'button');
+      ngCell.setAttribute('tabindex', '0');
+      ngCell.classList.add('cms-actionable');
+    } else {
+      ngCell.removeAttribute('data-fl-action');
+      ngCell.removeAttribute('role');
+      ngCell.removeAttribute('tabindex');
+      ngCell.classList.remove('cms-actionable');
+    }
+  }
+
+  // Batch 4 (control tidy): one adaptive caption instead of the old static
+  // "This season's pins · chips filter the map only". It now names what the
+  // map is actually showing AND teaches the recency fade only when it's live
+  // (≥2 distinct cull dates in pins mode), so a lighter pin never reads as a
+  // rendering glitch.
+  var subEl = document.getElementById('cullmap-sub');
+  if (subEl) {
+    var subTxt;
+    if (showCulls && showSights) subTxt = 'Culls & sightings, this season';
+    else if (showSights)         subTxt = 'Live deer seen, this season';
+    else if (cullHeat)           subTxt = 'Culls, this season'; // legend owns the density key
+    else {
+      var _distinct = {};
+      entries.forEach(function(e){ if (e.date) _distinct[e.date] = 1; });
+      subTxt = Object.keys(_distinct).length >= 2
+        ? 'Culls, this season · fainter = earlier'
+        : 'Culls, this season';
+    }
+    subEl.textContent = subTxt;
+  }
 
   // Show/hide empty state overlay (never destroy the map div)
   var emptyEl = document.getElementById('cull-map-empty-state');
@@ -6100,63 +10784,139 @@ function renderCullMapPins() {
     emptyEl = document.createElement('div');
     emptyEl.id = 'cull-map-empty-state';
     emptyEl.className = 'cull-map-empty';
-    emptyEl.style.cssText = 'position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;background:white;';
-    emptyEl.innerHTML = '<div class="cull-map-empty-icon" aria-hidden="true">' + SVG_CULL_MAP_EMPTY_PIN + '</div>' +
-      '<div class="cull-map-empty-t">No mapped locations yet</div>' +
-      '<div class="cull-map-empty-s">Use the <strong>Pin</strong> or <strong>GPS</strong> button when logging entries to build your location history.</div>';
+    emptyEl.style.cssText = 'position:absolute;inset:0;z-index:1200;display:flex;flex-direction:column;align-items:center;justify-content:center;background:white;';
     document.getElementById('cull-map-container').appendChild(emptyEl);
-  } else {
-    var _cw = emptyEl.querySelector('.cull-map-empty-icon');
-    if (!_cw || !_cw.querySelector('svg')) {
-      emptyEl.innerHTML = '<div class="cull-map-empty-icon" aria-hidden="true">' + SVG_CULL_MAP_EMPTY_PIN + '</div>' +
-        '<div class="cull-map-empty-t">No mapped locations yet</div>' +
-        '<div class="cull-map-empty-s">Use the <strong>Pin</strong> or <strong>GPS</strong> button when logging entries to build your location history.</div>';
-    }
   }
 
-  if (entries.length === 0) {
+  if (entries.length === 0 && sights.length === 0) {
+    // Is anything mappable at all, anywhere? That is what separates "you have
+    // never pinned an entry" from "this particular view is empty".
+    var anyMappable = (allEntries || []).some(function(e){ return e.lat != null && e.lng != null && !isBlankDayEntry(e); })
+      || (allSightings || []).some(function(s){ return s.lat != null && s.lng != null; });
+    var _state = !anyMappable ? 'none' : (cullFilter !== 'all' ? 'filter' : 'mode');
+    emptyEl.innerHTML = cullMapEmptyHtml(_state, showCulls, showSights);
     emptyEl.style.display = 'flex';
-    document.getElementById('cull-map-stats').style.display = 'none';
+    // Keep the coverage strip up whenever data exists: hiding it collapsed
+    // ~40px of layout on every empty filter, so the map jumped under the
+    // thumb mid-tap. Only a genuinely empty diary loses the strip.
+    document.getElementById('cull-map-stats').style.display = anyMappable ? 'flex' : 'none';
     return;
   }
 
   emptyEl.style.display = 'none';
   document.getElementById('cull-map-stats').style.display = 'flex';
 
-  var useClustering = typeof L.markerClusterGroup === 'function';
-  if (useClustering) cullClusterGroup = L.markerClusterGroup({ maxClusterRadius: 45 });
-
   var bounds = [];
-  entries.forEach(function(e) {
-    var clr = isBlankDayEntry(e) ? '#b8932e' : (SP_COLORS[e.species] || '#5a7a30');
-    var popup;
-    if (isBlankDayEntry(e)) {
-      popup = '<div style="font-size:13px;font-weight:700;color:#6a4a0a;">Blank day</div>'
-        + '<div style="font-size:11px;color:#a0988a;margin-top:2px;">' + esc(e.date||'') + (e.time ? ' · ' + esc(e.time) : '') + '</div>'
-        + (e.ground ? '<div style="font-size:11px;color:#3d2b1f;margin-top:4px;">' + esc(e.ground) + '</div>' : '');
-    } else {
-      var sex = e.sex === 'm' ? '&#9794;' : '&#9792;';
-      popup = '<div style="font-size:13px;font-weight:700;color:#3d2b1f;">' + esc(e.species) + ' ' + sex + '</div>'
-        + '<div style="font-size:11px;color:#a0988a;margin-top:2px;">' + esc(e.date||'') + (e.time ? ' · ' + esc(e.time) : '') + '</div>'
-        + (hasValue(e.weight_kg) ? '<div style="font-size:11px;color:#3d2b1f;margin-top:4px;">' + esc(String(e.weight_kg)) + ' kg</div>' : '')
-        + (e.tag_number ? '<div style="font-size:11px;color:#c8a84b;margin-top:2px;">Tag: ' + esc(e.tag_number) + '</div>' : '')
-        + (e.shot_placement  ? '<div style="font-size:11px;color:#3d2b1f;">' + esc(e.shot_placement) + '</div>' : '')
-        + (e.location_name ? '<div style="font-size:10px;color:#a0988a;margin-top:3px;display:flex;align-items:center;gap:4px;">'
-          + '<span style="display:inline-flex;width:12px;height:12px;flex-shrink:0;" aria-hidden="true">' + SVG_FL_PIN + '</span>'
-          + '<span>' + esc(e.location_name) + '</span></div>' : '');
-    }
 
-    var marker = L.marker([e.lat, e.lng], { icon: makeMarkerIcon(clr) })
-      .bindPopup(popup);
-    if (useClustering) { cullClusterGroup.addLayer(marker); }
-    else { marker.addTo(cullMap); }
-    cullMarkers.push(marker);
-    bounds.push([e.lat, e.lng]);
-  });
+  // Branded, clickable popup shared by pins and heat blobs, so a cull location
+  // always links back to its record (never a read-only dead marker).
+  function cullPopupHtml(e) {
+    var sexSym = e.sex === 'm' ? ' &#9794;' : (e.sex === 'f' ? ' &#9792;' : '');
+    return '<div class="flp">'
+      + '<div class="flp-hdr">' + esc(e.species || 'Cull') + sexSym + '</div>'
+      + '<div class="flp-sub">' + esc(e.date || '') + (e.time ? ' · ' + esc(e.time) : '') + '</div>'
+      + (hasValue(e.weight_kg) ? '<div class="flp-row">' + esc(String(e.weight_kg)) + ' kg</div>' : '')
+      + (e.tag_number ? '<div class="flp-row"><b>Tag</b> ' + esc(e.tag_number) + '</div>' : '')
+      + (e.shot_placement ? '<div class="flp-row">' + esc(e.shot_placement) + '</div>' : '')
+      + (e.location_name ? '<div class="flp-loc">' + esc(e.location_name) + '</div>' : '')
+      + '<button type="button" class="flp-open" data-fl-action="open-detail" data-entry-id="' + esc(e.id) + '">Open entry ›</button>'
+      + '</div>';
+  }
 
-  if (useClustering) cullMap.addLayer(cullClusterGroup);
+  if (cullHeat) {
+    // Density "heat" (Batch 2): one translucent disc per cull; overlaps stack
+    // into warm hotspots so favoured ground reads at a glance, no pin clutter.
+    // Filtered to one species → that species' hue; "All" → a neutral warm so
+    // overlap reads as *density*, not a colour clash. Still clickable.
+    var heatClr = (cullFilter !== 'all' && cullFilter !== '__pests__')
+      ? (SP_COLORS[cullFilter] || '#e2571f') : '#e2571f';
+    cullHeatLayer = L.layerGroup();
+    entries.forEach(function(e) {
+      L.circle([e.lat, e.lng], {
+        radius: 85, color: heatClr, weight: 1, opacity: 0.35,
+        fillColor: heatClr, fillOpacity: 0.15
+      }).bindPopup(cullPopupHtml(e), { className: 'fl-cull-popup' }).addTo(cullHeatLayer);
+      bounds.push([e.lat, e.lng]);
+    });
+    cullHeatLayer.addTo(cullMap);
+  } else {
+    // Batch 4: subtle recency fade — the newest culls draw at full strength and
+    // earlier-in-the-set ones lighten toward 0.55, so a glance separates fresh
+    // ground from old. Normalised across the entries CURRENTLY SHOWN (season +
+    // chip already applied), matching "when within this season". Undated culls
+    // never fade (kept at full). Heat mode is untouched — it answers density.
+    var _ageTs = entries.map(function(e){ var t = e.date ? Date.parse(e.date) : NaN; return isNaN(t) ? null : t; });
+    var _valid = _ageTs.filter(function(t){ return t != null; });
+    var _minTs = _valid.length ? Math.min.apply(null, _valid) : 0;
+    var _ageSpan = (_valid.length ? Math.max.apply(null, _valid) : 0) - _minTs;
+    var cullAgeOpacity = function(idx) {
+      if (_ageSpan <= 0) return 1;
+      var t = _ageTs[idx];
+      if (t == null) return 1;
+      return 0.55 + 0.45 * ((t - _minTs) / _ageSpan);
+    };
+    var useClustering = typeof L.markerClusterGroup === 'function';
+    if (useClustering) cullClusterGroup = L.markerClusterGroup({
+      maxClusterRadius: 45,
+      // Branded cluster bubble (was default Leaflet blue): forest disc, cream
+      // count, ring tinted by the DOMINANT species inside — so the bubble hints
+      // at what it holds instead of being an anonymous count.
+      iconCreateFunction: function(cluster) {
+        var n = cluster.getChildCount();
+        var tally = {};
+        cluster.getAllChildMarkers().forEach(function(m) {
+          var sp = m.options && m.options.flSp; if (sp) tally[sp] = (tally[sp] || 0) + 1;
+        });
+        var dom = null, max = 0;
+        Object.keys(tally).forEach(function(sp) { if (tally[sp] > max) { max = tally[sp]; dom = sp; } });
+        var ring = (dom && SP_COLORS[dom]) || '#d8b054';
+        var size = n < 10 ? 36 : (n < 30 ? 42 : 48);
+        return L.divIcon({
+          html: '<div class="fl-cmk" style="--ring:' + ring + ';width:' + size + 'px;height:' + size + 'px;">' + n + '</div>',
+          className: '', iconSize: [size, size], iconAnchor: [size / 2, size / 2]
+        });
+      }
+    });
+    cullMarkerById = {};
+    entries.forEach(function(e, i) {
+      var clr = SP_COLORS[e.species] || '#5a7a30';
+      var marker = L.marker([e.lat, e.lng], { icon: makeMarkerIcon(clr, e.sex), flSp: e.species, opacity: cullAgeOpacity(i) })
+        .bindPopup(cullPopupHtml(e), { className: 'fl-cull-popup' });
+      if (useClustering) { cullClusterGroup.addLayer(marker); }
+      else { marker.addTo(cullMap); }
+      cullMarkers.push(marker);
+      if (e.id != null) cullMarkerById[e.id] = marker;
+      bounds.push([e.lat, e.lng]);
+    });
+    if (useClustering) cullMap.addLayer(cullClusterGroup);
+  }
 
-  if (bounds.length > 0) {
+  // Sightings "heat": translucent circles graded/sized by animals seen, so
+  // repeat visits and big groups build into warm hotspot blobs (S4).
+  // SG8: L.circle in METRES (lib sightingHeatRadiusM), not pixel
+  // circleMarkers — a blob now means the same thing at every zoom, matching
+  // the in-view sightings map.
+  if (sights.length) {
+    sightHeatLayer = L.layerGroup();
+    sights.forEach(function(s) {
+      var n = sightingHeadcount(s);
+      var heat = sightingHeatStyle(n);
+      L.circle([s.lat, s.lng], {
+        radius: sightingHeatRadiusM(n), color: heat.stroke, weight: 1,
+        fillColor: heat.fill, fillOpacity: heat.opacity
+      }).bindPopup(sightingPopupHtml(s)).addTo(sightHeatLayer);
+      bounds.push([s.lat, s.lng]);
+    });
+    sightHeatLayer.addTo(cullMap);
+  }
+
+  // A pending focus (an entry's detail "Open map ›") beats fitBounds — centre
+  // the cull map on that kill and pop it. Consumed here; go() clears it on leave.
+  var cullFocusM = flCullFocusId != null ? cullMarkerById[flCullFocusId] : null;
+  if (cullFocusM) {
+    cullMap.setView(cullFocusM.getLatLng(), 16);
+    setTimeout(function(){ try { cullFocusM.openPopup(); } catch (e) {} }, 180);
+  } else if (bounds.length > 0) {
     cullMap.fitBounds(bounds, { padding:[32,32], maxZoom:14 });
   }
 
@@ -6240,7 +11000,17 @@ function getOfflineQueue() {
   try {
     var raw = localStorage.getItem(OFFLINE_KEY);
     return raw ? JSON.parse(raw) : [];
-  } catch(e) { return []; }
+  } catch(e) {
+    // Corrupt JSON: preserve the raw value under a backup key BEFORE any caller
+    // overwrites the queue with [], so queued entries stay recoverable instead
+    // of vanishing silently, and record it for support.
+    try {
+      var bad = localStorage.getItem(OFFLINE_KEY);
+      if (bad != null) localStorage.setItem(OFFLINE_KEY + '-corrupt', bad);
+    } catch (_) {}
+    if (typeof console !== 'undefined' && console.error) console.error('Offline queue JSON unreadable — backed up to ' + OFFLINE_KEY + '-corrupt');
+    return [];
+  }
 }
 function getCurrentQueueUserId() {
   return currentUser && currentUser.id ? currentUser.id : null;
@@ -6387,11 +11157,67 @@ function saveOfflineQueue(queue) {
   return { ok: false };
 }
 
+// ── Offline replay idempotency (client_uuid) ────────────────────────────
+// A lost acknowledgement used to double-insert: the row committed, the
+// response died with the signal, the entry stayed queued, and the next sync
+// inserted it again. The recently-synced fingerprint can't see a commit
+// whose ack never arrived. Fix: stamp a client-generated UUID on the queue
+// entry ONCE at enqueue time; every replay carries the same identity and the
+// server upsert on (user_id, client_uuid) collapses retries into one row
+// (scripts/migrate-client-uuid.sql). Pre-migration DBs degrade gracefully —
+// the first column-absent error quietly disables the uuid for the session
+// (the sightings.weather_data precedent).
+function flNewClientUuid() {
+  try {
+    if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  } catch (e) {}
+  // RFC 4122 v4 via getRandomValues, for WebViews without randomUUID.
+  var b = new Uint8Array(16);
+  window.crypto.getRandomValues(b);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  var h = Array.prototype.map.call(b, function (x) { return (x + 0x100).toString(16).slice(1); }).join('');
+  return h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20);
+}
+
+var _clientUuidColMissing = false;
+
+/** True when an error says the client_uuid column isn't in the schema yet. */
+function clientUuidColAbsent(err) {
+  if (!err) return false;
+  var txt = ((err.message || '') + ' ' + (err.code || '')).toLowerCase();
+  if (txt.indexOf('client_uuid') === -1) return false;
+  return txt.indexOf('pgrst204') !== -1 || txt.indexOf('42703') !== -1 ||
+         txt.indexOf('could not find') !== -1 || txt.indexOf('does not exist') !== -1;
+}
+
+/**
+ * The queue's cull write: upsert on (user_id, client_uuid) when the entry
+ * carries a uuid (DO UPDATE re-writes identical values and still returns the
+ * id, so weather attach works on the replay path too); plain insert for
+ * legacy queue items without one. Falls back to insert — minus the column —
+ * the first time the server says the migration hasn't run.
+ */
+async function cullReplayWrite(sbc, payload) {
+  if (payload.client_uuid && !_clientUuidColMissing) {
+    var r = await sbc.from('cull_entries').upsert(payload, { onConflict: 'user_id,client_uuid' }).select('id');
+    if (!(r.error && clientUuidColAbsent(r.error))) return r;
+    _clientUuidColMissing = true;
+  }
+  var p2 = payload;
+  if (p2.client_uuid !== undefined) {
+    p2 = {};
+    for (var k in payload) { if (k !== 'client_uuid') p2[k] = payload[k]; }
+  }
+  return sbc.from('cull_entries').insert(p2).select('id');
+}
+
 async function queueOfflineEntry(entry) {
-  var queue = getOfflineQueue();
   entry._queuedAt = diaryNow().toISOString();
   entry._id = Date.now() + '-' + Math.random().toString(36).slice(2,7);
   entry._queued_user_id = getCurrentQueueUserId();
+  // Replay identity: stamped once here, stable across every sync attempt.
+  if (!entry.client_uuid) entry.client_uuid = flNewClientUuid();
   // Keep queue lightweight: store photo blobs in IndexedDB, not localStorage JSON.
   if (entry._photoDataUrl) {
     try {
@@ -6406,6 +11232,9 @@ async function queueOfflineEntry(entry) {
       // Fallback to legacy inline photo data if IndexedDB conversion/storage fails.
     }
   }
+  // Read the queue AFTER the photo await so a concurrent offline save that landed
+  // during the await isn't clobbered by a stale snapshot (read-modify-write race).
+  var queue = getOfflineQueue();
   queue.push(entry);
   var persist = saveOfflineQueue(queue);
   if (!persist.ok) {
@@ -6414,23 +11243,25 @@ async function queueOfflineEntry(entry) {
     renderList();
     showToast('⚠️ Could not save offline — storage full. Free space or sync, then try again.');
     flHapticError();
-    return;
+    return false;
   }
   if (persist.clearedAll) {
     updateOfflineBadge();
     renderList();
-    return;
+    return true;
   }
   updateOfflineBadge();
   showToast('📶 Saved offline · will sync when connected');
   flHapticSuccess();
   go('v-list');
   renderList();
+  return true;
 }
 
 function updateOfflineBadge() {
   var queue = getOfflineQueueForCurrentUser();
-  var cnt = queue.length;
+  var standN = currentUser ? standOutboxCount(currentUser.id) : 0;
+  var cnt = queue.length + standN;
   var badge = document.getElementById('offline-badge');
   var banner = document.getElementById('offline-banner');
   var bannerT = document.getElementById('offline-banner-t');
@@ -6442,7 +11273,10 @@ function updateOfflineBadge() {
   }
   if (banner && bannerT) {
     if (cnt > 0) {
-      bannerT.textContent = cnt + ' entr' + (cnt===1?'y':'ies') + ' queued offline';
+      var bParts = [];
+      if (queue.length) bParts.push(queue.length + ' entr' + (queue.length === 1 ? 'y' : 'ies'));
+      if (standN) bParts.push(standN + ' stand' + (standN === 1 ? '' : 's'));
+      bannerT.textContent = bParts.join(' · ') + ' queued offline';
       // Estimate storage used
       var queueStr = localStorage.getItem(OFFLINE_KEY) || '';
       var kb = Math.round(queueStr.length / 1024);
@@ -6489,14 +11323,39 @@ async function syncOfflineQueue() {
   if (offlineSyncInFlight) { showToast('ℹ️ Sync already in progress'); return; }
 
   var queue = getOfflineQueueForCurrentUser();
-  if (queue.length === 0) { showToast('✅ Nothing to sync'); return; }
+  var standOpsN = standOutboxCount(currentUser.id);
+  if (queue.length === 0 && standOpsN === 0) { showToast('✅ Nothing to sync'); return; }
 
   offlineSyncInFlight = true;
+  var standsFlushed = 0;
   try {
-    showToast('Syncing ' + queue.length + ' entr' + (queue.length === 1 ? 'y' : 'ies') + '…');
+    var syncingBits = [];
+    if (queue.length) syncingBits.push(queue.length + ' entr' + (queue.length === 1 ? 'y' : 'ies'));
+    if (standOpsN) syncingBits.push(standOpsN + ' stand' + (standOpsN === 1 ? '' : 's'));
+    showToast('Syncing ' + syncingBits.join(' + ') + '…');
 
-    var synced = 0, failed = 0, photosStripped = 0;
+    // Stands flush FIRST: a sighting queued below may reference an
+    // offline-created stand by its minted id, and sightings.stand_id is a
+    // real foreign key — the stand row must exist before the sighting lands.
+    if (standOpsN) {
+      try {
+        var standRes = await flushStandOutbox(sb, currentUser.id);
+        standsFlushed = standRes.flushed;
+        if (standRes.flushed > 0) flStandsState.list = null; // refetch on next Stands open
+        (standRes.dead || []).forEach(function (d) {
+          if (d._deadReason === 'name-clash') {
+            var nm = (d.stand && d.stand.name) || (d.fields && d.fields.name) || 'a queued stand';
+            showToast('⚠️ “' + nm + '” clashed with an existing stand name — set aside, rename and re-add', 6000);
+          } else {
+            showToast('⚠️ A queued stand change failed repeatedly and was set aside', 5000);
+          }
+        });
+      } catch (eStands) { console.warn('stand outbox flush:', eStands); }
+    }
+
+    var synced = 0, failed = 0, photosStripped = 0, photosDropped = 0;
     var remaining = [];
+    var deadLettered = [];
     var stepPersistWarned = false;
 
     for (var i = 0; i < queue.length; i++) {
@@ -6507,15 +11366,85 @@ async function syncOfflineQueue() {
         continue;
       }
       try {
+        // Sightings ride the same offline queue tagged kind:'sighting' but
+        // route to the owner-only sightings table, not cull_entries (S3).
+        if (entry.kind === 'sighting') {
+          var sPhotoUrl = null;
+          if (entry._uploadedPhotoPath) {
+            // A prior attempt already uploaded this photo — reuse it (see the cull
+            // path); the blob is dropped only after the row commits below.
+            sPhotoUrl = entry._uploadedPhotoPath;
+          } else if (entry._photoBlobId || entry._photoDataUrl) {
+            try {
+              var sBlob = null;
+              if (entry._photoBlobId) sBlob = await getOfflinePhotoBlob(entry._photoBlobId);
+              if (!sBlob && entry._photoDataUrl) sBlob = dataUrlToBlob(entry._photoDataUrl);
+              if (sBlob) {
+                var sFile = new File([sBlob], 'photo.jpg', { type: 'image/jpeg' });
+                var sPath = newCullPhotoPath(currentUser.id);
+                var sUp = await sb.storage.from('cull-photos').upload(sPath, sFile, { upsert: true, contentType: 'image/jpeg' });
+                if (!sUp.error) {
+                  sPhotoUrl = sPath;
+                  entry._uploadedPhotoPath = sPath; // remember for a retry; blob deleted after the row commits
+                } else {
+                  photosDropped++;
+                }
+              }
+            } catch (spErr) { console.warn('Sighting photo sync failed:', spErr); photosDropped++; }
+          }
+          var sFields = {
+            seen_at: entry.seen_at, species: entry.species,
+            n_male: entry.n_male, n_female: entry.n_female,
+            n_young: entry.n_young, n_unknown: entry.n_unknown,
+            behaviour: entry.behaviour, ground: entry.ground,
+            stand_id: entry.stand_id || null, lat: entry.lat, lng: entry.lng,
+            notes: entry.notes, photo_url: sPhotoUrl
+          };
+          if (entry.client_uuid && !_clientUuidColMissing) sFields.client_uuid = entry.client_uuid;
+          var sSavedRow;
+          try {
+            sSavedRow = await saveSighting(sb, currentUser.id, sFields);
+          } catch (sIdErr) {
+            if (!clientUuidColAbsent(sIdErr)) throw sIdErr;
+            // Migration not run yet — drop the uuid for the session and retry
+            // this one entry as a plain insert.
+            _clientUuidColMissing = true;
+            delete sFields.client_uuid;
+            sSavedRow = await saveSighting(sb, currentUser.id, sFields);
+          }
+          // SG5: attach conditions on flush too (seen_at → London date/time).
+          if (sSavedRow && sSavedRow.id && entry.lat != null && entry.lng != null) {
+            attachWeatherToSighting(
+              sSavedRow.id,
+              sightingDatePart({ seen_at: entry.seen_at }),
+              sightingTimePart({ seen_at: entry.seen_at }),
+              entry.lat, entry.lng
+            );
+          }
+          synced++;
+          // Row committed — safe to drop the local photo blob now (moved from the
+          // upload step above so a failed insert can retry with the photo intact).
+          if (entry._photoBlobId) { try { await deleteOfflinePhotoBlob(entry._photoBlobId); } catch (ce) {} }
+          markRecentlySynced(fp);
+          var stepPersistSight = saveOfflineQueue(remaining.concat(queue.slice(i + 1)));
+          if (!stepPersistSight.ok && !stepPersistWarned) {
+            stepPersistWarned = true;
+            showToast('⚠️ Could not update local sync state — some entries may retry');
+          }
+          continue;
+        }
         var payload;
         if (entry.is_blank) {
           payload = {
             user_id:         currentUser.id,
+            client_uuid:     entry.client_uuid || null,
             is_blank:        true,
             species:         null,
             sex:             null,
             date:            entry.date,
             time:            entry.time,
+            outing_start_time: entry.outing_start_time == null ? null : entry.outing_start_time,
+            outing_end_time:   entry.outing_end_time   == null ? null : entry.outing_end_time,
             location_name:   entry.location_name == null ? null : entry.location_name,
             lat:             entry.lat == null ? null : entry.lat,
             lng:             entry.lng == null ? null : entry.lng,
@@ -6537,11 +11466,15 @@ async function syncOfflineQueue() {
         } else {
           payload = {
             user_id:         currentUser.id,
+            client_uuid:     entry.client_uuid || null,
             is_blank:        false,
             species:         entry.species,
+            quantity:        entry.quantity == null ? 1 : entry.quantity,
             sex:             entry.sex,
             date:            entry.date,
             time:            entry.time,
+            outing_start_time: entry.outing_start_time == null ? null : entry.outing_start_time,
+            outing_end_time:   entry.outing_end_time   == null ? null : entry.outing_end_time,
             location_name:   entry.location_name == null ? null : entry.location_name,
             lat:             entry.lat == null ? null : entry.lat,
             lng:             entry.lng == null ? null : entry.lng,
@@ -6562,7 +11495,13 @@ async function syncOfflineQueue() {
         }
 
       // Upload photo if queued (IndexedDB blob preferred, with dataURL fallback).
-      if (!entry.is_blank && (entry._photoBlobId || entry._photoDataUrl)) {
+      // If a prior sync attempt already uploaded it (row insert then failed or lost
+      // its ack), reuse that object instead of re-uploading — re-uploading would
+      // orphan the first file. The local blob is deleted only AFTER the row commits
+      // (below), so a retry can still recover the photo.
+      if (!entry.is_blank && entry._uploadedPhotoPath) {
+        payload.photo_url = entry._uploadedPhotoPath;
+      } else if (!entry.is_blank && (entry._photoBlobId || entry._photoDataUrl)) {
         try {
           var blob = null;
           if (entry._photoBlobId) {
@@ -6577,20 +11516,24 @@ async function syncOfflineQueue() {
           var upload = await sb.storage.from('cull-photos').upload(path, file, { upsert: true, contentType: 'image/jpeg' });
           if (!upload.error) {
             payload.photo_url = path;
-            if (entry._photoBlobId) {
-              try { await deleteOfflinePhotoBlob(entry._photoBlobId); } catch(cleanErr) {}
-            }
+            entry._uploadedPhotoPath = path; // remember for a retry; blob deleted after the row commits
+          } else {
+            photosDropped++;
           }
-        } catch(photoErr) { console.warn('Photo sync failed:', photoErr); }
+        } catch(photoErr) { console.warn('Photo sync failed:', photoErr); photosDropped++; }
       } else if (!entry.is_blank && entry._existingPhotoUrl) {
         var ex = entry._existingPhotoUrl;
         var npath = cullPhotoStoragePath(ex);
         payload.photo_url = npath || ex;
       }
 
-        var result = await sb.from('cull_entries').insert(payload).select('id');
+        var result = await cullReplayWrite(sb, payload);
         if (result.error) throw result.error;
         if (payload && payload.date) extendSeasonCacheForDate(payload.date);
+        // Row committed — now it's safe to drop the local photo blob (moved here
+        // from the upload step so a failed / ack-lost insert can retry with the
+        // photo intact instead of losing it and orphaning the uploaded object).
+        if (entry._photoBlobId) { try { await deleteOfflinePhotoBlob(entry._photoBlobId); } catch(cleanErr) {} }
         synced++;
         if (entry._photoStripped) photosStripped++;
 
@@ -6607,8 +11550,13 @@ async function syncOfflineQueue() {
         }
       } catch(e) {
         console.warn('Sync failed for entry:', e);
-        failed++;
-        remaining.push(entry);
+        entry._attempts = (entry._attempts || 0) + 1;
+        if (entry._attempts >= 5) {
+          deadLettered.push(entry); // give up after 5 tries so one poison entry can't block the queue forever
+        } else {
+          failed++;
+          remaining.push(entry);
+        }
       }
     }
 
@@ -6616,18 +11564,36 @@ async function syncOfflineQueue() {
     if (!persistRes.ok) {
       showToast('⚠️ Could not save sync state to device — free storage or try again (queue may retry after refresh)');
     }
+    if (deadLettered.length) {
+      try {
+        var _dlKey = OFFLINE_KEY + '-deadletter';
+        var _prevDl = [];
+        try { _prevDl = JSON.parse(localStorage.getItem(_dlKey) || '[]'); if (!Array.isArray(_prevDl)) _prevDl = []; } catch (_) { _prevDl = []; }
+        localStorage.setItem(_dlKey, JSON.stringify(_prevDl.concat(deadLettered)));
+      } catch (_) {}
+    }
     updateOfflineBadge();
     await loadEntries();
 
-    if (failed === 0) {
-      var msg = '✅ Synced ' + synced + ' entr' + (synced===1?'y':'ies');
+    if (failed === 0 && deadLettered.length === 0) {
+      var doneBits = [];
+      if (synced > 0 || queue.length > 0) doneBits.push(synced + ' entr' + (synced === 1 ? 'y' : 'ies'));
+      if (standsFlushed > 0) doneBits.push(standsFlushed + ' stand' + (standsFlushed === 1 ? '' : 's'));
+      var msg = '✅ Synced ' + (doneBits.length ? doneBits.join(' + ') : '0 entries');
       if (photosStripped > 0) {
         msg += ' · ' + photosStripped + ' without photo' + (photosStripped===1?'':'s') + ' (removed to save storage)';
       }
-      showToast(msg, photosStripped > 0 ? 5000 : 2500);
+      if (photosDropped > 0) {
+        msg += ' · ' + photosDropped + ' photo' + (photosDropped===1?'':'s') + " couldn't upload (entr" + (photosDropped===1?'y':'ies') + ' saved without)';
+      }
+      showToast(msg, (photosStripped > 0 || photosDropped > 0) ? 5000 : 2500);
       if (synced > 0) flHapticSuccess();
     } else {
-      showToast('⚠️ Synced ' + synced + ', failed ' + failed);
+      var wmsg = '⚠️ Synced ' + synced;
+      if (failed > 0) wmsg += ', failed ' + failed;
+      if (deadLettered.length > 0) wmsg += ', ' + deadLettered.length + ' set aside after repeated failures';
+      if (photosDropped > 0) wmsg += " · " + photosDropped + " photo(s) couldn't upload";
+      showToast(wmsg, 5000);
       flHapticError();
     }
   } finally {
@@ -6639,16 +11605,25 @@ async function syncOfflineQueue() {
 window.addEventListener('online', function() {
   syncDiaryTrustedUkClock();
   var queue = getOfflineQueueForCurrentUser();
-  if (queue.length > 0 && sb && currentUser) {
+  var standN = (sb && currentUser) ? standOutboxCount(currentUser.id) : 0;
+  if ((queue.length > 0 || standN > 0) && sb && currentUser) {
     setTimeout(syncOfflineQueue, 1500); // small delay to let connection stabilise
   }
   updateOfflineBadge();
   refreshPinMapFallbackBanner();
+  // Finding U: signal returning must UN-grey the grounds sheet and clear the
+  // editor's banner without waiting for something else to trigger a repaint.
+  if (typeof renderGroundsSheet === 'function') renderGroundsSheet();
+  if (typeof refreshGmapFallbackBanner === 'function') refreshGmapFallbackBanner();
 });
 
 window.addEventListener('offline', function() {
   updateOfflineBadge();
   refreshPinMapFallbackBanner();
+  // Finding U: and losing it must grey them the moment it happens, not at the
+  // next failed fetch — which, standing still in a wood, may never arrive.
+  if (typeof renderGroundsSheet === 'function') renderGroundsSheet();
+  if (typeof refreshGmapFallbackBanner === 'function') refreshGmapFallbackBanner();
 });
 
 // Call on sign-in to restore badge state
@@ -6793,6 +11768,6442 @@ async function saveGround(name) {
   } catch(e) { console.warn('saveGround error:', e); }
 }
 
+// ══════════════════════════════════════════════════════════════
+// GROUNDS BOUNDARIES (G2 — GROUNDS-PLAN.md §4): manager sheet + editor.
+// Data in modules/grounds.mjs; geometry maths in lib/fl-geo.mjs. Editing is
+// online-only (stands precedent); saved boundaries stay viewable offline via
+// the module's localStorage snapshot. The editor overlay is a pinmap-pattern
+// clone (gmap-* ids) — crosshair + "Add point", NO Nominatim (vertices don't
+// need place names, zero geocode traffic by design).
+// ══════════════════════════════════════════════════════════════
+
+var flGroundsState = {
+  features: null,   // null = never loaded this session; [] = loaded, none
+  offline: false,   // last refresh served from the cache
+  loading: false,
+  // null = editor closed; else { ground, featureId, ring [[lat,lng],…] OPEN,
+  // closed (ring finalised → drag/delete mode), undo [json snapshots],
+  // armedVertexIdx/-At (two-tap vertex delete), armedCancelAt (two-tap ←) }
+  editor: null
+};
+var gmap = null, gmapStdLayer = null, gmapSatLayer = null;
+var _gmapTileErrorCount = 0;
+var _gmapTileOkStreak = 0; // Section 6: consecutive tileloads — clears the banner
+var gmapPreviewLayer = null;   // dashed polyline while drawing; filled polygon once closed
+var gmapVertexMarkers = [];
+
+// ── Data ──────────────────────────────────────────────────────
+
+/**
+ * Finding U: `flGroundsState.offline` only ever meant "the LAST refresh fell
+ * back to the cache". Between losing signal and the next failed fetch — which
+ * may never come, because nothing refreshes while you stand still in a wood —
+ * every editing button still looked live, the offline note stayed hidden, and
+ * the refusal only arrived after the tap. The radio knows sooner than the
+ * fetch does, so ask it too: offline is either.
+ */
+function groundsOffline() {
+  return (typeof navigator !== 'undefined' && navigator.onLine === false) || !!flGroundsState.offline;
+}
+
+async function refreshGroundsData() {
+  if (!sb || !currentUser || flGroundsState.loading) return;
+  flGroundsState.loading = true;
+  try {
+    flGroundsState.features = await fetchGroundFeatures(sb, currentUser.id);
+    flGroundsState.offline = false;
+  } catch (e) {
+    console.warn('ground features fetch failed:', e);
+    flGroundsState.features = cachedGroundFeatures();
+    flGroundsState.offline = true;
+  }
+  flGroundsState.loading = false;
+  // G3: features changed — repaint every map that carries a boundary layer
+  // and keep the Settings row honest.
+  flBoundaryPaint.forEach(function(e2) { renderGroundBoundaries(e2.map); });
+  renderSettingsGroundsRow();
+  syncGroundInvite(); // G6: keep the map's draw-invite honest
+}
+
+/** Features to render right now: live list if loaded, else the offline snapshot. */
+function groundFeaturesNow() {
+  return flGroundsState.features != null ? flGroundsState.features : cachedGroundFeatures();
+}
+
+// ── Manager sheet ─────────────────────────────────────────────
+
+/** PURE: the grounds list markup (vm-extracted by tests/grounds-render.test.mjs). */
+function groundsSheetListHtml(grounds, features, offline, opts) {
+  grounds = grounds || [];
+  features = features || [];
+  opts = opts || {};
+  if (!grounds.length) {
+    return '<div class="grx-empty">No grounds yet — add your first ground below, then draw its boundary on the map.</div>';
+  }
+  // Section 6 (2026-07-25): with more than one ground the sheet opens with the
+  // shape of the whole holding. Suppressed at one ground, where it would only
+  // repeat the card directly beneath it.
+  var h = '';
+  if (grounds.length > 1) {
+    // AC: the summary adds the figures printed on the ground cards below it,
+    // not the raw metres. Rounding the true sum let "108 ha in total" sit over
+    // parcels reading 25 + 13 + 71 — arithmetic done in front of the reader
+    // has to survive the reader checking it.
+    var mappedN = 0, allM2 = 0, groundSums = [];
+    grounds.forEach(function(gg) {
+      var ga = 0, gp = [];
+      features.forEach(function(f) {
+        if (!f || f.kind !== 'boundary' || f.ground !== gg) return;
+        var m = geometryAreaM2(f.geometry);
+        if (m > 0) { ga += m; gp.push(landParts(m)); }
+      });
+      if (ga > 0) { mappedN++; allM2 += ga; groundSums.push(sumLandParts(gp)); }
+    });
+    h += '<div class="grx-sum">' + grounds.length + ' grounds · '
+      + (mappedN ? mappedN + ' mapped' : 'none mapped yet')
+      + (allM2 > 0 ? ' · ' + esc(formatAreaParts(sumLandParts(groundSums))) + ' in total' : '') + '</div>';
+  }
+  grounds.forEach(function(g) {
+    var rows = features.filter(function(f) { return f && f.kind === 'boundary' && f.ground === g; });
+    var zones = features.filter(function(f) { return f && f.kind === 'no_shoot' && f.ground === g; });
+    var lines = features.filter(function(f) { return f && f.kind === 'line' && f.ground === g; }); // G9
+    var marks = features.filter(function(f) { return f && f.kind === 'marker' && f.ground === g; }); // G10
+    var total = 0, parcelParts = [];
+    rows.forEach(function(f) {
+      var m = geometryAreaM2(f.geometry);
+      total += m;
+      if (m > 0) parcelParts.push(landParts(m));  // AC: head chip = sum of the rows
+    });
+    // Section 6: the colour dot is the same hue the boundary is painted in on
+    // every map, so the list and the map are legibly the same set of grounds.
+    // AA: the card carries its own name so flRevealRow can find the one that
+    // was just added — the list is rebuilt wholesale on every render, so a
+    // reference held across the re-render would be to a detached node.
+    h += '<div class="grx-ground" data-ground-card="' + esc(g) + '">';
+    // Finding S: the sheet could ADD a ground but never rename or remove one.
+    // The cascades already existed (G17) — they were simply unreachable from
+    // here, so an empty ground lingered forever as "not mapped yet". Renaming
+    // swaps the head for an inline field rather than opening a second surface.
+    if (opts.renaming != null && g === opts.renaming) {
+      h += '<div class="grx-head grx-head--renaming"><span class="grx-dot" style="background:' + groundColorFor(g) + ';"></span>'
+        + '<input type="text" id="grx-rename-inp" class="grx-rename-inp" maxlength="120" value="' + esc(g) + '" data-old="' + esc(g) + '" autocomplete="off" aria-label="Ground name">'
+        + '<span class="grx-head-acts">'
+        + '<button type="button" class="grx-iconbtn" data-fl-action="grx-rename-cancel" aria-label="Cancel rename">' + GMB_CROSS_SVG + '</button>'
+        + '<button type="button" class="grx-iconbtn ok" data-fl-action="grx-rename-save" data-ground="' + esc(g) + '" aria-label="Save name">' + GMB_CHECK_SVG + '</button>'
+        + '</span></div>';
+    } else {
+      h += '<div class="grx-head"><span class="grx-dot" style="background:' + groundColorFor(g) + ';"></span><div class="grx-name">' + esc(g) + '</div>'
+        + (total > 0 ? '<div class="grx-area">' + esc(formatAreaParts(sumLandParts(parcelParts))) + '</div>'
+                     : '<div class="grx-unmapped">not mapped yet</div>')
+        + '<span class="grx-head-acts">'
+        + '<button type="button" class="grx-iconbtn" data-fl-action="grx-rename-start" data-ground="' + esc(g) + '" aria-label="Rename ' + esc(g) + '"' + (offline ? ' disabled' : '') + '>' + GMB_PENCIL_SVG + '</button>'
+        + '<button type="button" class="grx-iconbtn del" data-fl-action="grx-ground-delete" data-ground="' + esc(g) + '" aria-label="Remove ' + esc(g) + ' from your grounds"' + (offline ? ' disabled' : '') + '>' + GMB_TRASH_SVG + '</button>'
+        + '</span></div>';
+    }
+    // Section 6: the ground's acreage is stated ONCE. A single-parcel ground
+    // printed the identical figure in the head chip and in the parcel row one
+    // line below it, which reads as two measurements that happen to agree.
+    var showParcelArea = rows.length > 1;
+    rows.forEach(function(f, i) {
+      var nm = f.name ? f.name : ('Parcel ' + (i + 1));
+      var a = geometryAreaM2(f.geometry);
+      h += '<div class="grx-parcel">'
+        + '<div class="grx-parcel-name">' + esc(nm)
+        + (showParcelArea && a > 0 ? ' <span class="grx-parcel-area">' + esc(formatAreaBoth(a)) + '</span>' : '')
+        + '</div>'
+        + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(f.id) + '"' + (offline ? ' disabled' : '') + '>Edit</button>'
+        + '<button type="button" class="grx-btn grx-btn-x" data-fl-action="ground-parcel-delete" data-feature-id="' + esc(f.id) + '" aria-label="Remove this parcel" data-fl-name="' + esc(nm) + '" data-fl-kind="parcel"' + (offline ? ' disabled' : '') + '>✕</button>'
+        + '</div>';
+    });
+    // G4: no-shoot zones listed under the parcels, tagged red.
+    zones.forEach(function(z, i) {
+      var znm = z.name ? z.name : ('Zone ' + (i + 1));
+      var za = geometryAreaM2(z.geometry);
+      h += '<div class="grx-parcel grx-parcel--zone">'
+        + '<div class="grx-parcel-name"><span class="grx-zone-tag">No-shoot</span>' + esc(znm)
+        + (za > 0 ? ' <span class="grx-parcel-area">' + esc(formatAreaBoth(za)) + '</span>' : '')
+        + '</div>'
+        + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(z.id) + '"' + (offline ? ' disabled' : '') + '>Edit</button>'
+        + '<button type="button" class="grx-btn grx-btn-x" data-fl-action="ground-parcel-delete" data-feature-id="' + esc(z.id) + '" aria-label="Remove this zone" data-fl-name="' + esc(znm) + '" data-fl-kind="no-shoot zone"' + (offline ? ' disabled' : '') + '>✕</button>'
+        + '</div>';
+    });
+    // G9/G15: lines under the zones — LENGTH is their number, not area. The
+    // tag now names the SUBTYPE (Ride/Track/Footpath/Compartment/Line) and is
+    // colour-cued to match the stroke on the map, so the list reads like the
+    // map. Unnamed lines fall back to a numbered generic name.
+    lines.forEach(function(ln, i) {
+      var lt = lineSubtypeOf(ln.geometry);
+      var lst = groundLineStyle(lt);
+      var lnm = ln.name ? ln.name : ('Line ' + (i + 1));
+      var lring = parseGeometry(ln.geometry, 2);
+      var lm = lring ? pathLengthM(lring) : 0;
+      var tagStyle = lst.color ? ' style="color:' + lst.color + ';border-color:' + lst.color + '66;background:' + lst.color + '1a;"' : '';
+      h += '<div class="grx-parcel grx-parcel--line">'
+        + '<div class="grx-parcel-name"><span class="grx-zone-tag grx-line-tag"' + tagStyle + '>' + esc(lineSubtypeChip(lt)) + '</span>' + esc(lnm)
+        + (lm > 0 ? ' <span class="grx-parcel-area">' + esc(formatDistM(lm)) + '</span>' : '')
+        + '</div>'
+        + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(ln.id) + '"' + (offline ? ' disabled' : '') + '>Edit</button>'
+        + '<button type="button" class="grx-btn grx-btn-x" data-fl-action="ground-parcel-delete" data-feature-id="' + esc(ln.id) + '" aria-label="Remove this line" data-fl-name="' + esc(lnm) + '" data-fl-kind="line"' + (offline ? ' disabled' : '') + '>✕</button>'
+        + '</div>';
+    });
+    // G10: markers under the lines — furniture rows, type glyph + name.
+    marks.forEach(function(mrow) {
+      var mk = markerFromGeometry(mrow.geometry);
+      if (!mk) return;
+      // Finding E: the standalone noun names an unnamed marker ("Marker"),
+      // but the trailing pill sits beside a name and must say what KIND it is
+      // — "Water trough Marker" was the parent noun leaking into the chip.
+      var mlabel = markerTypeLabel(mk.type);
+      h += '<div class="grx-parcel grx-parcel--mk">'
+        + '<div class="grx-parcel-name"><span class="grx-zone-tag grx-mk-tag">' + groundMarkerGlyph(mk.type) + '</span>'
+        + esc(mrow.name || mlabel)
+        + (mrow.name ? ' <span class="grx-parcel-area">' + esc(markerTypeChip(mk.type)) + '</span>' : '')
+        + '</div>'
+        + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(mrow.id) + '"' + (offline ? ' disabled' : '') + '>Edit</button>'
+        + '<button type="button" class="grx-btn grx-btn-x" data-fl-action="ground-parcel-delete" data-feature-id="' + esc(mrow.id) + '" aria-label="Remove this marker" data-fl-name="' + esc(mrow.name || mlabel) + '" data-fl-kind="marker"' + (offline ? ' disabled' : '') + '>✕</button>'
+        + '</div>';
+    });
+    h += '<div class="grx-draw-row">'
+      + '<button type="button" class="grx-draw" data-fl-action="ground-draw" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>'
+      + (rows.length ? '+ Add another parcel' : '+ Draw boundary') + '</button>'
+      + '<button type="button" class="grx-draw grx-draw--zone" data-fl-action="ground-draw-zone" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>+ No-shoot zone</button>'
+      + '<button type="button" class="grx-draw grx-draw--line" data-fl-action="ground-draw-line" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>+ Line</button>'
+      + '<button type="button" class="grx-draw grx-draw--mk" data-fl-action="ground-add-marker" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>+ Marker</button>'
+      + '</div>';
+    h += '</div>';
+  });
+  return h;
+}
+
+/** PURE: the Settings row value ("3 grounds · 2 mapped" / "None yet"). */
+function groundsSettingsValueText(groundCount, mappedCount) {
+  if (!groundCount) return 'None yet';
+  var t = groundCount + ' ground' + (groundCount === 1 ? '' : 's');
+  if (mappedCount > 0) t += ' · ' + mappedCount + ' mapped';
+  return t;
+}
+
+function renderSettingsGroundsRow() {
+  var el = document.getElementById('profile-grounds-value');
+  if (!el) return;
+  var mapped = {};
+  groundFeaturesNow().forEach(function(f) { if (f && f.kind === 'boundary') mapped[f.ground] = true; });
+  var mappedCount = (savedGrounds || []).filter(function(g) { return mapped[g]; }).length;
+  el.textContent = groundsSettingsValueText((savedGrounds || []).length, mappedCount);
+}
+
+/** Finding S: which ground (if any) has its head swapped for a rename field. */
+var groundsSheetRenaming = null;
+
+/** Finding S: commit an inline rename from the sheet. renameGround() cascades
+ *  the name across features, seats, entries and targets and toasts on failure,
+ *  so the field is left open when it returns !ok — nothing to retype. */
+async function groundsSheetRenameSave(oldName) {
+  var inp = document.getElementById('grx-rename-inp');
+  if (!inp) return;
+  var res = await renameGround(oldName, inp.value);
+  if (res && res.ok) { groundsSheetRenaming = null; renderGroundsSheet(); }
+}
+
+/** Finding S: remove a ground from the sheet. deleteGround() asks first and
+ *  names exactly what goes; seats and diary entries are always kept. */
+async function groundsSheetDeleteGround(name) {
+  groundsSheetRenaming = null;
+  await deleteGround(name);
+  renderGroundsSheet();
+}
+
+function renderGroundsSheet() {
+  var list = document.getElementById('grounds-sheet-list');
+  if (!list) return;
+  if (groundsSheetRenaming != null && (savedGrounds || []).indexOf(groundsSheetRenaming) === -1) groundsSheetRenaming = null;
+  var gOff = groundsOffline();
+  list.innerHTML = groundsSheetListHtml(savedGrounds, groundFeaturesNow(), gOff, { renaming: groundsSheetRenaming });
+  if (groundsSheetRenaming != null) {
+    var ri = document.getElementById('grx-rename-inp');
+    if (ri) {
+      setTimeout(function() { try { ri.focus(); ri.select(); } catch (_) {} }, 50);
+      ri.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); groundsSheetRenameSave(ri.getAttribute('data-old')); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); groundsSheetRenaming = null; renderGroundsSheet(); }
+      });
+    }
+  }
+  var off = document.getElementById('grounds-sheet-offline');
+  if (off) off.style.display = gOff ? 'block' : 'none';
+  // Finding U/W: the sheet's own static controls obey the same truth. Add and
+  // Import write to the server; Export and Measure read the cache, so they
+  // stay live offline — that is the whole point of the cache.
+  ['grounds-add', 'grounds-import'].forEach(function(act) {
+    var b = document.querySelector('#grounds-ov [data-fl-action="' + act + '"]');
+    if (b) b.disabled = gOff;
+  });
+  var addInp = document.getElementById('grounds-add-name');
+  if (addInp) addInp.disabled = gOff;
+  // Findings 19/20: restore the remembered seat-privacy choice every time the
+  // sheet is drawn, and attach its listener once.
+  flSyncExportSeatsBox();
+  renderSettingsGroundsRow();
+}
+
+function openGroundsSheet() {
+  if (!currentUser) return;
+  renderGroundsSheet();                       // instant paint from cache/state
+  refreshGroundsData().then(renderGroundsSheet);
+  var ov = document.getElementById('grounds-ov');
+  if (ov) { ov.classList.add('open'); document.body.style.overflow = 'hidden'; }
+}
+
+function closeGroundsSheet() {
+  var ov = document.getElementById('grounds-ov');
+  if (ov) ov.classList.remove('open');
+  // The settings sheet may still be open beneath — keep scroll locked if so.
+  var so = document.getElementById('settings-ov');
+  if (!so || !so.classList.contains('open')) document.body.style.overflow = '';
+}
+
+async function groundsAddFromInput() {
+  var inp = document.getElementById('grounds-add-name');
+  if (!inp) return;
+  var name = (inp.value || '').trim();
+  if (!name) return;
+  if (name.length > 120) { showToast('⚠️ Ground name too long (120 characters max)'); return; }
+  if (savedGrounds.indexOf(name) !== -1) { showToast('⚠️ That ground already exists'); inp.value = ''; return; }
+  if (!navigator.onLine) { showToast('⚠️ Still offline — adding a ground needs signal'); return; }
+  await saveGround(name);
+  inp.value = '';
+  renderGroundsSheet();
+  // AA: "now draw its boundary" is a direction, and a direction has to point at
+  // something on screen. Attribute lookup rather than a CSS selector because a
+  // ground may legitimately be called Rob"s Piece.
+  var cards = document.querySelectorAll('#grounds-sheet-list [data-ground-card]');
+  for (var ci = 0; ci < cards.length; ci++) {
+    if (cards[ci].getAttribute('data-ground-card') === name) { flRevealRow(cards[ci]); break; }
+  }
+  showToast('✓ Ground added — now draw its boundary');
+}
+
+/** M71: parcel/zone/line/marker remove.
+ *  This was a two-tap arm on a 22px ✕ whose only feedback was the glyph
+ *  changing to "Sure?" — no title, no name of the thing, and a 3.5 s window
+ *  that expired silently. Deleting a hand-drawn boundary is not recoverable,
+ *  so it now goes through the same modal every other permanent delete uses,
+ *  and the modal NAMES the row so a mis-tap on a dense list is visible before
+ *  it is irreversible. */
+async function groundParcelDelete(el) {
+  if (!el) return;
+  var id = el.getAttribute('data-feature-id');
+  if (!id) return;
+  if (!navigator.onLine) { showToast('⚠️ Still offline — removing needs signal'); return; }
+  // Section 6 (2026-07-26): the label used to be the ROW's textContent, which
+  // is the type chip and the measurement pill glued to the name with no spaces
+  // — a dialog offering to remove “LineOld fence line 172 m”. The row already
+  // knows its own display name and its own kind; carry both on the button and
+  // quote them, rather than reverse-engineering them out of rendered markup.
+  var row = el.closest ? el.closest('.grx-parcel') : null;
+  var label = (el.getAttribute('data-fl-name') || '').trim();
+  var kind = el.getAttribute('data-fl-kind') || '';
+  if (!kind) { // pre-Section-6 markup, or a row rendered by something else
+    kind = 'parcel';
+    if (row && row.classList.contains('grx-parcel--zone')) kind = 'no-shoot zone';
+    else if (row && row.classList.contains('grx-parcel--line')) kind = 'line';
+    else if (row && row.classList.contains('grx-parcel--mk')) kind = 'marker';
+  }
+  var undoLine = (kind === 'marker')
+    ? 'It is deleted permanently — you would have to place it again.'
+    : 'The shape is deleted permanently — you would have to draw it again.';
+  if (!(await flConfirm({
+    title: 'Remove this ' + kind + '?',
+    body: (label ? '“' + label + '” will be removed from this ground. ' : '')
+      + undoLine + ' Culls and stands are not affected.',
+    action: 'Remove ' + kind,
+    tone: 'danger'
+  }))) return;
+  if (!navigator.onLine) { showToast('⚠️ Still offline — removing needs signal'); return; }
+  try {
+    await deleteGroundFeature(sb, id);
+  } catch (e) {
+    console.warn('deleteGroundFeature error:', e);
+    showToast('⚠️ Could not remove the parcel — try again');
+    return;
+  }
+  // Section 6: the toast used to say "Parcel removed" whatever you had just
+  // deleted — the kind is right there, two lines up.
+  showToast('✓ ' + kind.charAt(0).toUpperCase() + kind.slice(1) + ' removed');
+  await refreshGroundsData();
+  renderGroundsSheet();
+}
+
+// ── Boundary editor overlay ───────────────────────────────────
+
+/** PURE: the live readout line under the map (vm-extracted). `mode` =
+ *  'shape' (default) | 'measure' — an OPEN measure path reads as distance
+ *  along the legs (no closing leg); closing it flips to area + perimeter. */
+function gmapReadoutText(ring, closed, mode, kind) {
+  var n = ring ? ring.length : 0;
+  if (mode === 'measure' && !closed) {
+    if (n === 0) return 'Position the crosshair, then Add point';
+    if (n === 1) return '1 point — add another to measure';
+    return n + ' points · ' + formatDistM(pathLengthM(ring)) + ' along the path';
+  }
+  if (kind === 'line') { // G9: a line never closes — distance IS its meaning
+    if (n === 0) return 'Position the crosshair, then Add point';
+    if (n === 1) return '1 point — add at least 2';
+    return n + ' points · ' + formatDistM(pathLengthM(ring)) + ' along the line';
+  }
+  if (kind === 'marker') { // G10: one point is the whole story
+    if (n === 0) return 'Position the crosshair, then Place marker';
+    return 'Placed at ' + flPlaceRef(ring[0][0], ring[0][1], 8);
+  }
+  if (n === 0) return 'Position the crosshair, then Add point';
+  if (n < 3) return n + ' point' + (n === 1 ? '' : 's') + ' — add at least 3';
+  return n + ' points · ' + formatAreaBoth(ringAreaM2(ring)) + ' · ' + formatDistM(ringPerimeterM(ring)) + ' around';
+}
+
+/** PURE: the helper line for the current mode (vm-extracted). */
+function gmapHintText(closed, mode, kind) {
+  if (mode === 'measure') {
+    // Section 6 (2026-07-26): "Undo to reopen the path" over-promised. Undo is
+    // one stack, and closing pushed a snapshot onto it along with everything
+    // else, so the tap that reopens the path also takes the last corner back
+    // with it. Promise what actually happens.
+    return closed
+      ? 'Closed for area · Undo reopens the path — and drops the last point'
+      : 'Tap Add point at each turn — or walk it with the boots button';
+  }
+  if (kind === 'line') { // G9/G15: rides/tracks/footpaths — open by nature
+    return 'Trace the route point by point · drag a corner to adjust it';
+  }
+  if (kind === 'marker') { // G10
+    return closed ? '' : 'Pan the map, then Place · placing again moves it · drag the dot to fine-tune';
+  }
+  // Section 6 (2026-07-26): corners have been draggable from the first point
+  // onward — the line drawing them is the same one edit mode uses — but the
+  // open-ring hint never said so, so the only way to fix a corner mid-draw
+  // looked like Undo-and-start-again. Say it while it is useful.
+  return closed
+    ? 'Drag a corner to adjust it · tap a corner twice to remove it'
+    : 'Line the crosshair up on each corner in turn · drag one to adjust it';
+}
+
+/** PURE (G10): inline glyph per marker type — 13px, currentColor strokes. */
+function groundMarkerGlyph(type) {
+  switch (type) {
+    case 'trail_cam':
+      return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2.5" y="1.5" width="8" height="10" rx="1.4"/><rect x="4.4" y="3.2" width="4.2" height="2.6" rx="0.6"/><circle cx="6.5" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="6.5" cy="10.2" r="0.7" fill="currentColor" stroke="none"/></svg>';
+    case 'parking':
+      return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 11.5V1.5h3.2a2.8 2.8 0 1 1 0 5.6H4"/></svg>';
+    case 'structure':
+      return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 6L6.5 2l5 4"/><path d="M3 6v5.5h7V6"/><rect x="5.2" y="7.2" width="2.6" height="2.6"/></svg>';
+    case 'gate':
+      return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 2.5v8.5M11 2.5v8.5M2 5h9M2 8.5h9"/></svg>';
+    case 'larder': // G10b: rail + hook + hanging carcass
+      return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5h10M6.5 1.5v1.6"/><path d="M6.5 3.1c1.1 0 1.1 1.2 0 1.2"/><path d="M6.5 4.3c-1.6 0.5-2.3 2-2 3.9 0.3 1.8 1 2.8 2 2.8s1.7-1 2-2.8c0.3-1.9-0.4-3.4-2-3.9z"/></svg>';
+    case 'wallow': // G10b: churned pool — shallow bowl + ripples
+      return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M1.5 7c0 2.4 2.2 4 5 4s5-1.6 5-4"/><path d="M3.2 6.2c0.9-0.9 2.1-0.9 3 0s2.1 0.9 3 0"/><path d="M4.1 3.8c0.6-0.6 1.4-0.6 2 0s1.4 0.6 2 0"/></svg>';
+    default:
+      return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11.5V2l7 2.4-7 2.4"/></svg>';
+  }
+}
+
+/** PURE (G10): the badge painted on maps — dark chip, moss glyph, optional
+ *  name pill underneath. Sized for divIcon (iconSize [24,24], anchor centre). */
+function groundMarkerBadgeHtml(type, name) {
+  return '<div style="width:24px;height:24px;border-radius:8px;background:rgba(20,30,12,0.92);'
+    + 'border:1.5px solid rgba(216,176,84,0.55);color:#9ec46a;display:flex;align-items:center;'
+    + 'justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.4);">' + groundMarkerGlyph(type) + '</div>'
+    + (name
+      ? '<div class="gmk-name" style="position:absolute;top:26px;left:50%;transform:translateX(-50%);background:rgba(10,20,6,0.82);'
+        + 'color:#f0e4c0;font:700 9px/1 \'DM Sans\',sans-serif;padding:2px 6px;border-radius:8px;'
+        + 'white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">' + esc(name) + '</div>'
+      : '');
+}
+
+/** PURE (G10 / AN): marker-type chips, on a NEW marker and a SAVED one alike.
+ *  These used to be hidden once saved, on the reasoning that "retyping a saved
+ *  gate into a cam would be a silent lie" — which held for exactly as long as
+ *  every marker on the map was one you had placed by hand, because then the
+ *  type was your own statement and changing it later did rewrite history. AJ
+ *  ended that: the importer now READS a type out of the name in a file, and a
+ *  guess you cannot correct is not honesty, it is a dead end. A ground feature
+ *  is a description of a piece of land, not a log entry — nothing downstream
+ *  quotes it back at you the way a cull record does — so correcting one is a
+ *  correction and not a lie. The save toast names what it became. */
+function gmapMarkerTypeHtml(mtype) {
+  var h = '';
+  GROUND_MARKER_TYPES.forEach(function(t) {
+    h += '<button type="button" class="gmk-b gmk-b--mk' + (mtype === t.id ? ' on' : '') + '" data-fl-action="gmap-marker-type" data-type="' + t.id + '">' + groundMarkerGlyph(t.id) + '<span>' + esc(markerTypeChip(t.id)) + '</span></button>';
+  });
+  return h;
+}
+
+/** PURE (G15): on-map style for a line subtype → { color, dashArray }.
+ *  color === null means "use the ground's own colour" (the catch-all 'other'
+ *  line stays tied to its parcel, as lines always did before G15). A footpath
+ *  dashes blue (a public right of way reads differently from your own ground);
+ *  a track is solid tan (the vehicle/argo route to the larder); a ride is solid
+ *  moss (the deer highway you sit over); a compartment edge dashes violet
+ *  (forestry block). Shared by the editor chips AND renderGroundBoundaries. */
+function groundLineStyle(lt) {
+  switch (lt) {
+    case 'footpath':    return { color: '#4f7fc0', dashArray: '5 6' };
+    case 'track':       return { color: '#a9762f', dashArray: null  };
+    case 'ride':        return { color: '#6e9a34', dashArray: null  };
+    case 'compartment': return { color: '#8a5fb0', dashArray: '3 5' };
+    default:            return { color: null,      dashArray: null  };
+  }
+}
+
+/** PURE (G15 / AN): line-subtype chips, on a NEW line and a SAVED one alike —
+ *  see gmapMarkerTypeHtml for why the saved case stopped being a lie. It bites
+ *  hardest here: AH types an imported path off its NAME, so an unnamed OS Maps
+ *  trace still lands on the catch-all, and this row is the only way to say what
+ *  it actually was. A leading break drops them onto their own row beneath the
+ *  Boundary/No-shoot/Line chips. The swatch is a short segment in the subtype's
+ *  colour + dash. */
+function gmapLineTypeHtml(ltype) {
+  var h = '<div class="gmk-break" aria-hidden="true"></div>';
+  LINE_SUBTYPES.forEach(function(t) {
+    var st = groundLineStyle(t.id);
+    var sw = st.color || '#d8b054';
+    h += '<button type="button" class="gmk-b gmk-b--lt' + (ltype === t.id ? ' on' : '') + '" data-fl-action="gmap-line-type" data-type="' + t.id + '">'
+      + '<span class="gmk-lt-sw" style="border-top-color:' + sw + ';border-top-style:' + (st.dashArray ? 'dashed' : 'solid') + ';"></span>'
+      + '<span>' + esc(lineSubtypeChip(t.id)) + '</span></button>';
+  });
+  return h;
+}
+
+/** PURE (AN): kind picker chips, on a SAVED feature as well as a new one.
+ *
+ *  AN (2026-07-26): finding AH taught the importer to read a path out of a
+ *  file's own <name>, and the comment justifying how NARROW that rule is leans
+ *  on this function existing: a cautious guess is only defensible if a wrong
+ *  one is cheap to undo. It was not. An "Access track" that arrived as a 0.9 ha
+ *  boundary could be deleted and walked again, and that was the whole of the
+ *  repair — so the app's one irreversible act was a decision the app had made
+ *  by itself, about land the user had already surveyed.
+ *
+ *  What replaces "saved means settled" is GEOMETRY, which is the only honest
+ *  veto here. A ring can always be re-read as a path, and a boundary and a
+ *  no-shoot zone are the same closed shape under two different meanings, so
+ *  those moves are free. A path needs three points before it can enclose
+ *  anything, so a two-point line offers the ring chips greyed rather than
+ *  absent — the reason is the shape, and the shape is fixable. Markers never
+ *  appear in this row at all: a point is not a parcel, and pretending the two
+ *  convert would lose either the position or the ring. */
+function gmapKindHtml(kind, canRing) {
+  var why = canRing ? '' : ' disabled title="A line needs at least 3 points before it can enclose ground"';
+  return '<button type="button" class="gmk-b' + (kind !== 'no_shoot' && kind !== 'line' ? ' on' : '') + '" data-fl-action="gmap-kind" data-kind="boundary"' + why + '>Boundary</button>'
+    + '<button type="button" class="gmk-b gmk-b--zone' + (kind === 'no_shoot' ? ' on' : '') + '" data-fl-action="gmap-kind" data-kind="no_shoot"' + why + '>No-shoot</button>'
+    + '<button type="button" class="gmk-b gmk-b--line' + (kind === 'line' ? ' on' : '') + '" data-fl-action="gmap-kind" data-kind="line">Line</button>';
+}
+
+/** PURE: the state-dependent button row (vm-extracted). Measure mode never
+ *  offers Save — it is a tape measure, not a pencil. A LINE never offers
+ *  Close — it saves open at ≥2 points (G9). */
+function gmapButtonsHtml(ring, closed, undoCount, mode, kind) {
+  var n = ring ? ring.length : 0;
+  // AF (2026-07-26): the commit button is RESERVED, not conditionally inserted.
+  // "Add point" gets tapped over and over — five, eight times for a real parcel —
+  // and the row used to re-flow underneath the thumb the moment Save became
+  // possible: the primary's centre jumped 102px sideways between the second tap
+  // and the third, so the tap meant for point three landed on Save. Undo is
+  // already drawn greyed-from-the-start in this same row, so the pattern and the
+  // slot both exist; the commit just was not using them. A disabled button fires
+  // no click, so the guard is the same one the old absence gave us, minus the
+  // moving target. The closed-polygon row is left alone on purpose: that state
+  // arrives via one deliberate "Close ring" tap, not a repeated one, so a third
+  // dead slot would cost clarity and buy no safety.
+  var slot = function(action, label, ready) {
+    return '<button type="button" class="gmx-btn go" data-fl-action="' + action + '"'
+      + (ready ? '' : ' disabled') + '>' + label + '</button>';
+  };
+  var h = '<button type="button" class="gmx-btn sec" data-fl-action="gmap-undo"' + (undoCount ? '' : ' disabled') + '>Undo</button>';
+  if (kind === 'marker' && mode !== 'measure') { // G10: place → save, two taps
+    h += '<button type="button" class="gmx-btn pri" data-fl-action="gmap-add-point">'
+      + (n === 0 ? '<span class="fl-ic fl-pin" aria-hidden="true"></span> Place marker' : '<span class="fl-ic fl-pin" aria-hidden="true"></span> Move here') + '</button>';
+    return h + slot('gmap-save', '✓ Save marker', n >= 1);
+  }
+  if (kind === 'line' && mode !== 'measure') {
+    h += '<button type="button" class="gmx-btn pri" data-fl-action="gmap-add-point">✚ Add point</button>';
+    return h + slot('gmap-save', '✓ Save line', n >= 2);
+  }
+  if (!closed) {
+    h += '<button type="button" class="gmx-btn pri" data-fl-action="gmap-add-point">✚ Add point</button>';
+    h += slot('gmap-close-ring', mode === 'measure' ? 'Close for area' : 'Close ring', n >= 3);
+  } else if (mode !== 'measure') {
+    // Section 6 (2026-07-26): every closed shape shared one CTA, so the
+    // no-shoot editor read "Draw no-shoot zone" in the title bar and offered
+    // "✓ Save boundary" underneath it. Name the thing you are actually saving.
+    h += '<button type="button" class="gmx-btn go" data-fl-action="gmap-save">✓ Save '
+      + (kind === 'no_shoot' ? 'zone' : 'boundary') + '</button>';
+  }
+  return h;
+}
+
+function initGmap() {
+  if (gmap) return;
+  gmap = L.map('gmap-div', { zoomControl: true, attributionControl: false }).setView([54.0, -2.0], 6);
+  var tiles = mapProviderTileUrls();
+  gmapStdLayer = L.tileLayer(tiles.std, tileOptsForUrl(tiles.std)).addTo(gmap);
+  gmapSatLayer = L.tileLayer(tiles.sat, tileOptsForUrl(tiles.sat));
+  attachGmapTileErrorHandlers();
+  bumpMapLoadEstimate('gmap');
+}
+
+function setGmapLayer(type) {
+  if (!gmap) return;
+  if (type === 'sat') {
+    try { gmap.removeLayer(gmapStdLayer); } catch (_) {}
+    gmapSatLayer.addTo(gmap);
+    document.getElementById('glt-map').className = 'lt-b off';
+    document.getElementById('glt-sat').className = 'lt-b on';
+  } else {
+    try { gmap.removeLayer(gmapSatLayer); } catch (_) {}
+    gmapStdLayer.addTo(gmap);
+    document.getElementById('glt-map').className = 'lt-b on';
+    document.getElementById('glt-sat').className = 'lt-b off';
+  }
+}
+
+// Section 6 (2026-07-26): the error count only ever went UP, so one bad patch
+// of tiles — or one zoom level outside a provider's envelope — left "Map tiles
+// may be failing" pinned over a map that had been drawing perfectly for the
+// last five minutes. A banner that cannot go away is not a warning, it is
+// furniture. Tiles that load are the only honest evidence the network is fine,
+// so count a STREAK of them (a single load proves nothing — one tile can
+// arrive from cache while the rest 403) and clear the alarm once the map has
+// demonstrably recovered. A fresh error resets the streak, so a genuinely
+// broken map keeps its banner.
+function attachGmapTileErrorHandlers() {
+  if (!gmapStdLayer || !gmapSatLayer || gmapStdLayer._flTileErrBound) return;
+  gmapStdLayer._flTileErrBound = true;
+  function bump() {
+    _gmapTileOkStreak = 0;
+    _gmapTileErrorCount++;
+    refreshGmapFallbackBanner();
+    var satActive = !!(gmap && gmapSatLayer && gmap.hasLayer(gmapSatLayer));
+    if (_gmapTileErrorCount >= 6 && (mapProvider === 'mapbox' || (mapProvider === 'hybrid' && satActive))) {
+      maybeFallbackFromMapbox('tile errors');
+    }
+  }
+  function ok() {
+    if (!_gmapTileErrorCount) return; // nothing to clear — stay cheap
+    if (++_gmapTileOkStreak < GMAP_TILE_OK_STREAK) return;
+    _gmapTileErrorCount = 0;
+    _gmapTileOkStreak = 0;
+    refreshGmapFallbackBanner();
+  }
+  gmapStdLayer.on('tileerror', bump);
+  gmapSatLayer.on('tileerror', bump);
+  gmapStdLayer.on('tileload', ok);
+  gmapSatLayer.on('tileload', ok);
+}
+
+function refreshGmapFallbackBanner() {
+  var el = document.getElementById('gmap-fallback-msg');
+  if (!el) return;
+  var o = document.getElementById('gmap-overlay');
+  if (!o || o.style.display !== 'flex') return;
+  if (!navigator.onLine) {
+    el.style.display = 'block';
+    // Section 6 (2026-07-26): the tape measure shares this overlay, and BOTH
+    // halves of the old string were false inside it — cached tiles do load,
+    // and measuring saves nothing so it needs no signal at all. Say what is
+    // actually true of the mode you are in.
+    var _ed = flGroundsState.editor;
+    el.textContent = (_ed && _ed.mode === 'measure')
+      ? 'Offline — new map tiles won\'t load, but measuring still works.'
+      : 'Offline — map tiles won\'t load. Boundary editing needs signal.';
+    return;
+  }
+  if (_gmapTileErrorCount >= 3) {
+    el.style.display = 'block';
+    el.textContent = 'Map tiles may be failing — try Satellite, or check signal.';
+    return;
+  }
+  el.style.display = 'none';
+  el.textContent = '';
+}
+
+/**
+ * Section 6 (2026-07-26): the editor's chrome sits ON TOP of the map canvas —
+ * the title bar and the fallback banner cover the top, the control panel
+ * covers the bottom third. fitBounds pads against the CONTAINER, so a flat
+ * [56, 56] framed the ring into a box a third of which the user cannot see or
+ * touch: editing an eight-corner parcel put three of its corners under the
+ * panel, where no thumb can reach them and no amount of panning helps, because
+ * panning moves the ring and the panel together.
+ *
+ * Measure the chrome that is actually on screen right now and hand Leaflet the
+ * real insets. Only FULL-WIDTH furniture counts — the zoom control and the
+ * Map/Satellite toggle are corner widgets a boundary can happily pass beneath,
+ * and padding the whole top for them would waste half the canvas. Clamped so
+ * the two insets can never swallow the container (Leaflet answers a negative
+ * viewport with an absurd zoom).
+ */
+function gmapChromeInsets(m) {
+  var top = 0, bottom = 0;
+  var mid = m.top + m.height / 2;
+  var chrome = ['.pinmap-topbar', '#gmap-fallback-msg', '.gmap-panel'];
+  for (var i = 0; i < chrome.length; i++) {
+    var el = document.querySelector('#gmap-overlay ' + chrome[i]);
+    if (!el) continue;
+    var r = el.getBoundingClientRect();
+    if (!(r.height > 0) || !(r.width >= m.width * 0.6)) continue; // corner widgets don't count
+    // AE (2026-07-26): decide which EDGE a piece of chrome belongs to by where
+    // its own middle sits, then measure the inset from that edge. The old pair
+    // of independent tests asked "does it reach past the map's midline?" of both
+    // edges separately — and the control panel, whose top edge (379) sits a
+    // hair ABOVE the midline (396) of a 791px map, answered yes to both. It was
+    // counted as 791px of TOP inset as well as 413px of bottom, so fitBounds
+    // was framing every boundary into a 127px letterbox and the crosshair maths
+    // pointed the sight 189px the wrong way. One element, one edge.
+    if (r.top + r.height / 2 < mid) {
+      if (r.bottom > m.top) top = Math.max(top, r.bottom - m.top);
+    } else if (r.top < m.bottom) {
+      bottom = Math.max(bottom, m.bottom - r.top);
+    }
+  }
+  return { top: top, bottom: bottom };
+}
+
+function gmapFitPadding() {
+  var pad = { tl: [28, 28], br: [28, 28] };
+  var mapEl = document.getElementById('gmap-div');
+  if (!mapEl) return pad;
+  var m = mapEl.getBoundingClientRect();
+  if (!(m.height > 40) || !(m.width > 40)) return pad;
+  var ins = gmapChromeInsets(m);
+  var top = ins.top + 20, bot = ins.bottom + 20;
+  // AD (2026-07-26): cap the PAIR, not each side on its own. A 42% per-side cap
+  // quietly understated a control panel that really covers 52% of the map, so
+  // fitBounds framed into a band 80px taller than the one you can see and the
+  // bottom edge of the ground spilled underneath the panel. What actually needs
+  // protecting is the strip that survives, so only shrink when the two together
+  // would leave less than a quarter of the map to frame into — and then shrink
+  // both in proportion, which keeps the shape centred in whatever is left.
+  var keep = m.height * 0.25;
+  if (top + bot > m.height - keep) {
+    var k = (m.height - keep) / (top + bot);
+    top *= k; bot *= k;
+  }
+  pad.tl = [28, Math.round(top)];
+  pad.br = [28, Math.round(bot)];
+  return pad;
+}
+
+/**
+ * AE (2026-07-26): where the crosshair actually IS, in map-container pixels.
+ *
+ * The crosshair was CSS-pinned to the middle of the overlay, and the overlay is
+ * the whole screen — but the bottom third of that screen is the control panel.
+ * So "the middle" named a point sitting UNDER the panel: at a 611px-tall
+ * viewport the line editor's crosshair centre fell 107px below the panel's top
+ * edge, and at 791px it still lost 17px of the sight. Every "Add point" dropped
+ * a corner the user could not see, on a target they could not aim at. You were
+ * shooting at the back of a wall and being shown the wall.
+ *
+ * The honest centre is the middle of the map still VISIBLE. Measure the chrome,
+ * take the mid-point of what survives it, and have the drawn crosshair and the
+ * placed point read that one number — so the sight and the shot cannot diverge.
+ */
+function gmapCrossPoint() {
+  var mapEl = document.getElementById('gmap-div');
+  if (!mapEl) return null;
+  var m = mapEl.getBoundingClientRect();
+  if (!(m.height > 40) || !(m.width > 40)) return null;
+  var ins = gmapChromeInsets(m);
+  // Clamp: a freak panel (keyboard up, long name field) must not push the sight
+  // off the top of the map — a wrong-but-visible centre still beats a hidden one.
+  var cap = m.height * 0.35;
+  var dy = Math.max(-cap, Math.min(cap, (ins.top - ins.bottom) / 2));
+  return { x: m.width / 2, y: m.height / 2 + dy, rect: m };
+}
+
+/** AE: the lat/lng under the crosshair — NOT gmap.getCenter(), which is the
+ *  centre of the container including the part the panel covers. */
+function gmapCrosshairLatLng() {
+  if (!gmap) return null;
+  var cp = gmapCrossPoint();
+  if (!cp) { try { return gmap.getCenter(); } catch (_) { return null; } }
+  try { return gmap.containerPointToLatLng(L.point(cp.x, cp.y)); }
+  catch (_) { try { return gmap.getCenter(); } catch (_e) { return null; } }
+}
+
+/** AE: move the drawn crosshair onto gmapCrossPoint(). The SVG is pinned to the
+ *  overlay's midpoint in CSS; this hands it the delta as a custom property, so
+ *  the static 50%/50% still applies when JS has not run. */
+function gmapSyncCross() {
+  var el = document.querySelector('#gmap-overlay .gmap-cross');
+  if (!el) return;
+  var cp = gmapCrossPoint();
+  if (!cp) return;
+  var host = el.offsetParent || el.parentNode;
+  var hr = (host && host.getBoundingClientRect) ? host.getBoundingClientRect() : cp.rect;
+  if (!hr || !(hr.height > 0)) return;
+  el.style.setProperty('--gmap-cross-dx', Math.round((cp.rect.left + cp.x) - (hr.left + hr.width / 2)) + 'px');
+  el.style.setProperty('--gmap-cross-dy', Math.round((cp.rect.top + cp.y) - (hr.top + hr.height / 2)) + 'px');
+}
+
+/**
+ * AD (2026-07-26): put a lat/lng UNDER THE CROSSHAIR, not in the middle of the
+ * container. setView centres on the container, and the bottom 40% of the
+ * container is the control panel — so every "start here" seed in the editor
+ * (the spot you came from on the stands map, your GPS fix, a seat on this
+ * ground) landed behind the panel, and the sight you are about to tap with was
+ * pointing at a field 130px north of it. Frame first, then shove the view by
+ * the gap between the container's middle and the sight.
+ */
+function gmapSetViewAtCross(ll, zoom) {
+  if (!gmap) return;
+  try { gmap.setView(ll, zoom); } catch (_) { return; }
+  var cp = gmapCrossPoint();
+  if (!cp) return;
+  try {
+    var p = gmap.latLngToContainerPoint(L.latLng(ll[0], ll[1]));
+    var d = p.subtract(L.point(cp.x, cp.y));
+    if (Math.abs(d.x) > 1 || Math.abs(d.y) > 1) gmap.panBy(d, { animate: false });
+  } catch (_) {}
+}
+
+// AE: rotate the phone, raise the keyboard, let the address bar collapse — the
+// panel moves and the visible middle of the map moves with it. The sight has to
+// follow, or it drifts back under the panel the moment the layout settles.
+var _gmapCrossSyncOn = false;
+function gmapWatchCross() {
+  if (_gmapCrossSyncOn) return;
+  _gmapCrossSyncOn = true;
+  var q = function() {
+    var ov = document.getElementById('gmap-overlay');
+    if (!ov || !ov.classList.contains('open')) return;
+    requestAnimationFrame(gmapSyncCross);
+  };
+  window.addEventListener('resize', q);
+  window.addEventListener('orientationchange', function() { setTimeout(q, 120); });
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', q);
+}
+
+/** Finding W: an offline refusal that names the wrong thing reads as the wrong
+ *  button having been pressed. "+ Marker" answering "boundary editing needs
+ *  signal" made a user check what they had tapped instead of their signal. */
+function gmapOfflineVerb(kind, editing) {
+  var noun = kind === 'marker' ? 'marker'
+    : kind === 'line' ? 'line'
+    : kind === 'no_shoot' ? 'no-shoot zone'
+    : 'boundary';
+  if (editing) return 'editing this ' + noun;
+  return (kind === 'marker' ? 'adding a ' : 'drawing a ') + noun;
+}
+
+function openBoundaryEditor(ground, featureId, kindOpt, seedLatLng) {
+  // G19: a NEW feature may open with NO ground yet (null) — the in-editor
+  // selector shows "— Choose a ground —" and gmapSave blocks until one is
+  // picked. Editing (featureId) always carries the feature's own ground.
+  if (!currentUser || !sb) return;
+  if (!navigator.onLine) {
+    var _wk = (kindOpt === 'no_shoot' || kindOpt === 'line' || kindOpt === 'marker') ? kindOpt : null;
+    if (!_wk && featureId) {
+      var _wf = groundFeaturesNow().find(function(x) { return x && x.id === featureId; });
+      if (_wf) _wk = _wf.kind;
+    }
+    showToast('⚠️ Still offline — ' + gmapOfflineVerb(_wk, !!featureId) + ' needs signal');
+    return;
+  }
+  if (groundFeaturesUnavailable()) { showToast('⚠️ Boundary storage is not available yet on this account'); return; }
+  var feats = groundFeaturesNow();
+  var ring = [], closed = false, mtype = 'trail_cam', ltype = 'ride';
+  var featName = '', featNotes = ''; // G15: name + note on every kind, not just markers
+  var kind = (kindOpt === 'no_shoot' || kindOpt === 'line' || kindOpt === 'marker') ? kindOpt : 'boundary'; // G9+G10
+  if (featureId) {
+    var f = feats.find(function(x) { return x && x.id === featureId; });
+    kind = (f && (f.kind === 'no_shoot' || f.kind === 'line' || f.kind === 'marker')) ? f.kind : 'boundary'; // existing keeps its kind
+    if (kind === 'marker') { // G10: one point + its type from the blob
+      var mk = f && markerFromGeometry(f.geometry);
+      if (!mk) { showToast('⚠️ Could not read that marker'); return; }
+      ring = [[mk.lat, mk.lng]];
+      mtype = mk.type;
+    } else {
+      var parsed = f && parseGeometry(f.geometry, kind === 'line' ? 2 : undefined);
+      if (!parsed) { showToast('⚠️ Could not read that boundary'); return; }
+      ring = parsed;
+      closed = kind !== 'line'; // G9: a line is open by nature — editing keeps drawing
+      if (kind === 'line') ltype = lineSubtypeOf(f.geometry); // G15: keep its subtype
+    }
+    featName = (f && f.name) || ''; // G15: prefill name + note for every kind
+    featNotes = (f && f.notes) || '';
+  } else if (feats.length >= GROUND_FEATURES_MAX) {
+    // G4: the cap counts every shape (parcels + zones) — one honest total.
+    showToast('⚠️ Shape limit reached (' + GROUND_FEATURES_MAX + ') — remove one first');
+    return;
+  }
+  flGroundsState.editor = {
+    ground: ground, featureId: featureId || null, ring: ring, closed: closed,
+    kind: kind, mtype: mtype, ltype: ltype, undo: [], armedVertexIdx: -1, armedVertexAt: 0, armedCancelAt: 0
+  };
+  var ov = document.getElementById('gmap-overlay');
+  if (ov) { ov.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
+  var s = document.getElementById('gmap-sub');
+  if (s) s.textContent = ground || 'Choose a ground';
+  var mn = document.getElementById('gmap-feature-name'); // G15: name on every kind
+  if (mn) mn.value = featName; // prefill on edit, blank on new
+  var nt = document.getElementById('gmap-feature-notes');
+  if (nt) nt.value = featNotes;
+  // G18: the ground selector — chosen inside the editor, like the stand form.
+  gmapPopulateGroundSelect(ground);
+  var ngRow = document.getElementById('gmap-newground-row');
+  if (ngRow) ngRow.style.display = 'none';
+  _gmapTileErrorCount = 0;
+  initGmap();
+  // Seed the view for a NEW shape from THIS GROUND ONLY (owner: drawing a line
+  // on West Acre dropped the map on Wigmore — the only mapped ground). Order:
+  // the shape being edited → any existing feature OF THIS GROUND (boundary /
+  // line / marker) → a pinned high seat ON THIS GROUND → last GPS fix → UK
+  // overview. Never another ground's parcel — that lands you on the wrong
+  // ground. Never Nominatim.
+  // Section 6 (2026-07-25): frame only ONCE THE CONTAINER'S REAL SIZE IS KNOWN.
+  // initGmap() builds the map once and reuses it for every open, so Leaflet is
+  // still holding the size it measured the LAST time this overlay was up. Rotate
+  // the phone, or let the address bar collapse, or close the editor with the
+  // keyboard raised, and the next fitBounds frames the ring for a viewport that
+  // no longer exists - and the invalidateSize() that used to land 80ms later
+  // only resizes the canvas, it never re-frames. The result was a boundary
+  // opening half off the top of the screen, or zoomed a step too far out, with
+  // no way to tell it had happened. Size first, frame second, and do both again
+  // on the next tick in case the flex layout settles a frame late.
+  var _toldWhereWeLanded = false;
+  var _frameGmapEditor = function () {
+    if (!gmap) return;
+    if (ring.length) {
+      var fp = gmapFitPadding();
+      // maxZoom: a one-point ring (editing a marker) is a zero-size bounds, and
+      // Leaflet answers that with the layer's maxZoom — z20, four levels past
+      // anything OS actually serves. 16 is the deepest real tile.
+      try { gmap.fitBounds(L.latLngBounds(ring), { paddingTopLeft: fp.tl, paddingBottomRight: fp.br, maxZoom: 16 }); } catch (_) {}
+    } else {
+      // AD (2026-07-26): adding a SECOND feature to a ground that is already
+      // mapped used to setView on the FIRST VERTEX of the first feature at a
+      // fixed z15. One corner of one parcel, dead centre in the container — and
+      // the middle of the container is behind the control panel. Opening the
+      // line editor on Ash Coppice, a 25 ha wood with a boundary, a no-shoot
+      // zone, a ride and a gate already on it, put none of that in the band of
+      // map you can actually see: every shape rendered between y449 and y614 of
+      // a visible strip that ends at y379. You were drawing a ride through a
+      // wood you could not see. If the ground has any shape at all, FRAME THE
+      // GROUND — same chrome-aware padding the edit path already uses — so the
+      // new line starts on top of the thing it belongs to. The point seeds below
+      // still cover a ground with nothing on it yet, and G16c still wins: a
+      // seedLatLng from the stands map means "start where I was looking", which
+      // is not the same question.
+      var gb = null;
+      if (!seedLatLng) {
+        for (var bi = 0; bi < feats.length; bi++) {
+          var fb = feats[bi];
+          if (!fb || fb.ground !== ground || fb.id === featureId) continue;
+          if (fb.kind === 'marker') {
+            var mb = markerFromGeometry(fb.geometry);
+            if (mb) gb = gb ? gb.extend([mb.lat, mb.lng]) : L.latLngBounds([[mb.lat, mb.lng], [mb.lat, mb.lng]]);
+          } else {
+            var rb = parseGeometry(fb.geometry, fb.kind === 'line' ? 2 : undefined);
+            if (rb && rb.length) gb = gb ? gb.extend(L.latLngBounds(rb)) : L.latLngBounds(rb);
+          }
+        }
+      }
+      if (gb) {
+        var fp2 = gmapFitPadding();
+        var framed = false;
+        try {
+          gmap.fitBounds(gb, { paddingTopLeft: fp2.tl, paddingBottomRight: fp2.br, maxZoom: 16 });
+          framed = true;
+        } catch (_) {}
+        if (framed) return;
+      }
+      var seedFrom = null;
+      // G16c (owner: "on a different piece of land, picked West Acre, it jumped
+      // to a different area"): picking a ground in the "Add a marker on…" picker
+      // CLASSIFIES the new feature — it must NOT teleport you off the spot you
+      // were looking at to that ground's other furniture. So the stands-map view
+      // you came from (seedLatLng, passed only by the stands-map add flows) wins.
+      // The manager-sheet add paths pass no seed and keep the ground-centric
+      // order below (G10d). A brand-new ground (G16b) also rides this — it has no
+      // furniture, so this is the only thing that locates it.
+      if (seedLatLng && isFinite(seedLatLng[0]) && isFinite(seedLatLng[1])) {
+        seedFrom = [seedLatLng[0], seedLatLng[1]];
+      }
+      for (var i = 0; i < feats.length && !seedFrom; i++) {
+        var cand = feats[i];
+        if (!cand || cand.ground !== ground) continue; // THIS ground's features only
+        if (cand.kind === 'marker') {
+          var mk = markerFromGeometry(cand.geometry);
+          if (mk) seedFrom = [mk.lat, mk.lng];
+        } else {
+          var r2 = parseGeometry(cand.geometry, cand.kind === 'line' ? 2 : undefined);
+          if (r2 && r2.length) seedFrom = r2[0];
+        }
+      }
+      if (!seedFrom) {
+        // A pinned seat ON THIS GROUND locates it even before any shape exists.
+        var standsSrc = flEffectiveStands();
+        for (var si = 0; si < (standsSrc || []).length && !seedFrom; si++) {
+          var st = standsSrc[si];
+          if (st && (st.ground || '') === ground && st.lat != null && st.lng != null) seedFrom = [st.lat, st.lng];
+        }
+      }
+      if (seedFrom) { gmapSetViewAtCross(seedFrom, 15); return; }  // AD: under the sight
+      if (lastGpsLat != null && lastGpsLng != null) { gmapSetViewAtCross([lastGpsLat, lastGpsLng], 15); return; }  // AD
+      // Section 6 (2026-07-26): the last resort used to be [54.0, -2.0] at z6 —
+      // a field outside Skipton, two hundred miles from anyone's actual ground,
+      // and (until the minNativeZoom fix) a grey rectangle as well. It is the
+      // FIRST thing a new user sees, because a brand-new ground has no shape,
+      // no seat and, indoors, no GPS.
+      //
+      // G16c still stands: never SILENTLY drop someone on another ground's
+      // land, because that is how you draw West Acre's boundary around
+      // Wigmore. But silence was the bug, not the seed. Somewhere you have
+      // mapped is a far better starting point than a random Yorkshire field,
+      // so go there at parish zoom — close enough to recognise, wide enough
+      // that you are obviously not being told this IS your new ground — and
+      // say out loud whose land you are looking at.
+      var near = null, nearGround = '';
+      for (var gi = 0; gi < feats.length && !near; gi++) {
+        var fx = feats[gi];
+        if (!fx) continue;
+        if (fx.kind === 'marker') {
+          var mx = markerFromGeometry(fx.geometry);
+          if (mx) { near = [mx.lat, mx.lng]; nearGround = fx.ground || ''; }
+        } else {
+          var rx = parseGeometry(fx.geometry, fx.kind === 'line' ? 2 : undefined);
+          if (rx && rx.length) { near = rx[0]; nearGround = fx.ground || ''; }
+        }
+      }
+      if (near) {
+        gmapSetViewAtCross(near, 12);  // AD
+        if (!_toldWhereWeLanded) {
+          _toldWhereWeLanded = true;
+          showToast(nearGround
+            ? 'Nothing mapped here yet — starting near ' + nearGround
+            : 'Nothing mapped here yet — pan to your land');
+        }
+        return;
+      }
+      gmap.setView([54.0, -2.0], 6);
+    }
+  };
+  try { gmap.invalidateSize({ animate: false }); } catch (_) {}
+  _frameGmapEditor();
+  setTimeout(function() {
+    if (!gmap) return;
+    try { gmap.invalidateSize({ animate: false }); } catch (_) {}
+    _frameGmapEditor();
+    gmapSyncCross();  // AE: the container just changed size — re-aim
+  }, 80);
+  refreshGmapFallbackBanner();
+  // Section 6 (2026-07-26): every other map in the app paints the ground
+  // furniture underneath — the pin drop, the cull map, the stands map. The one
+  // screen where you are placing something RELATIVE to what is already there
+  // was the one screen that showed none of it, so a no-shoot zone had to be
+  // drawn against the boundary from memory. Paint the context, minus the shape
+  // being edited (the live preview owns that one).
+  try { renderGroundBoundaries(gmap, { excludeFeatureId: featureId || null }); } catch (_) {}
+  gmapRefresh();
+}
+
+function closeBoundaryEditor() {
+  if (gmapWalkWatchId != null) {
+    try { navigator.geolocation.clearWatch(gmapWalkWatchId); } catch (_) {}
+    gmapWalkWatchId = null;
+  }
+  if (gmap) {
+    if (gmapPreviewLayer) { try { gmap.removeLayer(gmapPreviewLayer); } catch (_) {} }
+    gmapVertexMarkers.forEach(function(m) { try { gmap.removeLayer(m); } catch (_) {} });
+  }
+  gmapPreviewLayer = null;
+  gmapVertexMarkers = [];
+  flGroundsState.editor = null;
+  var ov = document.getElementById('gmap-overlay');
+  if (ov) ov.style.display = 'none';
+  // A sheet may still be open beneath — keep scroll locked if so.
+  var go2 = document.getElementById('grounds-ov');
+  var so = document.getElementById('settings-ov');
+  var anySheet = (go2 && go2.classList.contains('open')) || (so && so.classList.contains('open'));
+  if (!anySheet) document.body.style.overflow = '';
+}
+
+/** Snapshot the current ring+mode onto the undo stack (before every mutation). */
+function gmapSnapshot() {
+  var ed = flGroundsState.editor;
+  if (!ed) return;
+  ed.undo.push(JSON.stringify({ ring: ed.ring, closed: ed.closed }));
+  if (ed.undo.length > 60) ed.undo.shift();
+}
+
+function gmapUndo() {
+  var ed = flGroundsState.editor;
+  if (!ed || !ed.undo.length) return;
+  var snap;
+  try { snap = JSON.parse(ed.undo.pop()); } catch (e) { return; }
+  ed.ring = snap.ring || [];
+  ed.closed = !!snap.closed;
+  ed.armedVertexIdx = -1;
+  gmapRefresh();
+}
+
+function gmapAddPoint() {
+  var ed = flGroundsState.editor;
+  if (!ed || !gmap || ed.closed) return;
+  var c = gmapCrosshairLatLng();  // AE: the sight, not the container centre
+  if (!c) return;
+  // G10: a marker IS one point — placing again MOVES it (replace, not push).
+  if (ed.kind === 'marker') {
+    gmapSnapshot();
+    ed.ring = [[c.lat, c.lng]];
+    gmapRefresh();
+    return;
+  }
+  if (ed.ring.length >= MAX_BOUNDARY_VERTICES) {
+    showToast('⚠️ Point limit reached (' + MAX_BOUNDARY_VERTICES + ')');
+    return;
+  }
+  gmapSnapshot();
+  ed.ring.push([c.lat, c.lng]);
+  gmapRefresh();
+}
+
+function gmapCloseRing() {
+  var ed = flGroundsState.editor;
+  if (!ed || ed.closed || ed.ring.length < 3) return;
+  gmapWalkStop(true); // G4: closing the ring ends a walk
+  gmapSnapshot();
+  ed.closed = true;
+  gmapRefresh();
+}
+
+/** Two-tap vertex delete: first tap arms (marker turns red), second removes.
+ *  M71 exception #4: kept deliberately. You tap the vertex itself, so the arm
+ *  state is drawn ON the target rather than described in a dialog, and
+ *  gmapSnapshot() means a wrong delete costs one Undo. A modal here would
+ *  cover the map you are aiming at. */
+function gmapVertexTap(idx) {
+  var ed = flGroundsState.editor;
+  if (!ed) return;
+  var now = Date.now();
+  if (ed.armedVertexIdx === idx && (now - ed.armedVertexAt) < 3500) {
+    gmapSnapshot();
+    ed.ring.splice(idx, 1);
+    ed.armedVertexIdx = -1;
+    if (ed.ring.length < 3 && ed.closed) ed.closed = false;
+    gmapRefresh();
+    return;
+  }
+  ed.armedVertexIdx = idx;
+  ed.armedVertexAt = now;
+  gmapRefresh();
+  setTimeout(function() {
+    var e2 = flGroundsState.editor;
+    if (e2 && e2.armedVertexIdx === idx && Date.now() - e2.armedVertexAt >= 3400) {
+      e2.armedVertexIdx = -1;
+      gmapRefresh();
+    }
+  }, 3600);
+}
+
+function gmapMakeVertexMarker(p, idx) {
+  var ed = flGroundsState.editor;
+  var armed = ed && ed.armedVertexIdx === idx;
+  var icon = L.divIcon({
+    html: '<div class="gvx' + (armed ? ' gvx-armed' : '') + '"></div>',
+    iconSize: [26, 26], iconAnchor: [13, 13], className: ''
+  });
+  var m = L.marker([p[0], p[1]], { icon: icon, draggable: true, keyboard: false });
+  m.on('dragstart', function() {
+    gmapSnapshot();
+    var e2 = flGroundsState.editor;
+    if (e2) e2.armedVertexIdx = -1;
+  });
+  m.on('drag', function(ev) {
+    var e2 = flGroundsState.editor;
+    if (!e2) return;
+    var ll = ev.target.getLatLng();
+    e2.ring[idx] = [ll.lat, ll.lng];
+    if (gmapPreviewLayer) {
+      try { gmapPreviewLayer.setLatLngs(e2.ring.map(function(q) { return [q[0], q[1]]; })); } catch (_) {}
+    }
+    var ro = document.getElementById('gmap-readout');
+    if (ro) ro.textContent = gmapReadoutText(e2.ring, e2.closed);
+  });
+  m.on('dragend', function() { gmapRefresh(); });
+  m.on('click', function() { gmapVertexTap(idx); });
+  m.addTo(gmap);
+  return m;
+}
+
+/** Repaint preview layer, vertex + midpoint markers, readout, kind row,
+ *  walk button, warn line and buttons. */
+function gmapRefresh() {
+  var ed = flGroundsState.editor;
+  if (!ed || !gmap) return;
+  if (gmapPreviewLayer) { try { gmap.removeLayer(gmapPreviewLayer); } catch (_) {} gmapPreviewLayer = null; }
+  gmapVertexMarkers.forEach(function(m) { try { gmap.removeLayer(m); } catch (_) {} });
+  gmapVertexMarkers = [];
+  var isZone = ed.kind === 'no_shoot';
+  var isLine = ed.kind === 'line'; // G9
+  var isMarker = ed.kind === 'marker'; // G10
+  var isMeasure = ed.mode === 'measure';
+  // Leaflet writes these onto SVG stroke/fill attributes — literal hex only.
+  var clr = isMeasure ? '#7aa2c8' : (isZone ? '#c62828' : '#d8b054');
+  var pts = ed.ring.map(function(p) { return [p[0], p[1]]; });
+  if (!isMarker && pts.length >= 2) {
+    gmapPreviewLayer = (ed.closed && !isLine)
+      ? L.polygon(pts, { color: clr, weight: 2, opacity: 0.95, dashArray: isZone ? '4 4' : null, fillColor: clr, fillOpacity: isZone ? 0.12 : 0.16, interactive: false })
+      : L.polyline(pts, { color: clr, weight: isLine ? 2.6 : 2, opacity: 0.95, dashArray: isLine ? null : '6 5', interactive: false });
+    gmapPreviewLayer.addTo(gmap);
+  }
+  ed.ring.forEach(function(p, idx) { gmapVertexMarkers.push(gmapMakeVertexMarker(p, idx)); });
+  // G4: midpoint insert handles — tap one to add a corner on that edge.
+  // G9: lines get them too while editing, but never on the phantom closing
+  // edge (an open path has length-1 edges).
+  if (ed.closed && ed.ring.length >= 3 && ed.ring.length < MAX_BOUNDARY_VERTICES && !isLine) {
+    for (var mi = 0; mi < ed.ring.length; mi++) {
+      gmapVertexMarkers.push(gmapMakeMidMarker(mi));
+    }
+  } else if (isLine && ed.featureId && ed.ring.length >= 2 && ed.ring.length < MAX_BOUNDARY_VERTICES) {
+    for (var li = 0; li < ed.ring.length - 1; li++) {
+      gmapVertexMarkers.push(gmapMakeMidMarker(li));
+    }
+  }
+  var t = document.getElementById('gmap-title');
+  if (t) {
+    var mkDef = null;
+    if (isMarker) GROUND_MARKER_TYPES.forEach(function(td) { if (td.id === ed.mtype) mkDef = td; });
+    t.textContent = isMeasure
+      ? 'Measure'
+      : isMarker
+        ? (ed.featureId ? 'Edit ' : 'Place ') + (mkDef ? mkDef.label.toLowerCase() : 'marker')
+        : (ed.featureId ? 'Edit ' : 'Draw ') + (isZone ? 'no-shoot zone' : (isLine ? 'line' : 'boundary'));
+  }
+  var kd = document.getElementById('gmap-kind');
+  if (kd) {
+    // G10: marker mode swaps the shape chips for the marker-type chips.
+    // G15: picking Line reveals the subtype chips (ride/track/footpath/…) on
+    // their own row beneath, so a route is typed at draw time.
+    // AN: the tape measure saves nothing, so it has no kind to pick; everything
+    // else gets the row, being edited or not.
+    var showKind = !isMeasure;
+    kd.innerHTML = showKind
+      ? (isMarker ? gmapMarkerTypeHtml(ed.mtype)
+                  : gmapKindHtml(ed.kind, ed.ring.length >= 3) + (isLine ? gmapLineTypeHtml(ed.ltype) : ''))
+      : '';
+    kd.style.display = showKind ? 'flex' : 'none';
+  }
+  // G15: name + note on every saved kind (boundary/zone/line/marker) — only the
+  // tape measure, which saves nothing, hides them.
+  var mnRow = document.getElementById('gmap-feature-name-row');
+  if (mnRow) mnRow.style.display = (!isMeasure) ? 'block' : 'none';
+  // G18: the ground selector shows for every saved kind (not the tape measure).
+  var grRow = document.getElementById('gmap-ground-row');
+  if (grRow) grRow.style.display = (!isMeasure) ? 'flex' : 'none';
+  if (isMeasure) { var ngr = document.getElementById('gmap-newground-row'); if (ngr) ngr.style.display = 'none'; }
+  var wb = document.getElementById('gmap-walk-btn');
+  if (wb) {
+    // G10: walking is for paths — a marker is placed, not paced.
+    wb.style.display = (ed.closed || isMarker) ? 'none' : 'flex';
+    wb.className = 'gmap-locate gmap-walk' + (gmapWalkWatchId != null ? ' on' : '');
+  }
+  var ro = document.getElementById('gmap-readout');
+  if (ro) ro.textContent = gmapReadoutText(ed.ring, ed.closed, ed.mode, ed.kind);
+  var warn = document.getElementById('gmap-warn');
+  // G9: a ride may legitimately double back — self-intersection is only a
+  // polygon's problem, so lines never see the hint.
+  if (warn) warn.style.display = (!isMeasure && !isLine && ed.ring.length >= 4 && ringSelfIntersects(ed.ring)) ? 'block' : 'none';
+  var hint = document.getElementById('gmap-hint');
+  if (hint) hint.textContent = gmapHintText(ed.closed, ed.mode, ed.kind);
+  var btns = document.getElementById('gmap-btns');
+  if (btns) btns.innerHTML = gmapButtonsHtml(ed.ring, ed.closed, ed.undo.length, ed.mode, ed.kind);
+  // AE: the panel just changed height (a kind row appeared, a Save button
+  // arrived, a warning wrapped to two lines) — re-aim the crosshair at what is
+  // still visible. Done last, after every element above has its final size.
+  gmapSyncCross();
+  gmapWatchCross();
+}
+
+/**
+ * G5: the measure tool — the SAME editor scaffolding as a tape measure.
+ * No account, no network, no save: tap corners (or walk with the boots
+ * button) for live distance along the path; Close for area flips the
+ * readout to acreage + perimeter. Works fully offline.
+ */
+function openMeasureTool() {
+  flGroundsState.editor = {
+    mode: 'measure', ground: '', featureId: null, ring: [], closed: false,
+    kind: 'boundary', undo: [], armedVertexIdx: -1, armedVertexAt: 0, armedCancelAt: 0
+  };
+  var ov = document.getElementById('gmap-overlay');
+  if (ov) { ov.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
+  var s = document.getElementById('gmap-sub');
+  if (s) s.textContent = 'distance & area · nothing is saved';
+  _gmapTileErrorCount = 0;
+  initGmap();
+  // Seed: last GPS fix → any saved parcel → UK overview. Section 6: same shared
+  // gmap instance as the boundary editor and the same rule - size it BEFORE
+  // choosing a view, because the size Leaflet is holding is the one from the
+  // last time this overlay was open, not the one on screen now.
+  var _frameMeasure = function () {
+    if (!gmap) return;
+    var seeded = false;
+    if (lastGpsLat != null && lastGpsLng != null) {
+      gmap.setView([lastGpsLat, lastGpsLng], 15);
+      seeded = true;
+    } else {
+      var feats = groundFeaturesNow();
+      for (var i = 0; i < feats.length; i++) {
+        var r = feats[i] && parseGeometry(feats[i].geometry);
+        if (r && r.length) { gmap.setView([r[0][0], r[0][1]], 14); seeded = true; break; }
+      }
+    }
+    if (!seeded) gmap.setView([54.0, -2.0], 6);
+  };
+  try { gmap.invalidateSize({ animate: false }); } catch (_) {}
+  _frameMeasure();
+  setTimeout(function() {
+    if (!gmap) return;
+    try { gmap.invalidateSize({ animate: false }); } catch (_) {}
+    _frameMeasure();
+    gmapSyncCross();  // AE: the container just changed size — re-aim
+  }, 80);
+  refreshGmapFallbackBanner();
+  // G5/K: measuring is exactly when you want to see what you are measuring
+  // against — the boundary you are checking a distance to, the zone you are
+  // pacing out from. Nothing here is being edited, so nothing is excluded.
+  try { renderGroundBoundaries(gmap, { excludeFeatureId: null }); } catch (_) {}
+  gmapRefresh();
+}
+
+function gmapSetKind(kind) {
+  var ed = flGroundsState.editor;
+  if (!ed) return;
+  // AN: a marker is a point and the other three are paths — the row is never
+  // drawn for one, and a stray action id must not do what the UI will not.
+  if (ed.kind === 'marker' || kind === 'marker') return;
+  var want = (kind === 'no_shoot' || kind === 'line') ? kind : 'boundary'; // G9
+  // AN: three points is what it takes to enclose ground. The chips are already
+  // greyed at two, so this only catches a keyboard or a stale tap.
+  if (want !== 'line' && ed.ring.length < 3) {
+    showToast('⚠️ A line needs at least 3 points before it can enclose ground');
+    return;
+  }
+  var was = ed.kind;
+  ed.kind = want;
+  // G9: switching to line REOPENS a closed ring (lines don't close); switching
+  // away keeps the ring open — the Close button comes back via the buttons row.
+  // AN: except on a SAVED shape, which is finished by definition. Making
+  // somebody re-tap Close to undo a conversion they only made to look at it
+  // would turn a reversible experiment back into a commitment.
+  if (ed.kind === 'line') ed.closed = false;
+  else if (ed.featureId) ed.closed = ed.ring.length >= 3;
+  // AN: coming out of a boundary into a line, the subtype has never been asked
+  // for, so 'ride' would be a coin toss on a shape the user is here to correct.
+  // The name is the better witness and it is the same vocabulary AH reads files
+  // with — "Access track" lands on Track, an unnamed trace stays on the
+  // catch-all, and either way the chips are right there to say otherwise.
+  if (ed.kind === 'line' && was !== 'line') {
+    var nmEl = document.getElementById('gmap-feature-name');
+    ed.ltype = lineTypeFromName(nmEl ? nmEl.value : '') || ed.ltype || 'other';
+  }
+  gmapRefresh();
+}
+
+/** G10 / AN: retype a marker, saved or not — see gmapMarkerTypeHtml. */
+function gmapSetMarkerType(t) {
+  var ed = flGroundsState.editor;
+  if (!ed || ed.kind !== 'marker') return;
+  var known = GROUND_MARKER_TYPES.some(function(td) { return td.id === t; });
+  ed.mtype = known ? t : 'other';
+  gmapRefresh();
+}
+
+/** G15 / AN: re-subtype a line (ride/track/footpath/…), saved or not — same
+ *  rule as marker types and kinds now. */
+function gmapSetLineType(t) {
+  var ed = flGroundsState.editor;
+  if (!ed || ed.kind !== 'line') return;
+  var known = LINE_SUBTYPES.some(function(td) { return td.id === t; });
+  ed.ltype = known ? t : 'other';
+  gmapRefresh();
+}
+
+/** G18: fill the editor's ground <select> (savedGrounds only — a feature MUST
+ *  have a ground, ground_features.ground is NOT NULL, so there is no "None").
+ *  A change re-tags the shape live (ed.ground + the header sub). */
+function gmapPopulateGroundSelect(selected) {
+  var sel = document.getElementById('gmap-ground');
+  if (!sel) return;
+  var list = savedGrounds || [];
+  if (!list.length) {
+    sel.innerHTML = '<option value="">— add a ground with ＋ —</option>';
+  } else {
+    var h = '';
+    var known = selected && list.indexOf(selected) !== -1;
+    // G19: no confident default → a "Choose" placeholder, not a blind guess.
+    if (!known) h += '<option value="" selected>— Choose a ground —</option>';
+    list.forEach(function(g) {
+      h += '<option value="' + esc(g) + '"' + (g === selected ? ' selected' : '') + '>' + esc(g) + '</option>';
+    });
+    sel.innerHTML = h;
+    sel.value = known ? selected : '';
+  }
+  sel.onchange = function() {
+    var ed = flGroundsState.editor;
+    if (!ed) return;
+    ed.ground = sel.value || null;
+    var sub = document.getElementById('gmap-sub');
+    if (sub) sub.textContent = ed.ground || 'Choose a ground';
+  };
+}
+
+/** G18: reveal/hide the inline "new ground" field beside the selector. */
+function gmapGroundNewToggle() {
+  var row = document.getElementById('gmap-newground-row');
+  if (!row) return;
+  var hidden = (row.style.display === 'none' || !row.style.display);
+  row.style.display = hidden ? 'flex' : 'none';
+  if (hidden) {
+    var inp = document.getElementById('gmap-newground-inp');
+    if (inp) {
+      inp.value = '';
+      inp.onkeydown = function(ev) { if (ev.key === 'Enter') { ev.preventDefault(); gmapGroundNewCreate(); } };
+      setTimeout(function() { try { inp.focus(); } catch (_) {} }, 40);
+    }
+  }
+}
+
+/** G18: create a ground inline from the editor, select it, keep placing. */
+async function gmapGroundNewCreate() {
+  var inp = document.getElementById('gmap-newground-inp');
+  if (!inp) return;
+  var name = (inp.value || '').trim();
+  if (!name) { showToast('⚠️ Name the ground first'); try { inp.focus(); } catch (_) {} return; }
+  if (name.length > 120) { showToast('⚠️ Ground name too long (120 characters max)'); return; }
+  if (savedGrounds.indexOf(name) === -1) {
+    if (!navigator.onLine) { showToast('⚠️ Still offline — adding a ground needs signal'); return; }
+    await saveGround(name);
+  }
+  var ed = flGroundsState.editor;
+  if (ed) ed.ground = name;
+  gmapPopulateGroundSelect(name);
+  var sub = document.getElementById('gmap-sub');
+  if (sub) sub.textContent = name;
+  var row = document.getElementById('gmap-newground-row');
+  if (row) row.style.display = 'none';
+  showToast('✓ Ground “' + name + '” added');
+}
+
+/** G4: faint midpoint handle on edge i → tap inserts a corner there. */
+function gmapMakeMidMarker(i) {
+  var ed = flGroundsState.editor;
+  var a = ed.ring[i], b = ed.ring[(i + 1) % ed.ring.length];
+  var mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  var icon = L.divIcon({ html: '<div class="gvx-mid"></div>', iconSize: [16, 16], iconAnchor: [8, 8], className: '' });
+  var m = L.marker(mid, { icon: icon, keyboard: false });
+  m.on('click', function() {
+    var e2 = flGroundsState.editor;
+    if (!e2 || e2.ring.length >= MAX_BOUNDARY_VERTICES) return;
+    gmapSnapshot();
+    e2.ring.splice(i + 1, 0, mid);
+    e2.armedVertexIdx = -1;
+    gmapRefresh();
+  });
+  m.addTo(gmap);
+  return m;
+}
+
+// ── G4: walk the boundary (GPS breadcrumb → vertices) ─────────────────────
+
+var gmapWalkWatchId = null;
+var gmapWalkAccuracyWarned = false;
+var GMAP_WALK_STEP_M = 15;
+var GMAP_WALK_MAX_ACCURACY_M = 25;
+
+function gmapWalkToggle() {
+  if (gmapWalkWatchId != null) {
+    gmapWalkStop(false);
+    return;
+  }
+  var ed = flGroundsState.editor;
+  if (!ed || ed.closed) return;
+  if (!navigator.geolocation) { showToast('GPS not available'); return; }
+  gmapWalkAccuracyWarned = false;
+  showToast('👣 Walking the line — a corner drops every ~' + GMAP_WALK_STEP_M + ' m. Keep the screen on.', 3500);
+  gmapWalkWatchId = navigator.geolocation.watchPosition(function(pos) {
+    var e2 = flGroundsState.editor;
+    if (!e2 || e2.closed) { gmapWalkStop(true); return; }
+    if (pos.coords.accuracy != null && pos.coords.accuracy > GMAP_WALK_MAX_ACCURACY_M) {
+      if (!gmapWalkAccuracyWarned) {
+        gmapWalkAccuracyWarned = true;
+        showToast('⚠️ GPS accuracy poor (±' + Math.round(pos.coords.accuracy) + ' m) — points paused until it settles');
+      }
+      return;
+    }
+    var lat = pos.coords.latitude, lng = pos.coords.longitude;
+    if (e2.ring.length >= MAX_BOUNDARY_VERTICES) { gmapWalkStop(false); return; }
+    if (e2.ring.length) {
+      var last = e2.ring[e2.ring.length - 1];
+      var d = flDistMeters(last[0], last[1], lat, lng);
+      if (d != null && d < GMAP_WALK_STEP_M) return;
+    }
+    gmapSnapshot();
+    e2.ring.push([lat, lng]);
+    if (gmap) { try { gmap.panTo([lat, lng]); } catch (_) {} }
+    gmapRefresh();
+  }, function() {
+    showToast('⚠️ GPS unavailable — check location permissions');
+    gmapWalkStop(true);
+  }, { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 });
+  gmapRefresh();
+}
+
+function gmapWalkStop(silent) {
+  if (gmapWalkWatchId != null) {
+    try { navigator.geolocation.clearWatch(gmapWalkWatchId); } catch (_) {}
+    gmapWalkWatchId = null;
+    if (!silent) {
+      var ed = flGroundsState.editor;
+      showToast('✓ Walk paused — ' + (ed ? ed.ring.length : 0) + ' corner' + (ed && ed.ring.length === 1 ? '' : 's') + ' so far');
+    }
+  }
+  gmapRefresh();
+}
+
+async function gmapSave() {
+  var ed = flGroundsState.editor;
+  if (!ed || ed.mode === 'measure' || !sb || !currentUser) return;
+  if (!navigator.onLine) { showToast('⚠️ Still offline — saving needs signal'); return; }
+  var isLine = ed.kind === 'line'; // G9: open path — ≥2 points, no closing
+  var isMarker = ed.kind === 'marker'; // G10: exactly one point
+  if (isMarker) {
+    if (!ed.ring.length) { showToast('⚠️ Place the marker first'); return; }
+  } else {
+    var v = isLine ? validateLinePath(ed.ring) : validateBoundaryRing(ed.ring);
+    if (!v.ok) {
+      showToast(v.reason === 'too-many-points'
+        ? '⚠️ Too many points (' + MAX_BOUNDARY_VERTICES + ' max)'
+        : '⚠️ Add at least ' + (isLine ? 2 : 3) + ' points first');
+      return;
+    }
+  }
+  var geometry = isMarker
+    ? makeMarkerGeometry(ed.ring[0][0], ed.ring[0][1], ed.mtype)
+    : isLine
+      ? makeLineGeometry(ed.ring, ed.ltype) // G15: subtype rides in the blob
+      : makeGeometry(ed.ring);
+  var mkDef = null;
+  if (isMarker) GROUND_MARKER_TYPES.forEach(function(td) { if (td.id === ed.mtype) mkDef = td; });
+  var sumTxt = isMarker ? '' : (isLine ? formatDistM(pathLengthM(ed.ring)) : formatAreaBoth(ringAreaM2(ed.ring)));
+  var kind = (ed.kind === 'no_shoot' || ed.kind === 'line' || ed.kind === 'marker') ? ed.kind : 'boundary';
+  // G15: name + note come off the shared fields for EVERY kind now.
+  var nmInp = document.getElementById('gmap-feature-name');
+  var ntInp = document.getElementById('gmap-feature-notes');
+  var featName = nmInp ? nmInp.value : null;
+  var featNotes = ntInp ? ntInp.value : null;
+  // G18: the ground is chosen INSIDE the editor now — read it off the selector.
+  var gSel = document.getElementById('gmap-ground');
+  if (gSel && gSel.value) ed.ground = gSel.value;
+  if (!ed.ground) { showToast('⚠️ Pick a ground for this — or add one with ＋'); return; }
+  try {
+    await saveGroundFeature(sb, currentUser.id, {
+      id: ed.featureId || null, ground: ed.ground, kind: kind, geometry: geometry,
+      name: featName, notes: featNotes
+    });
+  } catch (e) {
+    console.warn('saveGroundFeature error:', e);
+    // G9/G10: 23514 = the kind CHECK still rejects this kind — the one-paste
+    // migration hasn't run yet. Say so instead of blaming the signal.
+    if ((isLine || isMarker) && e && (e.code === '23514' || /check constraint/i.test(e.message || ''))) {
+      showToast('⚠️ ' + (isMarker ? 'Markers' : 'Lines') + ' need the database update — run scripts/migrate-ground-features-marker.sql');
+    } else {
+      showToast('⚠️ Could not save — check signal and try again');
+    }
+    return;
+  }
+  // G19: remember the ground you just filed under — it becomes the sticky
+  // default for the next marker/feature this session (so a run of markers on
+  // one ground doesn't re-ask), and lights its "you are here" switcher row.
+  if (ed.ground) setLastGroundVisited(ed.ground);
+  closeBoundaryEditor();
+  var savedLabel = kind === 'no_shoot' ? 'No-shoot zone'
+    : isLine ? lineSubtypeLabel(ed.ltype) // G15: "Ride saved", "Footpath saved"
+    : isMarker ? (mkDef ? mkDef.label : 'Marker')
+    : 'Boundary';
+  showToast('✓ ' + savedLabel + ' saved' + (sumTxt ? ' — ' + sumTxt : ''));
+  await refreshGroundsData();
+  renderGroundsSheet();
+}
+
+/** ← button: instant close when untouched (or measuring — nothing to lose);
+ *  two-tap confirm once a real shape is dirty. M71 exception #4: the toast
+ *  spells out the second tap, and what is lost is an unsaved in-progress
+ *  shape, not stored data. */
+function gmapCancel() {
+  var ed = flGroundsState.editor;
+  if (!ed || ed.mode === 'measure' || !ed.undo.length) { closeBoundaryEditor(); return; }
+  var now = Date.now();
+  if (now - ed.armedCancelAt < 3500) { closeBoundaryEditor(); return; }
+  ed.armedCancelAt = now;
+  showToast('Tap ← again to discard this boundary');
+}
+
+// ── G4: import / export ───────────────────────────────────────
+
+/** Download every saved shape as GeoJSON or GPX (your data is yours —
+ *  HuntStand exports nothing; we export everything). */
+function groundsExport(format) {
+  var feats = groundFeaturesNow();
+  // G8: the high seats ride along — GPX waypoints load straight onto a
+  // Garmin/handheld. Live list when the Stands tab has loaded, else the
+  // localStorage snapshot (same source the score logger trusts).
+  // Findings 19/20: unless the stalker has said not to. Where you sit is the
+  // most sensitive thing in this app's map data, and a boundary file is the
+  // thing most likely to be handed to somebody else.
+  var withSeats = flExportSeatsWanted();
+  var standsSrc = flEffectiveStands();
+  var seats = !withSeats ? [] : (standsSrc || []).filter(function(s) {
+    return s && s.lat != null && s.lng != null;
+  }).map(function(s) {
+    // Finding L: facing and bad winds are the two things a stalker checks
+    // before walking to a seat, and notes are where "gate is padlocked, park
+    // by the barn" lives. A file that drops them is a file that has to be
+    // read alongside the app, which defeats the point of exporting it.
+    return {
+      name: s.name,
+      ground: s.ground || '',
+      lat: s.lat,
+      lng: s.lng,
+      facing: Number.isFinite(s.facing) ? s.facing : null,
+      facingLabel: Number.isFinite(s.facing) ? flWindDirLabel8(s.facing) : '',
+      badWinds: Array.isArray(s.bad_winds) ? s.bad_winds.slice() : null,
+      notes: s.notes || ''
+    };
+  });
+  if (!feats.length && !seats.length) {
+    showToast(withSeats
+      ? '⚠️ Nothing to export yet — draw a boundary or pin a seat first'
+      : '⚠️ Nothing to export — high seats are excluded and there are no shapes yet');
+    return;
+  }
+  // AM (2026-07-26): three formats now, so the GPX-or-GeoJSON ternary becomes a
+  // table. KML earns the lead slot in the row because it is the only one of the
+  // three in which a boundary arrives at the far end still looking like a
+  // boundary: GPX has no polygon type at all, so the most important shape on a
+  // stalking ground left here as an open <trk> and opened in Google Earth as a
+  // piece of string, and GeoJSON keeps the geometry but nothing that draws it.
+  var EXPORTS = {
+    kml: {
+      mime: 'application/vnd.google-earth.kml+xml', ext: 'kml',
+      make: function() { return featuresToKml(feats, seats); }
+    },
+    gpx: {
+      mime: 'application/gpx+xml', ext: 'gpx',
+      make: function() { return featuresToGpx(feats, seats); }
+    },
+    geojson: {
+      mime: 'application/geo+json', ext: 'geojson',
+      make: function() { return JSON.stringify(featuresToGeoJson(feats, seats), null, 2); }
+    }
+  };
+  var spec = EXPORTS[format] || EXPORTS.geojson;
+  var text;
+  try { text = spec.make(); } catch (e) { showToast('⚠️ Could not build that file'); return; }
+  var blob = new Blob([text], { type: spec.mime });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'first-light-grounds.' + spec.ext;
+  a.click();
+  setTimeout(function() { try { URL.revokeObjectURL(a.href); } catch (_) {} }, 1000);
+  var bits = [];
+  if (feats.length) bits.push(feats.length + ' shape' + (feats.length === 1 ? '' : 's'));
+  bits.push(seats.length
+    ? (seats.length + ' seat' + (seats.length === 1 ? '' : 's'))
+    : 'no seats');
+  showToast('✓ Exported ' + bits.join(' · '));
+}
+
+/**
+ * Findings 19/20: does the user want high-seat waypoints in a grounds export?
+ * Reads the checkbox when the sheet is open, otherwise the remembered choice.
+ * Defaults to yes so nothing changes for anyone who never touches it.
+ */
+function flExportSeatsWanted() {
+  var box = document.getElementById('grounds-export-seats');
+  if (box) return !!box.checked;
+  try { return localStorage.getItem(FL_EXPORT_SEATS_KEY) !== '0'; } catch (_) { return true; }
+}
+
+/** Restore the remembered choice whenever the grounds sheet is drawn. */
+function flSyncExportSeatsBox() {
+  var box = document.getElementById('grounds-export-seats');
+  if (!box) return;
+  var want = true;
+  try { want = localStorage.getItem(FL_EXPORT_SEATS_KEY) !== '0'; } catch (_) {}
+  box.checked = want;
+  if (!box.dataset.flWired) {
+    box.dataset.flWired = '1';
+    box.addEventListener('change', function() {
+      try { localStorage.setItem(FL_EXPORT_SEATS_KEY, box.checked ? '1' : '0'); } catch (_) {}
+      showToast(box.checked
+        ? 'High seats will be included in grounds exports'
+        : 'High seats will be left out of grounds exports');
+    });
+  }
+}
+
+function groundsImportClick() {
+  // Finding W: opening the OS file picker and only then refusing wastes the
+  // user's time and reads as a failure in the file rather than the signal.
+  if (!navigator.onLine) { showToast('⚠️ Still offline — importing needs signal'); return; }
+  var inp = document.getElementById('grounds-import-file');
+  if (inp) inp.click();
+}
+
+/** PURE: a vertex-for-vertex fingerprint of one shape, so a re-import of your
+ *  own file does not silently double every parcel. Ground name is folded to
+ *  lower case (the same ground, differently capitalised, is the same ground);
+ *  the subtype rides in the kind, because a gate and a trail cam on the same
+ *  post are two different things. */
+function groundImportSig(ground, kind, sub, ring) {
+  if (!Array.isArray(ring) || !ring.length) return '';
+  var pts = [];
+  for (var i = 0; i < ring.length; i++) {
+    var pt = ring[i];
+    if (!pt || pt.length < 2 || !isFinite(pt[0]) || !isFinite(pt[1])) return '';
+    pts.push(Number(pt[0]).toFixed(6) + ',' + Number(pt[1]).toFixed(6));
+  }
+  return String(ground || '').trim().toLowerCase()
+    + '|' + kind + (sub ? ':' + sub : '')
+    + '|' + pts.join(';');
+}
+
+/** The fingerprints of everything already saved, for the duplicate check. */
+function groundImportSeenSet() {
+  var seen = {};
+  groundFeaturesNow().forEach(function(r) {
+    if (!r || !r.geometry || typeof r.geometry !== 'object') return;
+    var sub = '';
+    if (r.kind === 'line') sub = lineSubtypeOf(r.geometry) || '';
+    else if (r.kind === 'marker') { var mk = markerFromGeometry(r.geometry); sub = mk ? mk.type : ''; }
+    var sig = groundImportSig(r.ground, r.kind, sub, r.geometry.ring);
+    if (sig) seen[sig] = 1;
+  });
+  return seen;
+}
+
+/**
+ * Import shapes from a KML, GPX or GeoJSON file.
+ *
+ * Finding N: this used to flatten every track into `kind: 'boundary'` and name
+ * the whole ground after the first track it met, so First Light could not read
+ * its own export back — a no-shoot zone came home as an ordinary parcel and
+ * the distinction the feature exists to make was destroyed by a round trip.
+ * lib/fl-geo.mjs now returns typed features, and this reads them:
+ *
+ *   • kind, name, notes, line subtype and marker type all survive;
+ *   • a feature that says which ground it belongs to goes to that ground.
+ *     Anything that does not lands in one new ground named from the file —
+ *     the HuntStand convention, kept, because a foreign file has no opinion;
+ *   • a shape already in that ground, vertex for vertex, is counted as
+ *     already-there rather than written twice, so re-importing is safe;
+ *   • an anonymous track is STILL a boundary. Nothing is reclassified away
+ *     from boundary on a guess, so no existing file imports differently today
+ *     than it did yesterday;
+ *   • high seats are recognised but NOT written. Stands live in another
+ *     table with their own editor, wind data and scoring; conjuring one here
+ *     would put a seat on the map the seat list has never heard of. They are
+ *     counted and reported rather than quietly dropped.
+ */
+async function groundsImportFile(file) {
+  if (!file || !sb || !currentUser) return;
+  if (!navigator.onLine) { showToast('⚠️ Still offline — importing needs signal'); return; }
+  // AG (2026-07-26): read the bytes, not the text. A .kmz is a zip with a .kml
+  // inside it, and it is what Google Earth's own Save Place As writes by
+  // default — so the commonest way a person actually has their ground on disk
+  // was the one way this app would not take it. file.text() on a zip returns
+  // mojibake, every parser then finds nothing in it, and what the user sees is
+  // "no usable shapes": the failure that reads as "my map is empty" rather than
+  // "wrong file". Sniff the archive signature instead of trusting the
+  // extension, because plenty of these arrive renamed to .kml.
+  var text;
+  try {
+    var bytes = new Uint8Array(await file.arrayBuffer());
+    text = looksLikeZip(bytes) ? await kmzToKmlText(bytes) : new TextDecoder('utf-8').decode(bytes);
+  } catch (e) {
+    // kmzToKmlText raises sentences meant to be shown as they are — which of
+    // the four ways a zip can disappoint us actually happened is the one thing
+    // that tells the user whether to try a different file or a different app.
+    showToast('⚠️ ' + ((e && e.message) || 'Could not read that file'), 4000);
+    return;
+  }
+
+  var parsed = null;
+  try { parsed = parseImportFeatures(text, file.name || ''); } catch (e) { parsed = null; }
+  var incoming = (parsed && parsed.features) ? parsed.features : [];
+  if (!incoming.length) { showToast('⚠️ No usable shapes found in that file'); return; }
+
+  // The ground for anything the file did not name for itself.
+  var fileGround = String((parsed && parsed.docName)
+    || String(file.name || '').replace(/\.(kml|kmz|gpx|geojson|json)$/i, '')
+    || 'Imported ground').trim().slice(0, 120) || 'Imported ground';
+
+  var seen = groundImportSeenSet();
+  var room = GROUND_FEATURES_MAX - groundFeaturesNow().length;
+  var seats = 0, dupes = 0, skipped = 0, noRoom = 0;
+  var plan = [];
+
+  incoming.forEach(function(f) {
+    if (!f) { skipped++; return; }
+    if (f.kind === 'stand') { seats++; return; }
+
+    var ring = f.ring;
+    var geom = null, sub = '';
+    if (f.kind === 'marker') {
+      var pt = (Array.isArray(ring) && ring.length) ? ring[0] : null;
+      if (!pt || !isFinite(pt[0]) || !isFinite(pt[1])
+        || pt[0] < -90 || pt[0] > 90 || pt[1] < -180 || pt[1] > 180) { skipped++; return; }
+      sub = f.markerType || 'other';
+      geom = makeMarkerGeometry(pt[0], pt[1], sub);
+    } else if (f.kind === 'line') {
+      if (!validateLinePath(ring).ok) { skipped++; return; }
+      sub = f.lineType || 'other';
+      geom = makeLineGeometry(ring, sub);
+    } else {
+      if (!validateBoundaryRing(ring).ok) { skipped++; return; }
+      geom = makeGeometry(ring);
+    }
+
+    var ground = String(f.ground || fileGround).trim().slice(0, 120) || fileGround;
+    var sig = groundImportSig(ground, f.kind, sub, geom.ring);
+    if (sig && seen[sig]) { dupes++; return; }
+    if (sig) seen[sig] = 1;
+    if (plan.length >= room) { noRoom++; return; }
+
+    plan.push({
+      ground: ground,
+      kind: f.kind,
+      geometry: geom,
+      name: f.name ? String(f.name).slice(0, 120) : null,
+      notes: f.notes ? String(f.notes).slice(0, 2000) : null
+    });
+  });
+
+  if (!plan.length) {
+    if (dupes && !skipped && !noRoom) {
+      showToast(dupes === 1
+        ? '✓ Already imported — that shape is on your map'
+        : '✓ Already imported — all ' + dupes + ' shapes are on your map', 3500);
+    } else if (noRoom) {
+      showToast('⚠️ Shape limit reached (' + GROUND_FEATURES_MAX + ') — remove one first');
+    } else if (seats && !skipped) {
+      showToast('⚠️ That file holds only high seats — add those on the Stands tab', 3500);
+    } else {
+      showToast('⚠️ No usable shapes found in that file');
+    }
+    return;
+  }
+
+  // Create any ground the file named that we do not have yet.
+  var grounds = [];
+  plan.forEach(function(w) { if (grounds.indexOf(w.ground) === -1) grounds.push(w.ground); });
+  for (var gi = 0; gi < grounds.length; gi++) {
+    if (savedGrounds.indexOf(grounds[gi]) === -1) {
+      try { await saveGround(grounds[gi]); } catch (e) { console.warn('import ground failed:', e); }
+    }
+  }
+
+  var byKind = { boundary: 0, no_shoot: 0, line: 0, marker: 0 };
+  var okCount = 0, totalM2 = 0, failed = 0;
+  for (var i = 0; i < plan.length; i++) {
+    var w = plan[i];
+    try {
+      await saveGroundFeature(sb, currentUser.id, {
+        ground: w.ground, kind: w.kind, geometry: w.geometry, name: w.name, notes: w.notes
+      });
+      okCount++;
+      byKind[w.kind] = (byKind[w.kind] || 0) + 1;
+      if (w.kind === 'boundary') totalM2 += ringAreaM2(w.geometry.ring);
+    } catch (e) { failed++; console.warn('import save failed:', e); }
+  }
+  if (!okCount) { showToast('⚠️ Import failed — check signal and try again'); return; }
+
+  await refreshGroundsData();
+  renderGroundsSheet();
+
+  // Say exactly what landed and exactly what did not.
+  var bits = [];
+  if (byKind.boundary) bits.push(byKind.boundary + ' parcel' + (byKind.boundary === 1 ? '' : 's'));
+  if (byKind.no_shoot) bits.push(byKind.no_shoot + ' no-shoot zone' + (byKind.no_shoot === 1 ? '' : 's'));
+  if (byKind.line) bits.push(byKind.line + ' line' + (byKind.line === 1 ? '' : 's'));
+  if (byKind.marker) bits.push(byKind.marker + ' marker' + (byKind.marker === 1 ? '' : 's'));
+  var where = grounds.length === 1 ? ' → "' + grounds[0] + '"' : ' → ' + grounds.length + ' grounds';
+  var tail = [];
+  if (totalM2 > 0) tail.push(formatAreaBoth(totalM2));
+  if (dupes) tail.push(dupes + ' already there');
+  if (seats) tail.push(seats + ' seat' + (seats === 1 ? '' : 's') + ' not imported');
+  if (skipped) tail.push(skipped + ' skipped');
+  if (noRoom) tail.push(noRoom + ' over the ' + GROUND_FEATURES_MAX + ' limit');
+  if (failed) tail.push(failed + ' failed to save');
+  showToast('✓ Imported ' + bits.join(' · ') + where
+    + (tail.length ? ' — ' + tail.join(' · ') : ''), 5000);
+}
+
+function gmapLocate() {
+  if (!navigator.geolocation) { showToast('GPS not available'); return; }
+  showToast('📍 Getting location…');
+  navigator.geolocation.getCurrentPosition(function(pos) {
+    if (!gmap) return;
+    gmap.setView([pos.coords.latitude, pos.coords.longitude], Math.max(gmap.getZoom(), 16));
+  }, function() {
+    showToast('⚠️ GPS unavailable — check location permissions');
+  }, { enableHighAccuracy: true, timeout: 10000 });
+}
+
+// ── G6: the Ground canvas — floating action bar on the stands map ──
+// (GROUNDS-PLAN §G4b item 5.) HuntStand's core UX win is that the ground
+// IS the home screen: everything is one thumb-tap from the map. The bar
+// under the stands map gives us the same reach without a new tab —
+// Grounds sheet, big gold ＋ (stand / boundary / zone / measure), Locate.
+
+/** ST-9: toggle the "there is more below" fade on a map popover. The three
+ *  popovers share .gmb-menu and all three are bounded to the map frame by
+ *  finding T, so all three can overflow; call this after any show or any
+ *  innerHTML rebuild. The listener is installed once per element - the flag
+ *  is the guard - and layout has to settle before scrollHeight means
+ *  anything, hence the frame delay. */
+function flGmbScrollHint(m) {
+  if (!m) return;
+  var sync = function() {
+    var more = (m.scrollHeight - m.clientHeight - m.scrollTop) > 4;
+    m.classList.toggle('has-more', more);
+  };
+  if (!m._flScrollHint) {
+    m._flScrollHint = true;
+    m.addEventListener('scroll', sync, { passive: true });
+  }
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(sync);
+  else sync();
+}
+
+function gmbToggle() {
+  var m = document.getElementById('gmb-menu');
+  if (!m) return;
+  var opening = (m.style.display === 'none' || !m.style.display);
+  m.style.display = opening ? 'flex' : 'none';
+  // The draw-invite and the menus share the space above the bar — one at a time.
+  if (opening) {
+    var gg = document.getElementById('gmb-grounds-menu');
+    if (gg) gg.style.display = 'none';
+    var gf = document.getElementById('stnd-filter-menu');
+    if (gf) gf.style.display = 'none';
+    var inv = document.getElementById('gmb-invite');
+    if (inv) inv.style.display = 'none';
+    flGmbScrollHint(m); // ST-9
+  } else {
+    syncGroundInvite();
+  }
+}
+
+// G8: remember the ground you're working — set by a switcher tap and by a
+// GPS pin landing inside exactly one boundary. Highlights its switcher row.
+var flLastGround = null;
+function lastGroundVisited() {
+  if (flLastGround == null) {
+    try { flLastGround = localStorage.getItem('fl-last-ground-v1') || ''; } catch (e) { flLastGround = ''; }
+  }
+  return flLastGround || null;
+}
+function setLastGroundVisited(g) {
+  flLastGround = g || '';
+  try { localStorage.setItem('fl-last-ground-v1', flLastGround); } catch (e) { /* best-effort */ }
+}
+
+/** G7: the Grounds button is a SWITCHER, not the admin door — it lists the
+ *  grounds and a tap flies the map there. Manage is the bottom row. */
+function gmbGroundsToggle() {
+  var m = document.getElementById('gmb-grounds-menu');
+  if (!m) return;
+  var opening = (m.style.display === 'none' || !m.style.display);
+  if (!opening) { gmbGroundsClose(); return; }
+  if ((savedGrounds || []).length === 0) {
+    // Nothing to switch between yet — straight to the manager to add one.
+    gmbLeaveFull();
+    openGroundsSheet();
+    return;
+  }
+  m.innerHTML = gmbGroundsMenuHtml(savedGrounds, groundFeaturesNow(), lastGroundVisited(), gmbManageStands());
+  var pm = document.getElementById('gmb-menu'); // the ＋ menu shares the spot
+  if (pm) pm.style.display = 'none';
+  var gf = document.getElementById('stnd-filter-menu');
+  if (gf) gf.style.display = 'none';
+  var inv = document.getElementById('gmb-invite');
+  if (inv) inv.style.display = 'none';
+  m.style.display = 'flex';
+  flGmbScrollHint(m); // ST-9
+}
+
+function gmbGroundsClose() {
+  var m = document.getElementById('gmb-grounds-menu');
+  if (m) m.style.display = 'none';
+  syncGroundInvite();
+}
+
+/** G7: fly the stands map to a ground — its parcels, else its pinned seats,
+ *  else hand over to the pencil (nothing to see yet). Stays in full screen:
+ *  like Locate, this acts ON the map you're looking at. */
+function gmbGoToGround(ground) {
+  setLastGroundVisited(ground); // G8: a tap on a ground row = working it now
+  var pts = [];
+  groundFeaturesNow().forEach(function(f) {
+    if (!f || f.ground !== ground || f.kind === 'no_shoot') return;
+    if (f.kind === 'marker') { // G10: gates/parking define the extent too
+      var mk = markerFromGeometry(f.geometry);
+      if (mk) pts.push([mk.lat, mk.lng]);
+      return;
+    }
+    var r = parseGeometry(f.geometry, f.kind === 'line' ? 2 : undefined); // G9: lines frame too
+    if (r && r.length) pts = pts.concat(r);
+  });
+  if (!pts.length) {
+    // Finding J: a ground whose only mapped thing is a no-shoot zone still has
+    // something worth flying to. Zones are excluded from the FIRST pass so a
+    // one-acre garden cannot dominate the frame when real parcels exist — but
+    // when nothing else is there, showing the zone beats refusing to move.
+    groundFeaturesNow().forEach(function(f) {
+      if (!f || f.ground !== ground || f.kind !== 'no_shoot') return;
+      var r = parseGeometry(f.geometry);
+      if (r && r.length) pts = pts.concat(r);
+    });
+  }
+  if (!pts.length) {
+    // …and offline the live list is empty, so fall back to the cache the rest
+    // of the grounds UI reads (gmbManageStands), not to flStandsState alone.
+    gmbManageStands().forEach(function(s) {
+      if (s && s.ground === ground && s.lat != null && s.lng != null) pts.push([s.lat, s.lng]);
+    });
+  }
+  if (pts.length && standsMap) {
+    standsMap.fitBounds(pts, { padding: [34, 34], maxZoom: 16 });
+    return;
+  }
+  showToast('⚠️ ' + ground + ' has nothing on the map yet — draw its boundary');
+  gmbLeaveFull();
+  openBoundaryEditor(ground, null, 'boundary');
+}
+
+function gmbClose() {
+  var m = document.getElementById('gmb-menu');
+  if (m) m.style.display = 'none';
+  syncGroundInvite();
+}
+
+/** G6 fix (owner: "click Grounds — nothing happens"): every overlay the bar
+ *  opens (sheets z300, boundary/measure editor z600) sits UNDER the
+ *  full-screen map (z4000), so on the full-screen map the tap opened the
+ *  sheet invisibly. Leave full screen first — the Round-26 marker-tap cure
+ *  (flToggleStandsMapFull consumes its history entry properly). No-op when
+ *  not full screen. Locate is deliberately exempt: it acts ON the map. */
+function gmbLeaveFull() {
+  var wrap = document.getElementById('stands-map-wrap');
+  if (wrap && wrap.classList.contains('fullscreen')) flToggleStandsMapFull();
+}
+
+/** G6/G16a/G18: one tap → straight into the editor, like New stand.
+ *  Owner journey: G16a killed the full-manager detour; G18 kills the up-front
+ *  ground PICKER entirely — a marker/line/boundary now opens the editor
+ *  immediately (seeded on the view you're looking at) and the ground is chosen
+ *  INSIDE it (a selector, exactly like the Add-stand form's ground dropdown),
+ *  so the two flows finally match. The editor defaults its ground to the one
+ *  you're plainly on (under the map → last worked → first), which you can
+ *  change in the selector before saving. Only the true first-run (NO grounds
+ *  at all) still names a ground inline first, since a feature needs a ground
+ *  to belong to (ground_features.ground is NOT NULL). */
+function gmbDrawSmart(kind) {
+  var list = savedGrounds || [];
+  if (list.length === 0) { gmbNewGroundStart(kind); return; }
+  // G19: default the editor's ground ONLY when there's a real basis — the
+  // ground under the map (if it's mapped), else the last ground you actually
+  // worked. If neither, pass null → the selector shows "— Choose a ground —"
+  // instead of a blind alphabetical guess (owner: it kept pre-picking West
+  // Acre just because it sorts first). Last-worked is made sticky in gmapSave.
+  var here = gmbGroundUnderMap();               // the ground under the map, if mapped
+  if (!here) {
+    var lg = lastGroundVisited();
+    here = (lg && list.indexOf(lg) !== -1) ? lg : null; // last worked, else CHOOSE
+  }
+  openBoundaryEditor(here, null, kind, standsMapSeedLL());
+}
+
+/** G16b: show a popover (in the switcher slot) — used both when there are NO
+ *  grounds and by the picker's "＋ New ground" row. innerHTML builder + show. */
+function gmbShowGroundsPopover(html, focusId) {
+  var m = document.getElementById('gmb-grounds-menu');
+  if (!m) { openGroundsSheet(); return; }
+  m.innerHTML = html;
+  var pm = document.getElementById('gmb-menu'); if (pm) pm.style.display = 'none';
+  var gf = document.getElementById('stnd-filter-menu'); if (gf) gf.style.display = 'none';
+  var inv = document.getElementById('gmb-invite'); if (inv) inv.style.display = 'none';
+  m.style.display = 'flex';
+  flGmbScrollHint(m); // ST-9
+  if (focusId) {
+    var el = document.getElementById(focusId);
+    if (el) {
+      setTimeout(function() { try { el.focus(); } catch (_) {} }, 60);
+      // Enter submits — same as tapping Create.
+      el.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); gmbCreateGroundAndDraw(el.getAttribute('data-kind')); }
+      });
+    }
+  }
+}
+
+/** G16b: open the inline "name your new ground" form. */
+function gmbNewGroundStart(kind) {
+  gmbShowGroundsPopover(gmbNewGroundFormHtml(kind), 'gmb-newground-name');
+}
+
+/** G16b: create the named ground (if new) and go straight into the editor for
+ *  `kind`, seeded on the stands-map view so it opens where you were looking. */
+async function gmbCreateGroundAndDraw(kind) {
+  var inp = document.getElementById('gmb-newground-name');
+  if (!inp) return;
+  var name = (inp.value || '').trim();
+  var k = (kind === 'no_shoot' || kind === 'line' || kind === 'marker') ? kind : 'boundary';
+  if (!name) { showToast('⚠️ Name the ground first'); try { inp.focus(); } catch (_) {} return; }
+  if (name.length > 120) { showToast('⚠️ Ground name too long (120 characters max)'); return; }
+  var seed = standsMapSeed();
+  var seedLL = seed ? [seed.lat, seed.lng] : null;
+  if (savedGrounds.indexOf(name) !== -1) { // already exists — just draw on it
+    gmbGroundsClose();
+    openBoundaryEditor(name, null, k, seedLL);
+    return;
+  }
+  if (!navigator.onLine) { showToast('⚠️ Still offline — adding a ground needs signal'); return; }
+  await saveGround(name);
+  gmbGroundsClose();
+  showToast('✓ Ground “' + name + '” added');
+  openBoundaryEditor(name, null, k, seedLL);
+}
+
+/** G16a: the ground the stands map is currently CENTRED on — high-confidence
+ *  "you're working here" signal. Only when zoomed onto ground (≥10, the
+ *  standsMapSeed threshold) AND the centre sits inside exactly one boundary.
+ *  null when it can't be told (zoomed out, between grounds, overlap). */
+function gmbGroundUnderMap() {
+  try {
+    if (standsMap && standsMap.getZoom() >= 10) {
+      var c = standsMap.getCenter();
+      if (c) {
+        var hits = groundsContainingPoint(c.lat, c.lng, groundFeaturesNow());
+        if (hits.length === 1 && (savedGrounds || []).indexOf(hits[0]) !== -1) return hits[0];
+      }
+    }
+  } catch (e) { /* map not ready */ }
+  return null;
+}
+
+/** G16a: a compact "which ground?" popover for a draw action — names + area
+ *  only, the last-worked ground highlighted; a tap opens the editor for that
+ *  ground+kind. Reuses the switcher popover slot above the bar. NOT the manager. */
+function gmbOpenDrawPicker(kind) {
+  gmbShowGroundsPopover(gmbDrawPickerHtml(savedGrounds, groundFeaturesNow(), kind, lastGroundVisited()));
+}
+
+/** PURE (G16a/G16b): draw-picker rows — a heading naming the action, one row
+ *  per ground (colour dot + name + area, last-worked lit), then a "＋ New
+ *  ground" row so you can set up a ground right here instead of hunting for the
+ *  manager. Ground rows dispatch gmb-pick-draw; the new row gmb-pick-newground. */
+function gmbDrawPickerHtml(grounds, features, kind, current) {
+  var verb = kind === 'marker' ? 'Add a marker on…'
+    : kind === 'line' ? 'Add a line on…'
+    : kind === 'no_shoot' ? 'Add a no-shoot zone on…'
+    : 'Draw a boundary on…';
+  var areas = groundAreaPartsFrom(features);
+  // G17: an "Edit" affordance in the header opens rename/delete for the grounds.
+  var h = '<div class="gmb-mi-head gmb-mi-head--row"><span>' + esc(verb) + '</span>'
+    + '<button type="button" class="gmb-edit-link" data-fl-action="gmb-edit-toggle">Edit</button></div>';
+  (grounds || []).forEach(function(g) {
+    var sub = areas[g] ? formatAreaParts(areas[g]) : 'not mapped yet';
+    var lit = current != null && g === current;
+    h += '<button type="button" class="gmb-mi gmb-gr' + (lit ? ' on' : '') + '" data-fl-action="gmb-pick-draw" data-ground="' + esc(g) + '" data-kind="' + esc(kind) + '" role="menuitem"' + (lit ? ' aria-current="true"' : '') + '>'
+      + '<span class="gmb-dot" style="background:' + groundColorFor(g) + ';"></span>'
+      + '<span class="gmb-gr-txt">' + esc(g) + '<span class="gmb-mi-sub">' + esc(sub) + '</span></span>'
+      + '</button>';
+  });
+  h += '<button type="button" class="gmb-mi gmb-mi--newground" data-fl-action="gmb-pick-newground" data-kind="' + esc(kind) + '" role="menuitem">'
+    + '<span class="gmb-ng-plus" aria-hidden="true">＋</span> New ground</button>';
+  return h;
+}
+
+/** PURE (G16b): the inline "name your new ground" form shown in the switcher
+ *  slot. A heading, a text field, and a Create button that carries the kind so
+ *  the editor opens straight after the ground is made. */
+function gmbNewGroundFormHtml(kind) {
+  var noun = kind === 'marker' ? 'marker'
+    : kind === 'line' ? 'line'
+    : kind === 'no_shoot' ? 'no-shoot zone'
+    : 'boundary';
+  return '<div class="gmb-mi-head">New ground</div>'
+    + '<div class="gmb-ng-row">'
+    + '<input type="text" id="gmb-newground-name" class="gmb-ng-inp" maxlength="120" placeholder="Name it — e.g. Home Farm" autocomplete="off" data-kind="' + esc(kind) + '">'
+    + '</div>'
+    + '<button type="button" class="gmb-mi gmb-ng-go" data-fl-action="gmb-create-ground" data-kind="' + esc(kind) + '" role="menuitem">'
+    + '<span class="gmb-ng-plus" aria-hidden="true">＋</span> Create &amp; add ' + esc(noun) + '</button>';
+}
+
+// ── G17: manage grounds (rename / delete) from the switcher & picker ─────────
+
+/** PURE (G17): what a ground holds — counts of its map furniture + its seats,
+ *  and the labels the Edit rows / delete confirm use. `empty` = nothing at all
+ *  (a clean one-tap delete); `furniture` counts boundaries/lines/zones/markers
+ *  (what a delete actually removes — seats are always KEPT). */
+function groundContentSummary(ground, features, stands) {
+  var c = { boundary: 0, line: 0, zone: 0, marker: 0, seats: 0 };
+  (features || []).forEach(function(f) {
+    if (!f || f.ground !== ground) return;
+    if (f.kind === 'boundary') c.boundary++;
+    else if (f.kind === 'line') c.line++;
+    else if (f.kind === 'no_shoot') c.zone++;
+    else if (f.kind === 'marker') c.marker++;
+  });
+  (stands || []).forEach(function(s) { if (s && (s.ground || '') === ground) c.seats++; });
+  function plu(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+  var fParts = [];
+  if (c.boundary) fParts.push(plu(c.boundary, 'boundary', 'boundaries'));
+  if (c.zone) fParts.push(plu(c.zone, 'no-shoot zone', 'no-shoot zones'));
+  if (c.line) fParts.push(plu(c.line, 'line', 'lines'));
+  if (c.marker) fParts.push(plu(c.marker, 'marker', 'markers'));
+  var furniture = c.boundary + c.line + c.zone + c.marker;
+  var seatLabel = c.seats ? plu(c.seats, 'seat', 'seats') : '';
+  var furnitureLabel = fParts.join(' · ');
+  return {
+    boundary: c.boundary, line: c.line, zone: c.zone, marker: c.marker, seats: c.seats,
+    furniture: furniture, empty: (furniture === 0 && c.seats === 0),
+    furnitureLabel: furnitureLabel, seatLabel: seatLabel,
+    rowLabel: (furniture === 0 && c.seats === 0) ? 'empty'
+      : [furnitureLabel, seatLabel].filter(Boolean).join(' · ')
+  };
+}
+
+var GMB_PENCIL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+var GMB_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
+var GMB_CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+var GMB_CROSS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+/** PURE (G17): the Edit-mode rows — one per ground. Normal state = name +
+ *  content summary + rename/delete icons; the ground being renamed shows an
+ *  inline field + save; the ground armed for delete shows an honest confirm
+ *  card naming exactly what goes (seats are always kept). */
+function gmbManageRowsHtml(grounds, features, stands, opts) {
+  opts = opts || {};
+  var h = '';
+  (grounds || []).forEach(function(g) {
+    var sm = groundContentSummary(g, features, stands);
+    var dot = '<span class="gmb-dot" style="background:' + groundColorFor(g) + ';"></span>';
+    if (opts.armedDelete != null && g === opts.armedDelete) {
+      var why = sm.empty ? 'it’s empty — nothing else goes with it'
+        : sm.furniture ? ('also removes: ' + sm.furnitureLabel + (sm.seats ? ' · ' + sm.seatLabel + ' kept' : ''))
+        : (sm.seatLabel + ' kept — they just lose the tag');
+      h += '<div class="gmb-del-card">'
+        + '<div class="gmb-del-q">Delete “' + esc(g) + '”?</div>'
+        + '<div class="gmb-del-why">' + esc(why) + '</div>'
+        + '<div class="gmb-del-btns">'
+        + '<button type="button" class="gmb-del-cancel" data-fl-action="gmb-del-cancel">Cancel</button>'
+        + '<button type="button" class="gmb-del-go" data-fl-action="gmb-del-confirm" data-ground="' + esc(g) + '">' + (sm.furniture ? 'Delete anyway' : 'Delete') + '</button>'
+        + '</div></div>';
+      return;
+    }
+    if (opts.renaming != null && g === opts.renaming) {
+      h += '<div class="gmb-mi gmb-gr on gmb-rename-row">' + dot
+        + '<input type="text" id="gmb-rename-inp" class="gmb-ng-inp" maxlength="120" value="' + esc(g) + '" data-old="' + esc(g) + '" autocomplete="off">'
+        + '<button type="button" class="gmb-ng-save" data-fl-action="gmb-rename-save" data-ground="' + esc(g) + '" aria-label="Save name">' + GMB_CHECK_SVG + '</button>'
+        + '</div>';
+      return;
+    }
+    h += '<div class="gmb-mi gmb-gr gmb-mng-row">' + dot
+      + '<span class="gmb-gr-txt">' + esc(g) + '<span class="gmb-mi-sub">' + esc(sm.rowLabel) + '</span></span>'
+      + '<span class="gmb-row-acts">'
+      + '<button type="button" class="gmb-iconbtn" data-fl-action="gmb-rename-start" data-ground="' + esc(g) + '" aria-label="Rename ' + esc(g) + '">' + GMB_PENCIL_SVG + '</button>'
+      + '<button type="button" class="gmb-iconbtn del" data-fl-action="gmb-del-arm" data-ground="' + esc(g) + '" aria-label="Delete ' + esc(g) + '">' + GMB_TRASH_SVG + '</button>'
+      + '</span></div>';
+  });
+  return h;
+}
+
+var gmbManageMode = false, gmbRenaming = null, gmbArmedDelete = null;
+
+function gmbManageStands() {
+  return flEffectiveStands();
+}
+
+/** G17: enter Edit mode (from the switcher's or picker's "Edit"). */
+function gmbEnterManage() { gmbManageMode = true; gmbRenaming = null; gmbArmedDelete = null; gmbRenderManage(); }
+
+/** G17: leave Edit mode → back to the Grounds switcher (normal list). */
+function gmbExitManage() {
+  gmbManageMode = false; gmbRenaming = null; gmbArmedDelete = null;
+  var m = document.getElementById('gmb-grounds-menu');
+  if (!m) return;
+  if (!(savedGrounds || []).length) { gmbGroundsClose(); syncGroundInvite(); return; }
+  m.innerHTML = gmbGroundsMenuHtml(savedGrounds, groundFeaturesNow(), lastGroundVisited(), gmbManageStands());
+  m.style.display = 'flex';
+}
+
+/** G17: paint the Edit-mode list into the popover (header + manage rows). */
+function gmbRenderManage() {
+  if (!(savedGrounds || []).length) { gmbExitManage(); return; }
+  var html = '<div class="gmb-mng-hd"><span class="ttl">Edit grounds</span>'
+    + '<button type="button" class="gmb-mng-done" data-fl-action="gmb-manage-done">Done</button></div>'
+    + gmbManageRowsHtml(savedGrounds, groundFeaturesNow(), gmbManageStands(), { renaming: gmbRenaming, armedDelete: gmbArmedDelete });
+  gmbShowGroundsPopover(html, null);
+  if (gmbRenaming) {
+    var el = document.getElementById('gmb-rename-inp');
+    if (el) {
+      setTimeout(function() { try { el.focus(); el.select(); } catch (_) {} }, 50);
+      el.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); gmbRenameSave(el.getAttribute('data-old')); }
+      });
+    }
+  }
+}
+
+/** G17: commit a rename from the inline field (cascades via renameGround). */
+async function gmbRenameSave(oldName) {
+  var inp = document.getElementById('gmb-rename-inp');
+  if (!inp) return;
+  var res = await renameGround(oldName, inp.value);
+  if (res && res.ok) { gmbRenaming = null; if (gmbManageMode) gmbRenderManage(); }
+  // on failure the toast explains why and the field stays open to fix
+}
+
+/** G17: commit a delete after the inline confirm (cascades via deleteGroundCascade).
+ *  M71 exception #3: .gmb-del-card is the sanctioned inline form of flConfirm —
+ *  it asks the question, states what goes with it, and offers a real Cancel. */
+async function gmbDelConfirm(name) {
+  gmbArmedDelete = null;
+  await deleteGroundCascade(name);
+  if (!(savedGrounds || []).length) { gmbManageMode = false; gmbGroundsClose(); syncGroundInvite(); return; }
+  if (gmbManageMode) gmbRenderManage();
+}
+
+/** G6: Locate on the stands map itself (same contract as gmapLocate). */
+function standsMapLocate() {
+  if (!navigator.geolocation) { showToast('GPS not available'); return; }
+  showToast('📍 Getting location…');
+  navigator.geolocation.getCurrentPosition(function(pos) {
+    if (!standsMap) return;
+    var mLat = pos.coords.latitude, mLng = pos.coords.longitude;
+    standsMap.setView([mLat, mLng], Math.max(standsMap.getZoom(), 15));
+    // ST-10: recentring with nothing drawn put the user on a blank field, no
+    // pins, no mark - indistinguishable from a map that had simply drifted.
+    // Draw the fix, and let the accuracy ring say how much to trust it: a
+    // 40 m circle under a tree canopy is a different answer from a 4 m one.
+    if (standsMeLayer) { try { standsMap.removeLayer(standsMeLayer); } catch (_) {} standsMeLayer = null; }
+    try {
+      var grp = L.layerGroup();
+      var acc = pos.coords.accuracy;
+      if (acc != null && acc > 0 && acc < 1000) {
+        L.circle([mLat, mLng], { radius: acc, color: '#5aa9e6', weight: 1, opacity: 0.65,
+          fillColor: '#5aa9e6', fillOpacity: 0.12, interactive: false }).addTo(grp);
+      }
+      L.circleMarker([mLat, mLng], { radius: 6, color: '#ffffff', weight: 2,
+        fillColor: '#2f80c9', fillOpacity: 1, interactive: false }).addTo(grp);
+      grp.addTo(standsMap);
+      standsMeLayer = grp;
+    } catch (_) {}
+    // ST-3: and say straight away how many seats we have just left behind.
+    syncStandStepMarkers();
+  }, function() {
+    showToast('⚠️ GPS unavailable — check location permissions');
+  }, { enableHighAccuracy: true, timeout: 10000 });
+}
+
+/** G6: show the "Draw your ground boundary →" invite until one exists.
+ *  The empty state is where HuntStand wins hardest — a new user should be
+ *  pulled toward drawing their ground, not left hunting through Settings. */
+function syncGroundInvite() {
+  var el = document.getElementById('gmb-invite');
+  if (!el) return;
+  var show = false;
+  if (currentUser && sb && !groundFeaturesUnavailable()) {
+    var feats = groundFeaturesNow();
+    var has = false;
+    for (var i = 0; i < feats.length; i++) {
+      var f = feats[i];
+      if (f && f.kind !== 'no_shoot' && parseGeometry(f.geometry)) { has = true; break; }
+    }
+    show = !has;
+  }
+  el.style.display = show ? '' : 'none';
+}
+
+// ── G3: boundaries on every map + boundary intelligence ───────
+// (GROUNDS-PLAN §5.) Pure helpers first — vm-extracted by
+// tests/grounds-render.test.mjs, so keep them free of DOM/state.
+
+/** PURE: stable per-ground colour from a small palette; a feature's own
+ *  `color` column overrides at paint time. Muted hues chosen to read on both
+ *  the OS map and satellite without shouting over pins/cones. */
+function groundColorFor(ground) {
+  var PAL = ['#d8b054', '#7aa2c8', '#c87a7a', '#8fbf6f', '#b48fd0', '#d99a5b', '#6fbfb0', '#c8c86e'];
+  var s = String(ground || '');
+  var h = 0;
+  for (var i = 0; i < s.length; i++) h = ((h * 31) + s.charCodeAt(i)) >>> 0;
+  return PAL[h % PAL.length];
+}
+
+/** PURE: {ground: hectares} summed over valid boundary features. */
+function groundAreasHaFrom(features) {
+  var out = {};
+  (features || []).forEach(function(f) {
+    if (!f || f.kind !== 'boundary') return;
+    var a = geometryAreaM2(f.geometry);
+    if (a > 0) out[f.ground] = (out[f.ground] || 0) + a / 10000;
+  });
+  return out;
+}
+
+/** PURE (AC): {ground: landParts} — one ground's acreage as the grounds
+ *  SHEET prints it, so every surface that shows an area agrees with the sheet
+ *  to the digit. groundAreasHaFrom stays raw hectares on purpose: stats divides
+ *  by it for cull density per 100 ha, and a display-rounded divisor would bend
+ *  the arithmetic. Display reads this; maths reads that. */
+function groundAreaPartsFrom(features) {
+  var acc = {};
+  (features || []).forEach(function(f) {
+    if (!f || f.kind !== 'boundary') return;
+    var a = geometryAreaM2(f.geometry);
+    if (a > 0) (acc[f.ground] = acc[f.ground] || []).push(landParts(a));
+  });
+  var out = {};
+  Object.keys(acc).forEach(function(g) { out[g] = sumLandParts(acc[g]); });
+  return out;
+}
+
+/** PURE (G7): rows for the map's ground switcher — tap a ground to FLY to it.
+ *  Viewing is the primary verb (owner: "a user wouldn't want to edit the
+ *  grounds all the time — they would rather see their ground"); Manage is
+ *  one quiet row at the bottom, not the front door. */
+function gmbGroundRowSub(ground, areaParts, features, stands) {
+  if (areaParts) return formatAreaParts(areaParts);  // AC: same digits as the sheet
+  var furniture = 0, seats = 0;
+  (features || []).forEach(function(f) { if (f && f.ground === ground) furniture++; });
+  if (furniture) return 'no boundary yet — tap to see';
+  (stands || []).forEach(function(s) { if (s && (s.ground || '') === ground) seats++; });
+  if (seats) return seats + (seats === 1 ? ' seat' : ' seats') + ' — tap to see';
+  return 'not mapped yet — tap to draw';
+}
+
+function gmbGroundsMenuHtml(grounds, features, current, stands) {
+  var areas = groundAreaPartsFrom(features);
+  // G17: header carries the "Edit" affordance (rename / delete grounds).
+  var h = '<div class="gmb-mi-head gmb-mi-head--row"><span>Your grounds</span>'
+    + '<button type="button" class="gmb-edit-link" data-fl-action="gmb-edit-toggle">Edit</button></div>';
+  (grounds || []).forEach(function(g) {
+    var sub = gmbGroundRowSub(g, areas[g], features, stands);
+    var here = current != null && g === current; // G8: "you are here" row
+    h += '<button type="button" class="gmb-mi gmb-gr' + (here ? ' on' : '') + '" data-fl-action="gmb-goto" data-ground="' + esc(g) + '" role="menuitem"' + (here ? ' aria-current="true"' : '') + '>'
+      + '<span class="gmb-dot" style="background:' + groundColorFor(g) + ';"></span>'
+      + '<span class="gmb-gr-txt">' + esc(g) + '<span class="gmb-mi-sub">' + esc(sub) + '</span></span>'
+      + '</button>';
+  });
+  h += '<button type="button" class="gmb-mi gmb-mi--manage" data-fl-action="gmb-manage" role="menuitem">'
+    + '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M1.5 3.5h10M1.5 6.5h10M1.5 9.5h10"/><circle cx="4.5" cy="3.5" r="1.4" fill="currentColor" stroke="none"/><circle cx="8.5" cy="6.5" r="1.4" fill="currentColor" stroke="none"/><circle cx="5.5" cy="9.5" r="1.4" fill="currentColor" stroke="none"/></svg>'
+    + 'Manage grounds</button>';
+  return h;
+}
+
+/** PURE: grounds whose boundary contains the point (deduped, sorted). Advisory
+ *  only — feeds auto-fill suggestions, never enforcement. */
+function groundsContainingPoint(lat, lng, features) {
+  var hit = {};
+  (features || []).forEach(function(f) {
+    if (!f || f.kind !== 'boundary') return;
+    var ring = parseGeometry(f.geometry);
+    if (ring && pointInRing(lat, lng, ring)) hit[f.ground] = true;
+  });
+  return Object.keys(hit).sort();
+}
+
+/** PURE (AP): no-shoot zones containing the point, in list order. Deliberately
+ *  NOT scoped to any ground — a no-shoot zone is a fact about the land, not
+ *  about the paperwork, and the case worth catching most is the pin filed
+ *  against the wrong ground while sitting inside the RIGHT ground's zone. It is
+ *  self-limiting geometrically: a zone forty miles away cannot contain a point.
+ */
+function zonesContainingPoint(lat, lng, features) {
+  var out = [];
+  (features || []).forEach(function(f) {
+    if (!f || f.kind !== 'no_shoot') return;
+    var ring = parseGeometry(f.geometry);
+    if (ring && pointInRing(lat, lng, ring)) out.push(f);
+  });
+  return out;
+}
+
+/**
+ * AP (2026-07-26): the sentence no other product in this category can produce.
+ *
+ * The market research is blunt about why. A no-shoot zone is a pin on Spartan
+ * Forge, a free-text description field on Oma riista, a suggested *name* for an
+ * ordinary shape on HuntStand, and stated absent twice on onX — so nothing can
+ * be tested against it. First Light has had the opposite for months: `no_shoot`
+ * is a real kind, it holds a real ring, and pointInRing() has been sitting in
+ * fl-geo the whole time. The app drew the zone red, counted it in the meta
+ * line, kept it out of the huntable acreage, exported it as a zone — and then
+ * said nothing at all when a pin landed inside one, because
+ * groundsContainingPoint() filters to kind === 'boundary'. One `if` short of
+ * the only affirmative answer in the category, and it had not been written.
+ *
+ * Kept as its own function rather than folded into groundPinAdvisory() for two
+ * reasons. The 53 tests on that function pin its SILENCES as hard as its
+ * sentences, and none of them should have to move for this. And
+ * standSheetGroundChanged() uses groundPinAdvisory() as the judge of whether to
+ * re-seed a pin onto a ground's centroid: a zone hit is not evidence that a pin
+ * is on the wrong ground, so it must never be allowed to move one.
+ *
+ * Advisory, never enforcement — finding 19's doctrine. A stalker who has drawn
+ * a generous buffer round a footpath and is sitting just inside it with a rifle
+ * pointed the other way is allowed to be right about their own ground.
+ */
+function groundZoneAdvisory(lat, lng, features) {
+  if (lat == null || lng == null || lat === '' || lng === '') return '';
+  var la = Number(lat), lo = Number(lng);
+  if (!isFinite(la) || !isFinite(lo)) return '';
+  var hits = zonesContainingPoint(la, lo, features);
+  if (!hits.length) return '';
+  var seen = {}, named = [], grounds = {}, namedCount = 0;
+  hits.forEach(function(f) {
+    var n = (f.name == null ? '' : String(f.name)).trim();
+    // namedCount counts FEATURES, `named` collects distinct names. Two zones
+    // that share a name are still two zones — the plural has to come from the
+    // count, or a pin standing in both reads as though it were in one.
+    if (n) { namedCount++; if (!seen[n]) { seen[n] = true; named.push(n); } }
+    var g = (f.ground == null ? '' : String(f.ground)).trim();
+    if (g) grounds[g] = true;
+  });
+  // Every zone named: say the names, because a name is what the user will
+  // recognise. Any zone unnamed: fall back to a count, because listing the two
+  // that happen to have names would understate how many the pin is inside.
+  if (namedCount === hits.length) {
+    return 'This pin is inside the ' + flListSentence(named.sort())
+         + ' no-shoot zone' + (hits.length === 1 ? '' : 's')
+         + ' — check the pin before saving.';
+  }
+  var gl = Object.keys(grounds).sort();
+  return 'This pin is inside ' + (hits.length === 1 ? 'a no-shoot zone' : hits.length + ' no-shoot zones')
+       + (gl.length ? ' on ' + flListSentence(gl) : '')
+       + ' — check the pin before saving.';
+}
+
+/**
+ * PURE (Section 6, finding 19): the sentence shown under a dropped pin when the
+ * pin and the chosen ground disagree. Advisory, never enforcement — a stalker
+ * standing on a march fence, or working off a boundary traced a few metres in,
+ * is allowed to be right about their own ground. But filing an entry against
+ * the wrong ground is not a cosmetic error: it moves the pin on the cull map,
+ * it moves the beast in per-ground stats, and it counts against the wrong plan.
+ * Until now the app noticed the contradiction and said nothing, because
+ * maybeAutoSelectGroundFromPin() bails the moment a ground is already chosen.
+ *
+ * Silence is the default and it is load-bearing. Returns '' when there is no
+ * ground, no usable fix, or — the important one — when the chosen ground has no
+ * boundary drawn at all, because then the app knows nothing and must not imply
+ * that it does.
+ */
+function groundPinAdvisory(ground, lat, lng, features) {
+  var g = (ground == null ? '' : String(ground)).trim();
+  if (!g) return '';
+  if (lat == null || lng == null || lat === '' || lng === '') return '';
+  var la = Number(lat), lo = Number(lng);
+  if (!isFinite(la) || !isFinite(lo)) return '';
+  var list = features || [];
+  var mapped = false;
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].kind === 'boundary' && list[i].ground === g) { mapped = true; break; }
+  }
+  if (!mapped) return '';
+  var hits = groundsContainingPoint(la, lo, list);
+  if (hits.indexOf(g) !== -1) return '';
+  if (hits.length) {
+    return 'This pin is inside ' + flListSentence(hits) + ', not ' + g
+         + ' — check the ground before saving.';
+  }
+  return 'This pin is outside the ' + g + ' boundary — check the ground before saving.';
+}
+
+/** Paint or clear that advisory. Reads the same coordinates the save path does
+ *  (pin first, last GPS fix second), so it warns about what would actually be
+ *  written, not about what happens to be on screen. */
+function refreshGroundPinWarning() {
+  var el = document.getElementById('loc-pin-warn');
+  if (!el) return;
+  var la = (formPinLat != null) ? formPinLat : lastGpsLat;
+  var lo = (formPinLng != null) ? formPinLng : lastGpsLng;
+  var txt = '', zone = false;
+  try {
+    // AP: the zone sentence outranks the ground sentence. Both can be true at
+    // once and one line can only carry one, so the safety statement goes first
+    // and the filing-accuracy one surfaces on the next repaint once the pin has
+    // moved out of the zone. Sequential, and each one stays short enough to act
+    // on without reading twice.
+    var feats = groundFeaturesNow();
+    txt = groundZoneAdvisory(la, lo, feats);
+    zone = !!txt;
+    if (!txt) txt = groundPinAdvisory(getGroundValue(), la, lo, feats);
+  } catch (_) { txt = ''; zone = false; }
+  el.textContent = txt;
+  el.className = 'loc-pin-warn' + (zone ? ' loc-pin-warn--zone' : '');
+  el.style.display = txt ? '' : 'none';
+}
+
+/** PURE: the close-season line for one cull, or null when the app should say
+ *  nothing at all. Extracted by name and run in a sandbox by
+ *  tests/cull-season-advisory.test.mjs, so it must stay free of globals.
+ *
+ *  Silence is the hard half. It returns null for a pest (no statutory season
+ *  exists), for a half-filled form (no species, no sex, no date), and — the
+ *  case that would otherwise nag on nearly every entry — when the location is
+ *  not near enough to one jurisdiction to be sure which law applies. The pinned
+ *  strip already carries a line about the pin; a second line saying the same
+ *  thing in different words is noise.
+ *
+ *  The detail sentence is passed straight through. The plainly-in-season case
+ *  carries none, so it stays one short line; the three that do carry one are
+ *  the three worth explaining — out of season ("recorded anyway", because AP /
+ *  finding 19 is advisory, never enforcement), Scotland's abolished male close
+ *  season, and the species Northern Ireland's Schedule 10 never listed.
+ */
+function cullSeasonAdvisory(species, sex, dateStr, lat, lng) {
+  var meta = quarryMeta(species);
+  if (!meta || meta.group !== 'deer') return null;
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr == null ? '' : dateStr));
+  if (!m) return null;
+  var sx = (sex === 'm') ? 'male' : ((sex === 'f') ? 'female' : '');
+  if (!sx) return null;
+  var v = checkCullSeason({
+    species: meta.key, sex: sx,
+    month: Number(m[2]), day: Number(m[3]),
+    lat: lat, lng: lng
+  });
+  if (!v || !v.jurisdiction) return null;
+  // Scotland abolished the male close seasons on 21 October 2023 (SSI 2023/184).
+  // The tables behind checkCullSeason are the current ones, so for a male taken
+  // in Scotland before that date they would report "no close season" when a
+  // close season did in fact apply. Say nothing rather than say something false.
+  if (v.jurisdiction === 'scotland' && sx === 'male' &&
+      (m[1] + '-' + m[2] + '-' + m[3]) < '2023-10-21') {
+    return {
+      status: 'unknown',
+      headline: 'Season not checked for this date',
+      detail: 'Scotland abolished the male close seasons on 21 October 2023. This entry predates that change and this app holds only the seasons in force now, so it will not tell you what applied on the day.'
+    };
+  }
+  return { status: v.status, headline: v.headline, detail: v.detail || null };
+}
+
+/** Paint or clear that advisory. Reads the same coordinates the save path does
+ *  — pin first, last GPS fix second — and falls back to the centre of the
+ *  chosen ground's drawn boundary, which for a stalker who works one permission
+ *  is the only location the form ever holds. */
+function refreshCullSeasonAdvisory() {
+  var el = document.getElementById('cull-season-advisory');
+  if (!el) return;
+  var v = null;
+  // A blank day records no animal, and a sighting is not a cull: neither has a
+  // close season to be outside of.
+  if (!formIsBlank && !formIsSighting) {
+    try {
+      var la = (formPinLat != null) ? formPinLat : lastGpsLat;
+      var lo = (formPinLng != null) ? formPinLng : lastGpsLng;
+      if (la == null || lo == null) {
+        var seed = standGroundSeed(getGroundValue(), groundFeaturesNow());
+        if (seed) { la = seed.lat; lo = seed.lng; }
+      }
+      var dEl = document.getElementById('f-date');
+      v = cullSeasonAdvisory(formSpecies, formSex, dEl ? dEl.value : '', la, lo);
+    } catch (_) { v = null; }
+  }
+  var head = v ? v.headline : '';
+  var body = (v && v.detail) ? v.detail : '';
+  // role="status" makes this a live region, so rewriting identical text would
+  // have a screen reader announce the same sentence on every keystroke in the
+  // notes field. Write only on a real change.
+  if (el.getAttribute('data-head') === head && el.getAttribute('data-body') === body) return;
+  el.setAttribute('data-head', head);
+  el.setAttribute('data-body', body);
+  el.textContent = '';
+  el.className = 'cull-season' + (v ? ' cull-season--' + v.status : '');
+  el.style.display = v ? '' : 'none';
+  if (!v) return;
+  var h = document.createElement('div');
+  h.className = 'cull-season-head';
+  h.textContent = head;
+  el.appendChild(h);
+  if (body) {
+    var d = document.createElement('div');
+    d.className = 'cull-season-detail';
+    d.textContent = body;
+    el.appendChild(d);
+  }
+}
+
+/** Deferred, and coalesced to one repaint per task. Species and sex are pill
+ *  BUTTONS whose click is handled by the delegated dispatcher on document.body,
+ *  which runs AFTER the listener on #v-form — so reading formSpecies from that
+ *  listener synchronously would read the previous pick. Waiting a tick means the
+ *  advisory always judges the finished form. */
+var flCullSeasonQueued = false;
+function queueCullSeasonAdvisory() {
+  if (flCullSeasonQueued) return;
+  flCullSeasonQueued = true;
+  setTimeout(function() { flCullSeasonQueued = false; refreshCullSeasonAdvisory(); }, 0);
+}
+
+/** Deferred on purpose. Three of the paths that show a pin — the repeat-sighting
+ *  prefill, the sighting-to-cull carry-over and "add a sighting from this stand"
+ *  — set the ground on the line AFTER showPinnedStrip(), and setGroundValue()
+ *  fires no change event. Running on the next tick means the advisory always
+ *  judges the finished form rather than a half-built one. */
+function queueGroundPinWarning() {
+  setTimeout(refreshGroundPinWarning, 0);
+}
+
+/** PURE: one name-label anchor per ground — the LARGEST parcel carries it
+ *  (labelling every parcel of a scattered ground would read as noise). */
+function groundLabelAnchors(features) {
+  var best = {};
+  (features || []).forEach(function(f) {
+    if (!f || f.kind !== 'boundary') return;
+    var ring = parseGeometry(f.geometry);
+    if (!ring) return;
+    var a = ringAreaM2(ring);
+    if (!best[f.ground] || a > best[f.ground].area) {
+      var c = ringCentroid(ring);
+      if (c) best[f.ground] = { area: a, lat: c.lat, lng: c.lng };
+    }
+  });
+  return Object.keys(best).sort().map(function(g) {
+    return { ground: g, lat: best[g].lat, lng: best[g].lng };
+  });
+}
+
+/**
+ * PURE (AK): where to drop a seat when the only thing you have said about it is
+ * which ground it is on.
+ *
+ * The largest parcel's centroid — deliberately the SAME anchor the map already
+ * writes the ground's name on, so the pin appears under the label the user has
+ * been looking at rather than at some other defensible-but-unfamiliar point.
+ *
+ * Null when the ground has no boundary drawn, and that silence is the whole
+ * safety of this: the app either knows where a ground is because the user drew
+ * it, or it says nothing. It never infers a position from a name.
+ */
+function standGroundSeed(ground, features) {
+  var g = (ground == null ? '' : String(ground)).trim();
+  if (!g) return null;
+  var a = groundLabelAnchors(features || []);
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].ground === g) return { lat: round6(a[i].lat), lng: round6(a[i].lng) };
+  }
+  return null;
+}
+
+/** PURE: area chip for a stands "By ground" group header ('' when unmapped). */
+function groundAreaSpanHtml(features, ground) {
+  var p = groundAreaPartsFrom(features)[ground];  // AC: agrees with the sheet
+  if (!p) return '';
+  return '<span class="stnd-grp-area">' + esc(formatAreaParts(p)) + '</span>';
+}
+
+// Boundary layers per map. Every painted map registers here so a features
+// refresh repaints all of them in one loop (refreshGroundsData tail).
+var flBoundaryPaint = [];
+
+var GROUND_LABEL_MIN_ZOOM = 13;
+// QW-6: feature-marker NAME pills hide below this zoom (the type GLYPHS stay,
+// as does the "Marker names" toggle — this only gates WHEN an on-name shows).
+// A touch tighter than ground names: furniture is the densest layer, so its
+// name pills are what clump at estate/compartment overview.
+var GROUND_MK_NAME_MIN_ZOOM = 15;
+
+function flBoundaryEntryFor(map) {
+  for (var i = 0; i < flBoundaryPaint.length; i++) {
+    if (flBoundaryPaint[i].map === map) return flBoundaryPaint[i];
+  }
+  var entry = { map: map, layers: [] };
+  flBoundaryPaint.push(entry);
+  return entry;
+}
+
+/**
+ * Paint every saved boundary (+ one name label per ground, largest parcel)
+ * onto `map`. interactive:false throughout — the cone precedent: boundaries
+ * must never eat a marker tap. Vectors land in the overlay pane, so pins,
+ * clusters and cones always draw above them. Idempotent per map.
+ */
+function renderGroundBoundaries(map, opts) {
+  if (!map || typeof L === 'undefined') return;
+  // G8b: the stands map passes opts to hide marker types / name pills the user
+  // filtered out. Every other map (cull, sightings, pin-drop, stand-location)
+  // calls with no opts → show every marker, names on, exactly as before.
+  var entry = flBoundaryEntryFor(map);
+  // Section 6 (2026-07-26): refreshGroundsData repaints EVERY registered map in
+  // one loop, with no opts. Any map with options of its own therefore lost them
+  // the moment a background features refresh landed — the stands map quietly
+  // un-hid every marker type the user had filtered out, and put back the name
+  // pills they had switched off, with no interaction to blame it on. Remember
+  // each map's own options and reuse them when a repaint arrives empty-handed.
+  // Every no-opts caller (cull, sightings, pin drop, stand location) has never
+  // passed any, so for them this is a no-op.
+  if (opts) entry.opts = opts;
+  opts = entry.opts || null;
+  var hiddenMk = (opts && opts.hiddenMarkerTypes) || null;
+  var mkNamesOn = !(opts && opts.featureNames === false);
+  // G5/K: the editor and the tape measure paint the surrounding furniture for
+  // context, but must not draw the very shape you are dragging corners on —
+  // the live preview layer already owns that one.
+  var skipId = (opts && opts.excludeFeatureId) || null;
+  entry.layers.forEach(function(l) { try { map.removeLayer(l); } catch (_) {} });
+  entry.layers = [];
+  var feats = groundFeaturesNow();
+  (feats || []).forEach(function(f) {
+    if (!f || (f.kind !== 'boundary' && f.kind !== 'no_shoot' && f.kind !== 'line' && f.kind !== 'marker')) return;
+    if (skipId && f.id === skipId) return;
+    if (f.kind === 'marker') {
+      // G10: ground furniture — badge with type glyph (+ name pill when named).
+      var mk = markerFromGeometry(f.geometry);
+      if (!mk) return;
+      if (hiddenMk && hiddenMk[mk.type]) return; // G8b: this type toggled off on the stands map
+      var badge = L.marker([mk.lat, mk.lng], {
+        icon: L.divIcon({ html: groundMarkerBadgeHtml(mk.type, mkNamesOn ? (f.name || '') : ''), iconSize: [24, 24], iconAnchor: [12, 12], className: '' }),
+        interactive: false, keyboard: false
+      });
+      badge.addTo(map);
+      entry.layers.push(badge);
+      return;
+    }
+    var ring = parseGeometry(f.geometry, f.kind === 'line' ? 2 : undefined);
+    if (!ring) return;
+    var poly;
+    if (f.kind === 'line') {
+      // G9/G15: rides/tracks/footpaths — an OPEN stroke, no fill, no area. G15
+      // gives each subtype its own colour + dash so a footpath (dashed blue,
+      // a public right of way) reads differently at a glance from your own ride
+      // (solid moss) or a vehicle track (solid tan) or a compartment edge
+      // (dashed violet). The catch-all 'other' line keeps the ground's own
+      // colour, exactly as every line did before G15.
+      var lst = groundLineStyle(lineSubtypeOf(f.geometry));
+      var lclr = lst.color || f.color || groundColorFor(f.ground);
+      poly = L.polyline(ring, {
+        color: lclr, weight: 2.8, opacity: 0.92, dashArray: lst.dashArray, interactive: false
+      });
+    } else if (f.kind === 'no_shoot') {
+      // G4: no-shoot zones — red, dashed, a touch heavier fill. No label.
+      poly = L.polygon(ring, {
+        color: '#c62828', weight: 2.2, opacity: 0.9, dashArray: '5 5', // literal: Leaflet paint attr
+        fillColor: '#c62828', fillOpacity: 0.12, interactive: false
+      });
+    } else {
+      // G4b (owner's West Acre screenshots): the perimeter is the POINT of
+      // the map at estate scale — HuntStand draws it loud. Heavier, more
+      // confident stroke; fill stays a whisper so pins/cones own the inside.
+      var clr = f.color || groundColorFor(f.ground);
+      poly = L.polygon(ring, {
+        color: clr, weight: 3, opacity: 0.92,
+        fillColor: clr, fillOpacity: 0.06, interactive: false
+      });
+    }
+    poly.addTo(map);
+    entry.layers.push(poly);
+  });
+  var showLbl = true;
+  try { showLbl = map.getZoom() >= GROUND_LABEL_MIN_ZOOM; } catch (_) {}
+  // QW-6: initial feature-marker name-pill declutter state (zoomend keeps it in sync).
+  try { map.getContainer().classList.toggle('fl-mk-declutter', map.getZoom() < GROUND_MK_NAME_MIN_ZOOM); } catch (_) {}
+  groundLabelAnchors(feats).forEach(function(a) {
+    var mk = L.marker([a.lat, a.lng], {
+      icon: L.divIcon({ html: '<div class="gbl">' + esc(a.ground) + '</div>', iconSize: [0, 0], className: '' }),
+      interactive: false, keyboard: false
+    });
+    mk.addTo(map);
+    mk.setOpacity(showLbl ? 1 : 0);
+    entry.layers.push(mk);
+  });
+  if (!map._flGblZoomBound) {
+    map._flGblZoomBound = true;
+    map.on('zoomend', function() { flSyncBoundaryLabels(map); });
+    // Finding H: panning changes which labels crowd each other just as much
+    // as zooming does, and until now nothing was listening for it.
+    map.on('moveend', function() { flQueueDeclutter(map); });
+  }
+  flQueueDeclutter(map);
+}
+
+/**
+ * Finding H — the impure half of label de-collision. Three code paths paint
+ * text pills onto the same pane and none of them can see the others, so the
+ * only place the truth is knowable is the DOM after they have all run.
+ *
+ * Priority is by how much is lost when a name goes:
+ *   0  the SELECTED seat's name — you just tapped it; if anything on this
+ *      map is legible it had better be the thing you asked about;
+ *   1  any other seat name — the badge alone gives you a score with no idea
+ *      whose;
+ *   2  a marker name — the glyph still tells you it is a gate or a cam, the
+ *      name only says WHICH gate;
+ *   3  a ground name — also readable from the switcher, the sheet, and the
+ *      boundary's own colour, so it is the one that can afford to yield.
+ * Glyphs, pins and score badges are not in this list and never will be.
+ */
+var FL_LABEL_LAYERS = ['.fl-lbl-pri', '.fl-lbl-seat:not(.fl-lbl-pri)', '.gmk-name', '.gbl'];
+
+function flDeclutterLabels(map) {
+  var c = null;
+  try { c = map && map.getContainer(); } catch (_) { return; }
+  if (!c || typeof declutterLabels !== 'function') return;
+  // The pane is bigger than the hole you look through it by: Leaflet lays
+  // markers out across the whole map pane and lets the container's
+  // overflow:hidden crop whatever hangs over the edge. A label parked out in
+  // that cropped margin cannot be read, so it must neither hide anything nor
+  // be hidden — otherwise a name nobody can see evicts one they can.
+  var vp = c.getBoundingClientRect();
+  var els = [], boxes = [];
+  FL_LABEL_LAYERS.forEach(function(sel, rank) {
+    var found = c.querySelectorAll(sel);
+    for (var i = 0; i < found.length; i++) {
+      var el = found[i];
+      // A label whose whole marker is zoom-faded to nothing (.gbl below
+      // GROUND_LABEL_MIN_ZOOM) still has a box. Left in, an invisible label
+      // would silently evict a visible one.
+      var ic = el.closest ? el.closest('.leaflet-marker-icon') : null;
+      if (ic && ic.style && ic.style.opacity === '0') { el.style.visibility = ''; continue; }
+      var r = el.getBoundingClientRect();
+      if (r.right <= vp.left || r.left >= vp.right ||
+          r.bottom <= vp.top || r.top >= vp.bottom) { el.style.visibility = ''; continue; }
+      els.push(el);
+      boxes.push({ id: boxes.length, rank: rank, w: r.width, h: r.height,
+        x: r.left + r.width / 2, y: r.top + r.height / 2 });
+    }
+  });
+  if (boxes.length < 2) { els.forEach(function(e) { e.style.visibility = ''; }); return; }
+  var hide = {};
+  declutterLabels(boxes).forEach(function(id) { hide[id] = true; });
+  // visibility (not display) on purpose: the hidden label keeps its box, so
+  // the next pass measures exactly the same scene and cannot oscillate.
+  els.forEach(function(e, i) { e.style.visibility = hide[i] ? 'hidden' : ''; });
+}
+
+/**
+ * Coalesce the pass to one run per frame — pan fires moveend in bursts — and
+ * then run it once more after the scene has stopped moving.
+ *
+ * The next-frame pass is right for a pan, where the layout is already final by
+ * the time moveend fires, and too early for a map that has just been built:
+ * fitBounds is still easing the marker pane into place and the pill font may
+ * not have swapped in, so the positions and widths measured are not the ones
+ * the user ends up looking at. Panning was the only thing that corrected it,
+ * which left the FIRST look at a map — the one that matters most — as the one
+ * most likely to be wrong, and wrong in both directions: a name hidden with
+ * nothing near it, and a genuine collision left overdrawn.
+ *
+ * The pass is O(n²) over a handful of text pills and idempotent, so paying for
+ * it twice is far cheaper than trying to work out precisely when Leaflet goes
+ * quiet.
+ */
+function flQueueDeclutter(map) {
+  if (!map) return;
+  if (!map._flDeclQueued) {
+    map._flDeclQueued = true;
+    var run = function() { map._flDeclQueued = false; try { flDeclutterLabels(map); } catch (_) {} };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+    else setTimeout(run, 16);
+  }
+  // Re-armed on every call, so a burst of renders costs one settle pass, timed
+  // from the last of them rather than the first.
+  if (map._flDeclSettle) clearTimeout(map._flDeclSettle);
+  map._flDeclSettle = setTimeout(function() {
+    map._flDeclSettle = null;
+    try { flDeclutterLabels(map); } catch (_) {}
+  }, 320);
+  // Web fonts land once per document, typically after the first map is already
+  // drawn, and change the width of every pill when they do. One re-measure per
+  // map, then never again.
+  if (!map._flDeclFonts && typeof document !== 'undefined' && document.fonts && document.fonts.ready) {
+    map._flDeclFonts = true;
+    document.fonts.ready.then(
+      function() { try { flDeclutterLabels(map); } catch (_) {} },
+      function() {}
+    );
+  }
+}
+
+/** Zoom gate for the name labels: hidden zoomed out, on from street-ish zoom. */
+function flSyncBoundaryLabels(map) {
+  var entry = flBoundaryEntryFor(map);
+  var show = true;
+  try { show = map.getZoom() >= GROUND_LABEL_MIN_ZOOM; } catch (_) {}
+  entry.layers.forEach(function(l) {
+    if (l && l.setOpacity && l._icon) l.setOpacity(show ? 1 : 0);
+  });
+  // QW-6: gate the feature-marker NAME pills by zoom (glyphs/icons stay).
+  try { map.getContainer().classList.toggle('fl-mk-declutter', map.getZoom() < GROUND_MK_NAME_MIN_ZOOM); } catch (_) {}
+  flQueueDeclutter(map); // finding H: the zoom gate changed who is on screen
+}
+
+/**
+ * G3 boundary→diary intelligence: when a pinned/GPS'd point sits inside
+ * exactly ONE ground boundary and the form's Ground select is still empty,
+ * fill it (then run the ground→syndicate chain exactly as a manual pick
+ * would). Multiple containing boundaries → a one-off toast, pick manually.
+ * Mirrors maybeAutoSelectSyndicateFromGround: manual choices are respected.
+ */
+function maybeAutoSelectGroundFromPin(lat, lng) {
+  var sel = document.getElementById('f-ground');
+  if (!sel || lat == null || lng == null) return;
+  if (sel.value) return; // respect a manual choice (including Custom)
+  var hits = groundsContainingPoint(lat, lng, groundFeaturesNow());
+  if (hits.length === 1) {
+    setGroundValue(hits[0]);
+    maybeAutoSelectSyndicateFromGround(hits[0]);
+    setLastGroundVisited(hits[0]); // G8: a pin inside a boundary = you ARE there
+  } else if (hits.length > 1) {
+    showToast('Pin sits inside ' + hits.length + ' ground boundaries — pick the ground manually');
+  }
+}
+
+/**
+ * Finding F: the same boundary→ground inference for a HIGH SEAT. The cull
+ * form got this on day one; the stand sheet never did, because the pin
+ * picker's non-form branch returns before maybeAutoSelectGroundFromPin() is
+ * reached — so a seat dropped squarely inside a mapped parcel saved with no
+ * ground attached, and then failed to appear in that ground's seat list, its
+ * filter, or its export.
+ *
+ * Two deliberate differences from the cull version:
+ *  · It speaks. The cull form fills silently because the pinned strip and the
+ *    pin advisory both sit right under the user's thumb; the stand sheet's
+ *    Ground select can be scrolled off-screen, and an inference the user
+ *    cannot see is an inference they cannot correct.
+ *  · It does NOT touch lastGroundVisited. A cull entry is filed where you
+ *    stood; a seat is very often placed from the kitchen table, and moving
+ *    the map's "you're working here" marker on that evidence would be a
+ *    guess dressed as a fact.
+ */
+function maybeAutoSelectStandGroundFromPin(lat, lng) {
+  var sel = document.getElementById('stand-ground');
+  if (!sel || lat == null || lng == null) return;
+  if (sel.value) return; // respect an existing or manual choice
+  var hits = groundsContainingPoint(lat, lng, groundFeaturesNow());
+  if (hits.length === 1) {
+    // Only offer a ground the select actually carries — a boundary can
+    // outlive its name in the grounds list, and setting a value that has no
+    // option silently blanks the field instead of filling it.
+    var want = hits[0], ok = false;
+    for (var i = 0; i < sel.options.length; i++) { if (sel.options[i].value === want) { ok = true; break; } }
+    if (!ok) return;
+    sel.value = want;
+    showToast('📍 Ground set to “' + want + '” — change it if that is wrong');
+  } else if (hits.length > 1) {
+    showToast('Pin sits inside ' + hits.length + ' ground boundaries — pick the ground manually');
+  }
+}
+
+/**
+ * AK (2026-07-26): the stand sheet's half of finding 19.
+ *
+ * The cull form has warned about a pin that contradicts its ground since
+ * finding 19. The stand sheet never did, and a stand is by far the worse place
+ * to get it wrong. A cull filed against the wrong ground is one bad row you can
+ * find and fix. A stand filed against the wrong ground is wrong every night for
+ * years: it groups under the wrong heading in the stands list, it inherits the
+ * wrong ground's area, and the "your next sit" card offers it as tonight's seat
+ * on a ground it is not standing on.
+ *
+ * maybeAutoSelectStandGroundFromPin() has exactly the blind spot its cull cousin
+ * had — it bails the moment a ground is already chosen — so the one sequence it
+ * can never see is the ordinary one: zoom the stands map on Wigmore, tap add,
+ * pick Ash Coppice from the list. The pin is Wigmore's, the label says Ash
+ * Coppice, and until now nothing anywhere said a word.
+ *
+ * Silence remains the default and it is load-bearing, exactly as in
+ * groundPinAdvisory(): no ground, no pin, or a chosen ground with no boundary
+ * drawn all produce nothing, because in each case the app knows nothing and
+ * must not imply that it does.
+ */
+function refreshStandGroundPinWarning() {
+  var el = document.getElementById('stand-loc-warn');
+  if (!el) return;
+  var sh = flStandsState.sheet || {};
+  var sel = document.getElementById('stand-ground');
+  var g = sel ? sel.value : '';
+  var txt = '', zone = false;
+  try {
+    var feats = groundFeaturesNow();
+    // AP: the zone test runs OUTSIDE the AK guard below, on purpose. That guard
+    // exists because a centroid the app placed can fall outside its own concave
+    // ring, and the app should not open by arguing with its own pin. A zone hit
+    // is not that failure mode — if a ground's centroid lands in the
+    // neighbour's garden that is worth saying however the pin got there, and
+    // the app has just told the user to drag it onto the seat anyway.
+    txt = groundZoneAdvisory(sh.lat, sh.lng, feats);
+    zone = !!txt;
+    // AK: a pin the app itself dropped on this ground's centroid cannot be
+    // "outside" it in any sense worth telling the user about — and on a concave
+    // wood a centroid genuinely can fall outside its own ring, so without this
+    // guard the app would spend its first sentence arguing with a pin it placed
+    // a quarter of a second earlier. The line beneath already says approximate.
+    if (!txt && sh.locSeededFrom !== g) {
+      txt = groundPinAdvisory(g, sh.lat, sh.lng, feats);
+    }
+  } catch (_) { txt = ''; zone = false; }
+  el.textContent = txt;
+  el.className = 'loc-pin-warn' + (zone ? ' loc-pin-warn--zone' : '');
+  el.style.display = txt ? '' : 'none';
+}
+
+/**
+ * AK: choosing a ground for a seat that has no location yet.
+ *
+ * Before this, picking "Ash Coppice" in a fresh stand sheet did nothing at all
+ * to the location. You then opened the pin map, which opens on your last
+ * position or the default view, and went hunting across the country for a wood
+ * whose exact outline the app was holding in memory the entire time. It knew;
+ * it simply never offered.
+ *
+ * The rule is the one the whole grounds feature runs on: never move something
+ * the user placed. A pin that already exists — theirs, their GPS's, or the map
+ * view they deliberately zoomed to before tapping add — is left exactly where
+ * it is and gets the advisory instead. Only a BLANK is seeded, only from a
+ * boundary the user drew themselves, and the result is labelled approximate so
+ * that a centroid can never quietly become a surveyed seat.
+ */
+function standSheetGroundChanged() {
+  var sh = flStandsState.sheet;
+  if (!sh) return;
+  var sel = document.getElementById('stand-ground');
+  var g = sel ? sel.value : '';
+  var feats = groundFeaturesNow();
+  var blank = (sh.lat == null || sh.lng == null);
+  // AK: one gate, and everything else follows from it. The app may move a pin
+  // the APP put there. It may never move one the user did — not their drag, not
+  // their GPS fix, not a saved row, and not a map centre they deliberately
+  // zoomed in on before tapping add.
+  if (blank || sh.locAuto || sh.locSeededFrom) {
+    // And even then, only when the pin it put there actually contradicts the
+    // ground just named. A placeholder centre that happens to fall INSIDE the
+    // wood you picked is better than that wood's centroid — it is nearer where
+    // you were looking — so it stays. groundPinAdvisory() is the same judge the
+    // warning line uses, which means the app moves the pin in exactly the cases
+    // it would otherwise have complained about, and in no others.
+    var wrong = blank || !!groundPinAdvisory(g, sh.lat, sh.lng, feats);
+    var seed = (g && wrong) ? standGroundSeed(g, feats) : null;
+    if (seed) {
+      sh.lat = seed.lat;
+      sh.lng = seed.lng;
+      sh.locName = flPlaceRef(seed.lat, seed.lng, 6);
+      sh.locAuto = true;
+      sh.locSeededFrom = g;
+      renderStandSheetLocLine();
+      renderStandSheetLocMap();
+      // Every time, not just the first. A pin that moves without the app saying
+      // so is the defect this function exists to avoid committing itself.
+      showToast('📍 Centred on ' + g + ' — drag the pin onto the seat');
+    } else if (sh.locSeededFrom && sh.locSeededFrom !== g) {
+      // The pin was the centre of a ground that is no longer claimed, and the
+      // new choice has no boundary to offer instead. Clearing it is the honest
+      // move: leaving it would be a pin in one wood labelled with another's
+      // name, and the save path will simply ask for a location.
+      sh.lat = null; sh.lng = null; sh.locName = '';
+      sh.locAuto = false; sh.locSeededFrom = null;
+      renderStandSheetLocLine();
+      renderStandSheetLocMap();
+    }
+  }
+  refreshStandGroundPinWarning();
+}
+
+// ════════════════════════════════════════════════════════════════
+// STANDS (v3: per-stand deer forecast — STANDS-PLAN.md / STANDS-CODE-MAP.md)
+// Data + scoring live in modules/stands.mjs + lib/fl-forecast.mjs; this block
+// is views, sheet and rendering only. Stands are online-only (no offline
+// queue); forecasts fall back to the stands.mjs localStorage snapshot.
+// ════════════════════════════════════════════════════════════════
+
+var flStandsState = {
+  list: null,           // null = never loaded this session; [] = loaded, none
+  forecasts: null,      // { byStandId, asOf, offline } from stands.mjs
+  loading: false,
+  detailId: null,
+  selectedId: null,     // map↔list highlighted stand
+  sortMode: 'ground',   // list ordering: 'ground' (grouped) | 'best' (flat, today's score)
+  planWin: 'best',      // planner window lens (round 22): 'best' | 'dawn' | 'dusk' — session-only
+  hourlyOpen: false,    // detail: hour-by-hour panel expanded (survives day taps)
+  // Scent cones ON by default (round 15 — owner call); only an explicit
+  // turn-off is remembered, so absence of the flag = on.
+  windOn: (function() { try { return localStorage.getItem('fl-stands-cones-off') !== '1'; } catch (e) { return true; } })(),
+  windStepIdx: 0,       // index into flStandsWindSteps (Now / Tonight / future windows)
+  // Round 21 (owner: "a ground with 46 high seats… option to have quicker
+  // glance"): compact one-line rows instead of full cards. Persisted choice;
+  // default = cards (the design he likes).
+  compact: (function() { try { return localStorage.getItem('fl-stands-compact') === '1'; } catch (e) { return false; } })(),
+  sheet: { editingId: null, lat: null, lng: null, locName: '', badWinds: [], facing: null, photos: [], newPhotos: [], removedPaths: [] }
+};
+
+async function refreshStandsView(force) {
+  if (!currentUser || !sb) return;
+  if (flStandsState.loading) return;
+  flStandsState.loading = true;
+  try {
+    if (force || flStandsState.list === null) {
+      flStandsState.list = applyStandOutbox(await fetchStands(sb, currentUser.id), standOutbox(currentUser.id));
+    }
+    flStandsState.forecasts = await fetchStandForecasts(flStandsState.list, flMySpecies());
+  } catch (e) {
+    console.warn('refreshStandsView:', e);
+    // Offline (or fetch failed): the cached list with queued work overlaid,
+    // never an empty view — a seat saved offline must be visible the moment
+    // the sheet closes, not after signal returns.
+    if (flStandsState.list === null) {
+      flStandsState.list = applyStandOutbox(flCachedStands(), standOutbox(currentUser.id));
+    }
+  }
+  flStandsState.loading = false;
+  renderStandsList();
+}
+
+/**
+ * User-initiated forecast refresh (the "↻ refresh" button on the list header,
+ * 2026-07-16 quick wins). Bypasses the 20-minute cache via the force flag —
+ * deliberately NOT wired into refreshStandsView(force), whose force refetches
+ * the stands LIST after a save: a bad-winds edit must keep rescoring the
+ * cached raw payload without an API call (stands.mjs design).
+ */
+async function refreshStandForecastsNow() {
+  if (!navigator.onLine) { showToast('📶 Offline — showing saved scores'); return; }
+  if (flStandsState.loading || !flStandsState.list || !flStandsState.list.length) return;
+  flStandsState.loading = true;
+  showToast('☁️ Refreshing forecasts…');
+  try {
+    flStandsState.forecasts = await fetchStandForecasts(flStandsState.list, flMySpecies(), true);
+  } catch (e) {
+    console.warn('refreshStandForecastsNow:', e);
+    showToast('⚠️ Could not refresh — try again');
+  }
+  flStandsState.loading = false;
+  renderStandsList();
+}
+
+function standScoreToday(standId) {
+  var f = flStandsState.forecasts;
+  if (!f || !f.byStandId[standId] || !f.byStandId[standId].days.length) return null;
+  return f.byStandId[standId].days[0];
+}
+
+// standScoreTone retired with the best-windows strip (round 23) — its sole caller.
+
+/**
+ * 8-sector wind rose: red arc = the stand's bad winds, gold arrow = forecast
+ * wind for today's best window (blows FROM its rim point through the centre).
+ * Pure string builder. `dark` picks the palette: false/omitted = the original
+ * white-background colours (kept for any future light surface), true = the
+ * dark-card variant every stands surface uses since the 2026-07-16 uplift.
+ */
+function windCompassSvg(badWinds, arrowWind, size, dark) {
+  var cNeutral = dark ? 'rgba(255,255,255,0.10)' : 'rgba(61,43,31,0.10)';
+  var cBad     = dark ? 'rgba(224,90,90,0.6)'    : 'rgba(198,40,40,0.5)';
+  var cText    = dark ? 'rgba(255,255,255,0.6)'  : 'rgba(61,43,31,0.55)';
+  var cArrow   = dark ? '#f0cc74'                : '#b8860b';
+  size = size || 40;
+  var c = size / 2, rOut = c - 1, rIn = c * 0.60;
+  var dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  var svg = '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" aria-hidden="true">';
+  for (var k = 0; k < 8; k++) {
+    var a0 = (k * 45 - 22.5 - 90) * Math.PI / 180;
+    var a1 = (k * 45 + 22.5 - 90) * Math.PI / 180;
+    var bad = badWinds && badWinds.indexOf(dirs[k]) !== -1;
+    svg += '<path d="M' + (c + rOut * Math.cos(a0)).toFixed(1) + ' ' + (c + rOut * Math.sin(a0)).toFixed(1)
+      + ' A' + rOut.toFixed(1) + ' ' + rOut.toFixed(1) + ' 0 0 1 ' + (c + rOut * Math.cos(a1)).toFixed(1) + ' ' + (c + rOut * Math.sin(a1)).toFixed(1)
+      + ' L' + (c + rIn * Math.cos(a1)).toFixed(1) + ' ' + (c + rIn * Math.sin(a1)).toFixed(1)
+      + ' A' + rIn.toFixed(1) + ' ' + rIn.toFixed(1) + ' 0 0 0 ' + (c + rIn * Math.cos(a0)).toFixed(1) + ' ' + (c + rIn * Math.sin(a0)).toFixed(1)
+      + ' Z" fill="' + (bad ? cBad : cNeutral) + '"/>';
+  }
+  if (arrowWind && arrowWind.dirDeg != null && arrowWind.speedKmh != null && arrowWind.speedKmh >= 3) {
+    // The arrow marks the sector the wind blows FROM and points inward to the hub,
+    // so it overlaps the red arc exactly when the wind is bad — no tail-vs-head
+    // "which end is in the red?" ambiguity (paired with the worded verdict + "Wind from" label).
+    var a = (arrowWind.dirDeg - 90) * Math.PI / 180;
+    var xT = c + (rOut - 1.5) * Math.cos(a), yT = c + (rOut - 1.5) * Math.sin(a);   // tail at the rim, in the 'from' sector
+    var xH = c + (rIn * 0.42) * Math.cos(a), yH = c + (rIn * 0.42) * Math.sin(a);   // head near the hub, same side
+    var trav = a + Math.PI;                       // points inward, the way the wind travels
+    var ah = size * 0.12, w = (size * 0.06).toFixed(1);
+    svg += '<line x1="' + xT.toFixed(1) + '" y1="' + yT.toFixed(1) + '" x2="' + xH.toFixed(1) + '" y2="' + yH.toFixed(1) + '" stroke="' + cArrow + '" stroke-width="' + w + '" stroke-linecap="round"/>'
+      + '<line x1="' + xH.toFixed(1) + '" y1="' + yH.toFixed(1) + '" x2="' + (xH + ah * Math.cos(trav + 2.6)).toFixed(1) + '" y2="' + (yH + ah * Math.sin(trav + 2.6)).toFixed(1) + '" stroke="' + cArrow + '" stroke-width="' + w + '" stroke-linecap="round"/>'
+      + '<line x1="' + xH.toFixed(1) + '" y1="' + yH.toFixed(1) + '" x2="' + (xH + ah * Math.cos(trav - 2.6)).toFixed(1) + '" y2="' + (yH + ah * Math.sin(trav - 2.6)).toFixed(1) + '" stroke="' + cArrow + '" stroke-width="' + w + '" stroke-linecap="round"/>'
+      + '<circle cx="' + c.toFixed(1) + '" cy="' + c.toFixed(1) + '" r="' + (size * 0.045).toFixed(1) + '" fill="' + cArrow + '"/>';
+  }
+  svg += '<text x="' + c.toFixed(1) + '" y="' + (size * 0.16).toFixed(1) + '" text-anchor="middle" dominant-baseline="middle" font-size="' + (size * 0.16).toFixed(1) + '" font-weight="700" fill="' + cText + '">N</text></svg>';
+  return svg;
+}
+
+/** Radial score gauge (270° sweep, homepage colour bands) for the dark forecast panel. */
+function standScoreGaugeSvg(score, size) {
+  size = size || 76;
+  var c = size / 2, r = c - 5;
+  var band = score >= 65 ? '#7adf7a' : score >= 45 ? '#f0cc74' : '#e09040';
+  var circ = 2 * Math.PI * r;
+  var frac = 0.75 * (Math.max(0, Math.min(100, score)) / 100);
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" aria-hidden="true">'
+    + '<circle cx="' + c + '" cy="' + c + '" r="' + r + '" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="5" stroke-linecap="round" stroke-dasharray="' + (circ * 0.75).toFixed(1) + ' ' + circ.toFixed(1) + '" transform="rotate(135 ' + c + ' ' + c + ')"/>'
+    + '<circle cx="' + c + '" cy="' + c + '" r="' + r + '" fill="none" stroke="' + band + '" stroke-width="5" stroke-linecap="round" stroke-dasharray="' + (circ * frac).toFixed(1) + ' ' + circ.toFixed(1) + '" transform="rotate(135 ' + c + ' ' + c + ')"/>'
+    + '<text x="' + c + '" y="' + (c + 1) + '" text-anchor="middle" dominant-baseline="middle" font-size="' + (size * 0.3).toFixed(0) + '" font-weight="800" fill="' + band + '" font-family="DM Sans,sans-serif">' + score + '</text>'
+    + '</svg>';
+}
+
+/**
+ * Dark-panel variant of the wind rose — thin alias over windCompassSvg's
+ * `dark` palette param (engineering pass 2026-07-16: replaced the old
+ * regex-remap wrapper, which coupled to the light palette's literals).
+ */
+function windCompassSvgDark(badWinds, arrowWind, size) {
+  return windCompassSvg(badWinds, arrowWind, size, true);
+}
+
+var STND_DAY_INITIALS = ['Su', 'M', 'Tu', 'W', 'Th', 'F', 'Sa'];
+var STND_DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** 'YYYY-MM-DD' → 0-6 day-of-week (noon-UTC anchor, device-tz safe) or null. */
+function standDayDow(dateStr) {
+  var p = (dateStr || '').split('-');
+  if (p.length !== 3) return null;
+  var d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2], 12, 0, 0));
+  return isNaN(d.getTime()) ? null : d.getUTCDay();
+}
+
+/**
+ * 7-day forecast curve for list cards (2026-07-16 stands uplift): smooth
+ * gold area chart, one dot per day coloured by the homepage activity bands,
+ * the week's PEAK dot enlarged with a glow ring and its score printed above.
+ * Heights are RELATIVE to the week (min–max) so the shape is always visible
+ * — the old absolute-scale bars compressed a real 44-68 week into visually
+ * identical mid-height bars ("that 7 day bar is static"). Colour keeps the
+ * absolute meaning. x positions are the 7 cell centres so the HTML day-label
+ * row below aligns exactly under the dots.
+ */
+function standWeekCurveSvg(days, uid) {
+  var n = Math.min(7, days.length);
+  if (n < 2) return '';
+  var W = 340, H = 64, top = 24, bottom = 56;
+  var min = 100, max = 0, bestIdx = 0;
+  for (var i = 0; i < n; i++) {
+    var sc = days[i].bestScore;
+    if (sc < min) min = sc;
+    if (sc > max) { max = sc; bestIdx = i; }
+  }
+  var range = Math.max(max - min, 10);
+  var pts = [];
+  for (var i = 0; i < n; i++) {
+    pts.push({
+      x: (i + 0.5) * (W / 7),
+      y: bottom - (bottom - top) * ((days[i].bestScore - min) / range),
+      s: days[i].bestScore
+    });
+  }
+  // Catmull-Rom → cubic bezier for a natural curve through every point.
+  var d = 'M' + pts[0].x.toFixed(1) + ' ' + pts[0].y.toFixed(1);
+  for (var i = 0; i < n - 1; i++) {
+    var p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(n - 1, i + 2)];
+    d += ' C' + (p1.x + (p2.x - p0.x) / 6).toFixed(1) + ' ' + (p1.y + (p2.y - p0.y) / 6).toFixed(1)
+      + ' ' + (p2.x - (p3.x - p1.x) / 6).toFixed(1) + ' ' + (p2.y - (p3.y - p1.y) / 6).toFixed(1)
+      + ' ' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1);
+  }
+  var area = d + ' L' + pts[n - 1].x.toFixed(1) + ' ' + (H - 2) + ' L' + pts[0].x.toFixed(1) + ' ' + (H - 2) + ' Z';
+  var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">'
+    + '<defs><linearGradient id="wk' + uid + '" x1="0" y1="0" x2="0" y2="1">'
+    + '<stop offset="0" stop-color="rgba(216,176,84,0.32)"/><stop offset="1" stop-color="rgba(216,176,84,0)"/>'
+    + '</linearGradient></defs>'
+    + '<line x1="' + (W / 14).toFixed(1) + '" y1="' + (H - 2) + '" x2="' + (W - W / 14).toFixed(1) + '" y2="' + (H - 2) + '" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>'
+    + '<path d="' + area + '" fill="url(#wk' + uid + ')"/>'
+    + '<path d="' + d + '" fill="none" stroke="#d8b054" stroke-width="1.8" stroke-linecap="round"/>';
+  for (var i = 0; i < n; i++) {
+    var band = pts[i].s >= 65 ? '#7adf7a' : pts[i].s >= 45 ? '#f0cc74' : '#9a937f';
+    if (i === bestIdx) {
+      svg += '<circle cx="' + pts[i].x.toFixed(1) + '" cy="' + pts[i].y.toFixed(1) + '" r="7" fill="rgba(216,176,84,0.22)"/>'
+        + '<circle cx="' + pts[i].x.toFixed(1) + '" cy="' + pts[i].y.toFixed(1) + '" r="3.4" fill="' + band + '" stroke="#0c1d08" stroke-width="1.4"/>'
+        + '<text x="' + pts[i].x.toFixed(1) + '" y="' + (pts[i].y - 10).toFixed(1) + '" text-anchor="middle" font-size="10.5" font-weight="800" fill="#f0cc74" font-family="DM Sans,sans-serif">' + pts[i].s + '</text>';
+    } else {
+      svg += '<circle cx="' + pts[i].x.toFixed(1) + '" cy="' + pts[i].y.toFixed(1) + '" r="2.4" fill="' + band + '" stroke="#0c1d08" stroke-width="1.2"' + (i === 0 ? '' : ' opacity="0.85"') + '/>';
+    }
+  }
+  return svg + '</svg>';
+}
+
+/** One Dawn/Dusk card for the selected day in the forecast panel. */
+function standWindowCardHtml(label, score, fromTime, penalised, hasBadWinds, isBest) {
+  var band = score >= 65 ? '#7adf7a' : score >= 45 ? '#f0cc74' : '#e09040';
+  var windLine = !hasBadWinds ? '' : penalised
+    ? '<div class="stnd-wc-wind bad">⚠ bad wind</div>'
+    : '<div class="stnd-wc-wind ok">✓ wind OK</div>';
+  return '<div class="stnd-wc' + (isBest ? ' best' : '') + '">'
+    + (isBest ? '<span class="stnd-wc-tag">Best</span>' : '')
+    + '<div class="stnd-wc-lbl">' + label + '</div>'
+    + '<div class="stnd-wc-score" style="color:' + band + ';">' + score + '</div>'
+    + '<div class="stnd-wc-from">from ' + fromTime + '</div>'
+    + windLine
+    + '</div>';
+}
+
+// standGetSolunar (majors-only SPEC subset of app.js getSolunar) retired
+// 2026-07-17 — the full pair now lives in lib/fl-forecast.mjs as getSolunar
+// (imported as flGetSolunar) and is what the detail + hourly panel use.
+
+/** SPEC pair: app.js windDirArrow — rotated travel arrow + FROM cardinal. */
+function standWindDirArrow(deg) {
+  // Returns rotated ↑ arrow + cardinal — using text variation selector to prevent emoji rendering
+  var cardinals = ['N','NE','E','SE','S','SW','W','NW'];
+  var idx = Math.round(((deg % 360) + 360) % 360 / 45) % 8;
+  var cardinal = cardinals[idx];
+  var rotDeg = idx * 45;
+  // Wind direction = where wind comes FROM — arrow points where wind goes TO
+  var displayDeg = (rotDeg + 180) % 360;
+  return '<span style="display:inline-block;transform:rotate(' + displayDeg + 'deg);line-height:1;font-style:normal;">\u2191\uFE0E</span>\u00a0' + cardinal;
+}
+
+/** SPEC pair: app.js wxCodeToEmoji — WMO weather code → gold fl-ic sky icon. */
+function wxCodeToEmoji(code, precip) {
+  if (code === null || code === undefined) return '<span class="fl-ic fl-wx-cloud"></span>';
+  if (code === 0)  return '<span class="fl-ic fl-wx-sun"></span>';
+  if (code <= 2)   return '<span class="fl-ic fl-wx-partcloud"></span>';
+  if (code === 3)  return '<span class="fl-ic fl-wx-cloud"></span>';
+  if (code <= 49)  return '<span class="fl-ic fl-wx-fog"></span>';
+  if (code <= 57)  return '<span class="fl-ic fl-wx-lightrain"></span>';
+  if (code <= 65)  return precip > 4 ? '<span class="fl-ic fl-wx-rain"></span>' : '<span class="fl-ic fl-wx-lightrain"></span>';
+  if (code <= 77)  return '<span class="fl-ic fl-wx-snow"></span>';
+  if (code <= 82)  return precip > 4 ? '<span class="fl-ic fl-wx-rain"></span>' : '<span class="fl-ic fl-wx-lightrain"></span>';
+  if (code <= 86)  return '<span class="fl-ic fl-wx-snow"></span>';
+  if (code <= 99)  return '<span class="fl-ic fl-wx-storm"></span>';
+  return '<span class="fl-ic fl-wx-cloud"></span>';
+}
+
+/**
+ * Hour-by-hour panel for the selected day at this stand (2026-07-17 — parity
+ * with the homepage's hourly view; owner: "when I click a highseat, it
+ * doesn't give me hour by hour data"). Rows span the stand's legal shooting
+ * window (sunrise −1 h … sunset +1 h, GB & NI). Each hour is scored by lib
+ * scoreStandHour — the homepage model PLUS this stand's bad-wind dock — from
+ * the batched forecast's hourly arrays, so it costs no extra API traffic.
+ * Collapsible; flStandsState.hourlyOpen survives day taps and re-renders.
+ */
+// wxHour building moved to lib wxHourAt (imported as flWxHourAt, round 12) —
+// the hourly table, the live bar and the save-time score logger all share
+// the one implementation.
+
+/**
+ * The day panel's headline bar (round 11). The old bar repeated the day's
+ * bestScore — a number the hero and the ribbon chip already state. Now:
+ *   today  → the LIVE score for the current hour at this stand (same
+ *            scoreStandHour + wxHour the hourly table's now-row uses, so the
+ *            two always agree), labelled "right now";
+ *   other  → the day's best-window score, HONESTLY labelled as such;
+ *   today with no hourly data yet (stale offline snapshot) → falls back to
+ *            the best-window form rather than showing nothing.
+ * The whole block is a button → opens + scrolls to the hour-by-hour table.
+ */
+function standLiveBarHtml(s, fc, sd, sdt, selIdx) {
+  var live = null;
+  if (selIdx === 0) {
+    // UK wall-clock hour, NOT device-local getHours(): the forecast's hourly
+    // time strings (timezone=auto → Europe/London) and the table's now-ring
+    // (flToMinutes → ukHourMin) both run on UK time, so the bar must too or
+    // it scores a different hour than the row it claims to summarise.
+    var nowH = Math.floor(flToMinutes(new Date()) / 60);
+    var liveWx = flWxHourAt(fc && fc.hourly, sd.date, nowH);
+    if (liveWx) {
+      live = flScoreStandHour({
+        hour: nowH, date: sdt, lat: s.lat, lng: s.lng,
+        species: flMySpecies(), badWinds: s.bad_winds || [], wxHour: liveWx
+      });
+    }
+  }
+  var score = live != null ? live : sd.bestScore;
+  var band = score >= 65 ? '#7adf7a' : score >= 45 ? '#f0cc74' : '#e09040';
+  var barBg = score >= 65 ? 'linear-gradient(90deg,#3abf3a,#7aef7a)'
+            : score >= 45 ? 'linear-gradient(90deg,#d8b054,#f0cc74)'
+            : 'linear-gradient(90deg,#e07020,#e09040)';
+  var act = score >= 65 ? 'High Activity' : score >= 45 ? 'Moderate Activity' : score >= 20 ? 'Low Activity' : 'Minimal Activity';
+  // Round 20 (owner: "says best window but what is best window?") — name it.
+  var title = live != null
+    ? 'Deer activity — right now'
+    : 'Deer activity — ' + (selIdx === 0 ? 'Today' : sdt.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }))
+      + ' · best window: ' + (sd.bestWindow || 'Dusk').toLowerCase();
+  return '<button type="button" class="stnd-day-live" data-fl-action="open-stand-hourly">'
+    + '<span class="stnd-fc-daytitle"><span class="fl-ic fl-deer"></span> ' + title + '</span>'
+    + '<span class="stnd-bar-row"><span class="stnd-bar"><span class="stnd-bar-fill" style="width:' + score + '%;background:' + barBg + ';"></span></span><span class="stnd-bar-pct">' + score + '%</span></span>'
+    + '<span class="stnd-act-line"><span class="stnd-act-dot" style="background:' + band + ';"></span>' + act
+    + '<span class="stnd-day-live-hint">hour by hour ›</span></span>'
+    + '</button>';
+}
+
+function standHourlyPanelHtml(s, fc, sd, sdt, selIdx) {
+  var hourly = fc && fc.hourly;
+  if (!sd || !hourly || !hourly.time) return '';
+  var sr = flCalcSunTime(sdt, s.lat, s.lng, true);
+  var ss = flCalcSunTime(sdt, s.lat, s.lng, false);
+  var srMin = sr ? flToMinutes(sr) : 6 * 60;
+  var ssMin = ss ? flToMinutes(ss) : 20 * 60;
+  var legalStart = srMin - 60, legalEnd = ssMin + 60;
+  var dawnS = srMin - 60, dawnE = srMin + 120, duskS = ssMin - 90, duskE = ssMin + 45;
+  var startHour = Math.max(0, Math.floor(legalStart / 60));
+  var endHour = Math.min(23, Math.ceil(legalEnd / 60));
+  var nowMin = selIdx === 0 ? flToMinutes(new Date()) : null;
+  var badWinds = s.bad_winds || [];
+  var rows = '', rendered = 0;
+  var peakH = -1, peakScore = -1, badHours = [];
+  for (var h = startHour; h <= endHour; h++) {
+    var hMin = h * 60;
+    if (hMin > legalEnd + 59) break;
+    var wxHour = flWxHourAt(hourly, sd.date, h);
+    var score = flScoreStandHour({
+      hour: h, date: sdt, lat: s.lat, lng: s.lng,
+      species: flMySpecies(), badWinds: badWinds, wxHour: wxHour
+    });
+    var band = score >= 65 ? '#7adf7a' : score >= 45 ? '#f0cc74' : '#e09040';
+    var isDawn = hMin >= dawnS && hMin <= dawnE;
+    var isDusk = hMin >= duskS && hMin <= duskE;
+    var isNow = nowMin != null && nowMin >= hMin && nowMin < hMin + 60;
+    var windBad = badWinds.length && wxHour && wxHour.dir != null && wxHour.wind != null &&
+      wxHour.wind >= 8 && badWinds.indexOf(flWindDirLabel8(wxHour.dir)) !== -1;
+    if (score > peakScore) { peakScore = score; peakH = h; }
+    if (windBad) badHours.push(h);
+    // Per-row wind flag is QUIET (pink arrow+cardinal, no glyph) — a
+    // wrong-wind day would otherwise shout ⚠ twenty-one times; the digest
+    // chip above the table states the problem once, with its hours.
+    // Row anatomy follows the homepage hourly the owner preferred (round 9):
+    // score stacked under the time, rotated travel-arrow direction, sky icon.
+    // Time colour follows the homepage: gold in dawn, amber in dusk, plain
+    // white inside legal light, dimmed at the clipped edge hours outside it.
+    var tCol = isDawn ? '#f0c870' : isDusk ? '#f09850'
+      : (hMin >= legalStart && hMin <= legalEnd) ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.6)';
+    rows += '<div class="stnd-hr-row' + (isDawn ? ' dawn' : isDusk ? ' dusk' : '') + (isNow ? ' now' : '') + '">'
+      + '<span class="stnd-hr-t"><b style="color:' + tCol + ';">' + flFmtMins(hMin) + '</b><i style="color:' + band + ';">' + score + '%</i></span>'
+      + '<span class="stnd-hr-bar"><i style="width:' + score + '%;background:' + band + ';"></i></span>'
+      + '<span class="stnd-hr-c">' + (wxHour ? wxHour.temp + '°C' : '–') + '</span>'
+      // Wind cell (round 17): gusty hours (gust/wind ratio > 0.5 — the level
+      // the scorer starts docking for unreliable scent) show the range
+      // "6–11 mph" instead of a single figure, so a score dip on a gusty
+      // hour explains itself. Steady hours keep the plain number.
+      + '<span class="stnd-hr-c">' + (wxHour && wxHour.wind != null
+        ? (wxHour.gustRatio > 0.5
+          ? Math.round(wxHour.wind * 0.621) + '–' + Math.round(wxHour.wind * (1 + wxHour.gustRatio) * 0.621) + ' mph'
+          : Math.round(wxHour.wind * 0.621) + ' mph')
+        : '–') + '</span>'
+      + '<span class="stnd-hr-dir' + (windBad ? ' bad' : '') + '">' + (wxHour && wxHour.dir != null ? standWindDirArrow(wxHour.dir) : '–') + '</span>'
+      + '<span class="stnd-hr-sky">' + (wxHour ? wxCodeToEmoji(wxHour.code, wxHour.precip) : '–') + '</span>'
+      // Rain cell: probability when the model provides it; the Met Office
+      // model (round 14) is deterministic — no % product — so fall back to
+      // the hour's forecast mm, which is arguably the more honest number.
+      + '<span class="stnd-hr-c">' + (wxHour && wxHour.precipP != null
+        ? (wxHour.precipP === 0 ? 'Dry' : wxHour.precipP + '%')
+        : (wxHour && wxHour.precip != null
+          ? (wxHour.precip < 0.05 ? 'Dry' : (Math.round(wxHour.precip * 10) / 10) + 'mm')
+          : '–')) + '</span>'
+      + '</div>';
+    rendered++;
+  }
+  if (!rendered) return '';
+  // Answer-first digest: the peak hour, and the wind story told ONCE.
+  var digest = '<div class="stnd-hr-digest">';
+  if (peakH >= 0) digest += '<span class="stnd-hr-chip gold">Peak ' + flFmtMins(peakH * 60) + ' · ' + peakScore + '</span>';
+  if (badWinds.length) {
+    if (!badHours.length) {
+      digest += '<span class="stnd-hr-chip ok">✓ wind clear all day</span>';
+    } else if (badHours.length >= rendered) {
+      digest += '<span class="stnd-hr-chip bad">⚠ wind wrong all day</span>';
+    } else {
+      var runs = [];
+      for (var bi = 0; bi < badHours.length; bi++) {
+        var rSt = badHours[bi], rEn = rSt;
+        while (bi + 1 < badHours.length && badHours[bi + 1] === rEn + 1) { rEn = badHours[++bi]; }
+        runs.push(flFmtMins(rSt * 60) + '–' + flFmtMins((rEn + 1) * 60));
+      }
+      digest += '<span class="stnd-hr-chip bad">⚠ wind wrong ' + (runs.length > 2 ? runs.length + ' spells' : runs.join(' & ')) + '</span>';
+    }
+  }
+  digest += '</div>';
+  // A7: this used to be a re-render, not a toggle. Flipping the disclosure called
+  // renderStandDetail(), which blew away body.innerHTML and rebuilt the Leaflet
+  // mini-map from scratch - new tile requests, a fresh boundary pass, a restarted
+  // fallback timer and a lost scroll position, all to turn one caret around. The
+  // rows are computed either way, so they now always ship in the DOM and the
+  // handler only toggles [hidden].
+  var open = !!flStandsState.hourlyOpen;
+  return '<div class="stnd-hourly' + (open ? ' is-open' : '') + '" id="stnd-hourly">'
+    + '<button type="button" class="stnd-hourly-tog" data-fl-action="toggle-stand-hourly"'
+    + ' aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="stnd-hourly-body">'
+    + 'Hour by hour · legal light ' + flFmtMins(legalStart) + '–' + flFmtMins(legalEnd)
+    + '<span class="stnd-hourly-car">' + (open ? '▴' : '▾') + '</span></button>'
+    + '<div class="stnd-hourly-body" id="stnd-hourly-body"' + (open ? '' : ' hidden') + '>'
+      + (digest
+        + '<div class="stnd-hr-head"><span class="stnd-hr-t">Time</span><span>Activity</span><span>Temp</span><span>Wind</span><span>From</span><span></span><span>Rain</span></div>'
+        + rows
+        + '<div class="stnd-hr-note">Scored for this stand · gold/amber rows = dawn &amp; dusk windows · <span style="color:#f0a0a0;font-weight:700;">pink</span> = wind from your bad sector that hour · arrow shows where the wind travels · a wind range (6–11) = gusty hour, scent gets unreliable.</div>')
+    + '</div>'
+    + '</div>';
+}
+
+/** Day-level factor rows — texts follow app.js getDeerActivityScore (day scope, not "now"). */
+function standDayFactors(sd, dt, hasBadWinds) {
+  var fs = [];
+  var m = sd.moon;
+  if (m) {
+    var mTxt, mGood;
+    if (m.illumination < 15) { mGood = true;  mTxt = 'New moon (' + m.illumination + '% lit) — low overnight feeding, deer keener at dawn & dusk'; }
+    else if (m.illumination < 40) { mGood = true;  mTxt = 'Crescent moon (' + m.illumination + '% lit) — favourable conditions'; }
+    else if (m.illumination < 60) { mGood = null;  mTxt = 'Quarter moon (' + m.illumination + '% lit) — average movement'; }
+    else if (m.illumination < 85) { mGood = null;  mTxt = 'Gibbous moon (' + m.illumination + '% lit) — some nocturnal feeding likely'; }
+    else { mGood = false; mTxt = 'Full moon (' + m.illumination + '% lit) — deer may feed overnight, daytime movement reduced'; }
+    fs.push({ icon: m.icon, text: mTxt, good: mGood });
+  }
+  var month = dt.getMonth() + 1;
+  var rutMonths = FL_RUT_CALENDAR[month] || [0, 0, 0, 0, 0];
+  var rutMask = flRutMaskForSpecies(flMySpecies());
+  var maxRut = flMaxRutMasked(rutMonths, rutMask);
+  if (maxRut >= 25) {
+    fs.push({ icon: '<span class="fl-ic fl-deer"></span>', text: FL_RUT_SPECIES.filter(function(_, i) { return rutMonths[i] >= 25 && rutMask[i]; }).join(' & ') + ' rut — heightened daytime activity', good: true });
+  } else if (maxRut >= 10) {
+    fs.push({ icon: '<span class="fl-ic fl-deer"></span>', text: FL_RUT_SPECIES.filter(function(_, i) { return rutMonths[i] >= 10 && rutMask[i]; }).join(' & ') + ' rut building — elevated movement', good: true });
+  } else if (maxRut > 0) {
+    fs.push({ icon: '<span class="fl-ic fl-deer"></span>', text: 'Pre/post rut — residual activity', good: null });
+  }
+  if (month === 2) fs.push({ icon: '<span class="fl-ic fl-wx-snow"></span>', text: 'Late winter — deer feeding intensively to survive, movement elevated', good: true });
+  else if (month === 3) fs.push({ icon: '<span class="fl-ic fl-sprout"></span>', text: 'Early spring — residual winter stress, deer actively feeding', good: true });
+  else if (month === 9 || month === 10) fs.push({ icon: '<span class="fl-ic fl-leaf"></span>', text: 'Pre-rut season — bucks building energy, increased movement', good: true });
+  else if (month === 11) fs.push({ icon: '<span class="fl-ic fl-leaf"></span>', text: 'Post-rut — deer exhausted but feeding to recover condition', good: null });
+  else if (month >= 6 && month <= 8) fs.push({ icon: '<span class="fl-ic fl-wx-sun"></span>', text: 'Summer heat — movement concentrated at dawn & dusk only', good: null });
+  var w = sd.wxDay;
+  if (w && w.tempMax != null) {
+    if (w.tempMin <= 0) {
+      fs.push({ icon: '<span class="fl-ic fl-wx-snow"></span>', text: 'Overnight frost (' + Math.round(w.tempMin) + '°C low) — deer must feed hard at first light', good: true });
+    } else {
+      var avgT = Math.round((w.tempMax + w.tempMin) / 2);
+      if (avgT <= 8) fs.push({ icon: '<span class="fl-ic fl-temp"></span>', text: 'Cool (' + avgT + '°C avg) — comfortable, good movement', good: true });
+      else if (avgT > 18) fs.push({ icon: '<span class="fl-ic fl-temp"></span>', text: 'Warm (' + avgT + '°C avg) — daytime movement sluggish', good: false });
+    }
+    var mph = Math.round((w.windMax || 0) * 0.621);
+    if (mph < 8) fs.push({ icon: '<span class="fl-ic fl-wind"></span>', text: 'Light winds (' + mph + ' mph) — deer settled, scent steady', good: true });
+    else if (mph >= 20) fs.push({ icon: '<span class="fl-ic fl-wind"></span>', text: 'Strong wind (' + mph + ' mph max) — deer unsettled, movement drops', good: false });
+    if (w.precip > 5) fs.push({ icon: '<span class="fl-ic fl-wx-rain"></span>', text: 'Heavy rain (' + w.precip.toFixed(1) + ' mm) — movement suppressed', good: false });
+    else if (w.precip > 0.5) fs.push({ icon: '<span class="fl-ic fl-wx-lightrain"></span>', text: 'Light rain (' + w.precip.toFixed(1) + ' mm) — deer often move after showers', good: null });
+    if (w.pressure != null && w.prevPressure != null) {
+      var dP = w.pressure - w.prevPressure;
+      if (dP < -1) fs.push({ icon: '<span class="fl-ic fl-prs-down"></span>', text: 'Falling pressure — pre-front feeding surge likely', good: true });
+      else if (dP > 1) fs.push({ icon: '<span class="fl-ic fl-prs-up"></span>', text: 'Rising pressure — settled weather, less feeding urgency', good: null });
+    }
+  }
+  if (hasBadWinds) {
+    var dPen = sd.windPenalty && sd.windPenalty.dawn < 0;
+    var kPen = sd.windPenalty && sd.windPenalty.dusk < 0;
+    if (dPen || kPen) {
+      fs.push({ icon: '<span class="fl-ic fl-warn"></span>', text: 'Wind from your bad direction in the ' + (dPen && kPen ? 'dawn & dusk windows' : dPen ? 'dawn window' : 'dusk window') + ' — scores cut', good: false });
+    } else {
+      fs.push({ icon: '<span class="fl-ic fl-compass"></span>', text: 'Wind clear of your bad directions in both windows', good: true });
+    }
+  }
+  return fs;
+}
+
+// ── Stands map (v3): all stands plotted, score-coloured, tap → forecast detail ──
+var standsMap = null;
+var standsMapLayer = null;
+var standsSatLayer = null;
+var standsClusterGroup = null;
+var standsMapMarkers = [];
+var standsMarkerById = {};
+var standsFacingLayer = null; // round 31: the selected stand's view wedge
+var standsMeLayer = null;      // ST-10: the "you are here" mark from Locate
+var standsMoveNoteT = null;    // ST-3: coalesces the moveend note refresh
+
+/** Score-chip marker: today's best score in a band-coloured bubble (matches list chips). */
+/**
+ * Stand map marker. `mini` (round 24 — owner: "do we need the HS number on
+ * highseats (may be if zoomed to a level)?") renders a small band-coloured
+ * dot instead of the numbered badge: zoomed out, colour still says WHERE the
+ * good seats are; the numbers return when zoom gives them room — and at
+ * overview zoom this keeps score badges from colliding with the cluster
+ * bubbles' COUNT numbers (two meanings of a number on one map). The selected
+ * stand always keeps its full badge.
+ *
+ * `facingDeg` (round 30 — "just for the owner to remember where this
+ * highstand looks towards"): a small white pointer on the badge rim, rotated
+ * to the seat's facing. Memory aid only — screen-constant size so it reads
+ * at any zoom, skipped on the mini dots where 12 px of triangle would drown
+ * a 14 px dot. Never feeds scoring.
+ */
+function standMarkerIcon(score, isSelected, mini, name, facingDeg) {
+  var band = score == null ? '#9a9488' : score >= 65 ? '#5ab43c' : score >= 45 ? '#d8b054' : '#d8792e';
+  if (mini && !isSelected) {
+    var msz = 14;
+    var mhtml = '<div style="width:' + msz + 'px;height:' + msz + 'px;border-radius:50%;background:' + band
+      + ';border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.35);"></div>';
+    return L.divIcon({ html: mhtml, iconSize: [msz, msz], iconAnchor: [msz / 2, msz / 2], popupAnchor: [0, -msz / 2 - 1], className: '' });
+  }
+  var txt = score == null ? '–' : String(score);
+  var sz = isSelected ? 34 : 30;
+  var shadow = isSelected ? 'box-shadow:0 0 0 3px #f0cc74,0 2px 7px rgba(0,0,0,0.5);' : 'box-shadow:0 1px 4px rgba(0,0,0,0.35);';
+  // Name pill (round 24 clarification — owner: "shall these not have their
+  // names?"): the seat's short name rides under the badge at badge zoom,
+  // centred and free to be wider than the circle. Hidden with the dots.
+  // South-sector facings (135–225°) point the tick at the pill's spot — drop
+  // the pill 9 px so the pointer stays visible instead of hiding behind it.
+  var lblTop = (facingDeg != null && facingDeg >= 135 && facingDeg <= 225) ? sz + 11 : sz + 2;
+  var lbl = name
+    ? '<div class="fl-lbl-seat' + (isSelected ? ' fl-lbl-pri' : '') + '" style="position:absolute;top:' + lblTop + 'px;left:50%;transform:translateX(-50%);'
+      + 'background:rgba(10,20,6,0.82);color:#f0e4c0;font:700 9px/1 \'DM Sans\',sans-serif;'
+      + 'padding:2px 6px;border-radius:8px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">' + esc(name) + '</div>'
+    : '';
+  // Facing pointer: a wrapper the size of the badge rotates around its own
+  // centre (= the badge centre), carrying a triangle docked just above the
+  // rim — rotate(0) points north, matching compass degrees. SVG so the
+  // triangle can take a dark stroke and stay visible on pale tiles.
+  var tick = (facingDeg != null)
+    ? '<div style="position:absolute;left:0;top:0;width:' + sz + 'px;height:' + sz + 'px;'
+      + 'transform:rotate(' + facingDeg + 'deg);pointer-events:none;">'
+      + '<svg width="12" height="10" viewBox="0 0 12 10" style="position:absolute;top:-9px;left:50%;margin-left:-6px;display:block;">'
+      + '<polygon points="6,0 11,9 1,9" fill="#fff" stroke="rgba(0,0,0,0.45)" stroke-width="1"/></svg></div>'
+    : '';
+  var html = '<div style="position:relative;width:' + sz + 'px;height:' + sz + 'px;">'
+    + '<div style="width:' + sz + 'px;height:' + sz + 'px;border-radius:50%;background:' + band
+    + ';border:2.5px solid #fff;' + shadow + 'display:flex;align-items:center;'
+    + 'justify-content:center;font:700 ' + (isSelected ? 13 : 12) + 'px/1 \'DM Sans\',sans-serif;color:#fff;">' + txt + '</div>'
+    + tick + lbl + '</div>';
+  return L.divIcon({ html: html, iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2], popupAnchor: [0, -sz / 2 - 1], className: '' });
+}
+
+/** Short map label for a stand: the bit before " – "/" - ", capped at 12 chars. */
+function flStandShortName(s) {
+  var n = (s && s.name ? String(s.name) : '').split(/\s+[–—-]\s+/)[0].trim();
+  return n.length > 12 ? n.slice(0, 11) + '…' : n;
+}
+
+/** The right icon for a stand id under current selection + zoom. */
+function flStandMarkerIconFor(id, isSelected) {
+  var stands = flStandsState.list || [];
+  var s = null;
+  for (var i = 0; i < stands.length; i++) { if (stands[i].id === id) { s = stands[i]; break; } }
+  // G8: name pills obey the filter popover's Seat-names toggle.
+  return standMarkerIcon(flStandMarkerScore(id), isSelected, !flStandsBadgeZoom(), (s && standNamesOn()) ? flStandShortName(s) : '', s && s.facing != null ? s.facing : null);
+}
+
+// Badges need room: below this zoom, markers render as dots (colour only).
+var STANDS_BADGE_MIN_ZOOM = 12;
+
+/** Are we zoomed in enough for numbered badges? */
+function flStandsBadgeZoom() {
+  try { return !standsMap || standsMap.getZoom() >= STANDS_BADGE_MIN_ZOOM; } catch (e) { return true; }
+}
+
+// ── G8: map filter for busy estates (West Acre runs ~50 seats) ─────────────
+// Show one ground's seats and/or switch the name pills off — the MAP
+// declutters; the list, forecasts and Tonight pick stay whole.
+var flStandsMapFilter = null; // ground name ('' = no ground set), null = all
+// G8b (2026-07-20): per-marker-type visibility on the stands map — a set of
+// marker type ids to HIDE (empty = show all). Session-only, like the ground
+// filter above. The "Marker names" toggle is a persisted display pref below.
+var flStandsMarkerHidden = {};
+
+function standNamesOn() {
+  try { return localStorage.getItem('fl-stnd-names-v1') !== '0'; } catch (e) { return true; }
+}
+function setStandNamesOn(on) {
+  try { localStorage.setItem('fl-stnd-names-v1', on ? '1' : '0'); } catch (e) { /* best-effort */ }
+}
+function standMarkerNamesOn() {
+  try { return localStorage.getItem('fl-stnd-mk-names-v1') !== '0'; } catch (e) { return true; }
+}
+function setStandMarkerNamesOn(on) {
+  try { localStorage.setItem('fl-stnd-mk-names-v1', on ? '1' : '0'); } catch (e) { /* best-effort */ }
+}
+
+/** PURE (G8/G8b): the stands-map filter popover, in up to three sections.
+ *  Grounds — radio rows (pick one), only when there are ≥2 grounds.
+ *  Markers — a checkbox per marker TYPE present (toggle-each: 'on' = shown,
+ *    dimmed = hidden); markerHidden is the set of type ids to hide.
+ *  Display — Seat-names toggle (always) + Marker-names toggle (with markers).
+ *  counts = [{ground, n}]; markerCounts = [{type, label, n}]. */
+function standsMapFilterHtml(counts, selected, namesOn, markerCounts, markerHidden, markerNamesOn) {
+  var total = 0;
+  (counts || []).forEach(function(c) { total += c.n; });
+  markerCounts = markerCounts || [];
+  markerHidden = markerHidden || {};
+  var hasGrounds = (counts || []).length >= 2;
+  var hasMk = markerCounts.length > 0;
+  var h = '';
+  if (hasGrounds) {
+    h += '<div class="gmb-mi-head">Grounds</div>';
+    h += '<button type="button" class="gmb-mi' + (selected == null ? ' on' : '') + '" data-fl-action="stands-filter-ground" data-ground="__all__" role="menuitem">All grounds<span class="gmb-mi-n">' + total + '</span></button>';
+    counts.forEach(function(c) {
+      h += '<button type="button" class="gmb-mi' + (selected === c.ground ? ' on' : '') + '" data-fl-action="stands-filter-ground" data-ground="' + esc(c.ground) + '" role="menuitem">' + esc(c.ground || 'No ground set') + '<span class="gmb-mi-n">' + c.n + '</span></button>';
+    });
+  }
+  if (hasMk) {
+    h += '<div class="gmb-mi-head' + (hasGrounds ? ' gmb-mi-head--sep' : '') + '">Markers</div>';
+    markerCounts.forEach(function(mc) {
+      var shown = !markerHidden[mc.type];
+      h += '<button type="button" class="gmb-mi gmb-mi--mk' + (shown ? ' on' : '') + '" data-fl-action="stands-filter-mtype" data-type="' + esc(mc.type) + '" role="menuitemcheckbox" aria-checked="' + (shown ? 'true' : 'false') + '">'
+        + '<span class="gmb-mi-gl">' + groundMarkerGlyph(mc.type) + '</span>' + esc(mc.label)
+        + '<span class="gmb-mi-n">' + mc.n + '</span></button>';
+    });
+  }
+  if (hasGrounds || hasMk) h += '<div class="gmb-mi-head gmb-mi-head--sep">Display</div>';
+  h += '<button type="button" class="gmb-mi" data-fl-action="stands-filter-names" role="menuitemcheckbox" aria-checked="' + (namesOn ? 'true' : 'false') + '">Seat names<span class="gmb-mi-n">' + (namesOn ? 'on' : 'off') + '</span></button>';
+  if (hasMk) {
+    h += '<button type="button" class="gmb-mi" data-fl-action="stands-filter-mnames" role="menuitemcheckbox" aria-checked="' + (markerNamesOn ? 'true' : 'false') + '">Marker names<span class="gmb-mi-n">' + (markerNamesOn ? 'on' : 'off') + '</span></button>';
+  }
+  return h;
+}
+
+/** Seats-with-coords per ground, grounds sorted, unassigned last. */
+function standsMapFilterCounts() {
+  var by = {}, order = [];
+  (flStandsState.list || []).forEach(function(s) {
+    if (!s || s.lat == null || s.lng == null) return;
+    var g = s.ground || '';
+    if (!(g in by)) { by[g] = 0; order.push(g); }
+    by[g]++;
+  });
+  order.sort(function(a, b) {
+    if (a === '') return 1;
+    if (b === '') return -1;
+    return a.localeCompare(b);
+  });
+  return order.map(function(g) { return { ground: g, n: by[g] }; });
+}
+
+/** Marker types present across the ground(s), in menu order, with counts —
+ *  feeds the Markers section of the filter popover. Unknown types already
+ *  normalise to 'other' on read, so every marker lands under a known row. */
+function standsMarkerTypeCounts() {
+  var by = {};
+  (groundFeaturesNow() || []).forEach(function(f) {
+    if (!f || f.kind !== 'marker') return;
+    var mk = markerFromGeometry(f.geometry);
+    if (!mk) return;
+    by[mk.type] = (by[mk.type] || 0) + 1;
+  });
+  var out = [];
+  // Finding E: the popover already has a "Markers" heading, so the row reads
+  // "Other 2", not "Marker 2".
+  GROUND_MARKER_TYPES.forEach(function(t) { if (by[t.id]) out.push({ type: t.id, label: markerTypeChip(t.id), n: by[t.id] }); });
+  return out;
+}
+
+function standsFilterToggle() {
+  var m = document.getElementById('stnd-filter-menu');
+  if (!m) return;
+  var opening = (m.style.display === 'none' || !m.style.display);
+  if (!opening) { m.style.display = 'none'; return; }
+  gmbClose();
+  gmbGroundsClose(); // one popover at a time
+  m.innerHTML = standsMapFilterHtml(standsMapFilterCounts(), flStandsMapFilter, standNamesOn(), standsMarkerTypeCounts(), flStandsMarkerHidden, standMarkerNamesOn());
+  m.style.display = 'flex';
+  flGmbScrollHint(m); // ST-9
+}
+
+function standsFilterRerender() {
+  renderStandsMap();
+  var m = document.getElementById('stnd-filter-menu');
+  if (m && m.style.display !== 'none') {
+    // Stay open so the owner can flip between grounds; rows re-render so the
+    // highlight follows the choice.
+    m.innerHTML = standsMapFilterHtml(standsMapFilterCounts(), flStandsMapFilter, standNamesOn(), standsMarkerTypeCounts(), flStandsMarkerHidden, standMarkerNamesOn());
+    flGmbScrollHint(m); // ST-9
+  }
+}
+
+function standsFilterSetGround(g) {
+  flStandsMapFilter = g;
+  standsFilterRerender();
+}
+
+function standsFilterNamesToggle() {
+  setStandNamesOn(!standNamesOn());
+  standsFilterRerender();
+}
+
+function standsFilterMarkerToggle(type) {
+  if (!type) return;
+  if (flStandsMarkerHidden[type]) delete flStandsMarkerHidden[type]; else flStandsMarkerHidden[type] = true;
+  standsFilterRerender();
+}
+
+function standsFilterMarkerNamesToggle() {
+  setStandMarkerNamesOn(!standMarkerNamesOn());
+  standsFilterRerender();
+}
+
+/** Show the filter button only when it earns its place; light it when active. */
+function syncStandsFilterButton() {
+  var btn = document.getElementById('stnd-map-filter');
+  if (!btn) return;
+  var counts = standsMapFilterCounts();
+  var seats = 0;
+  counts.forEach(function(c) { seats += c.n; });
+  var useful = seats >= 6 || counts.length >= 2 || standsMarkerTypeCounts().length > 0;
+  btn.style.display = useful ? 'flex' : 'none';
+  var active = flStandsMapFilter != null || Object.keys(flStandsMarkerHidden).length > 0;
+  btn.classList.toggle('on', active);
+  btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  if (!useful) {
+    var m = document.getElementById('stnd-filter-menu');
+    if (m) m.style.display = 'none';
+  }
+}
+
+function initStandsMap() {
+  if (standsMap) return;
+  if (!document.getElementById('stands-map-div')) return;
+  standsMap = L.map('stands-map-div', { zoomControl: true, attributionControl: false })
+    .setView([54.0, -2.0], 6); // UK overview until fitBounds
+  // Round 24: badges ↔ dots follow the zoom level.
+  standsMap.on('zoomend', function() { syncStandStepMarkers(); });
+  // ST-3: the off-screen count is a function of the viewport, so it has to
+  // follow a pan as well as a zoom. Coalesced - a drag ends once, but a
+  // fitBounds animation can fire moveend twice in quick succession.
+  standsMap.on('moveend', function() {
+    if (standsMoveNoteT) clearTimeout(standsMoveNoteT);
+    standsMoveNoteT = setTimeout(function() { standsMoveNoteT = null; syncStandStepMarkers(); }, 140);
+  });
+  // Round 31: in facing-aim mode the next map tap IS the answer.
+  standsMap.on('click', function(ev) {
+    if (flStandAim) flStandFaceAimEnd(ev.latlng);
+  });
+  var tiles = mapProviderTileUrls();
+  standsMapLayer = L.tileLayer(tiles.std, tileOptsForUrl(tiles.std)).addTo(standsMap);
+  standsSatLayer = L.tileLayer(tiles.sat, tileOptsForUrl(tiles.sat));
+  attachStandsMapTileErrorHandlers();
+  bumpMapLoadEstimate('stands-map');
+  // G3 boundaries + G10 markers are (re)drawn in renderStandsMap now, so the
+  // G8b marker filter / name toggle can repaint them — see renderStandsMap.
+  // The toggle overlays the map, and a click on it never reaches the body-level
+  // data-fl-action delegator (propagation is stopped en route), so bind the two
+  // buttons directly here — a listener on the button fires before anything upstream.
+  var sltMapBtn = document.getElementById('slt-map');
+  var sltSatBtn = document.getElementById('slt-sat');
+  if (sltMapBtn) sltMapBtn.addEventListener('click', function(){ setStandsLayer('map'); });
+  if (sltSatBtn) sltSatBtn.addEventListener('click', function(){ setStandsLayer('sat'); });
+  setTimeout(function(){ if (standsMap) standsMap.invalidateSize(); }, 80);
+}
+
+/** Map / Satellite base-layer toggle for the stands map (mirrors setCullLayer). */
+function setStandsLayer(type) {
+  if (!standsMap) return;
+  var mapBtn = document.getElementById('slt-map');
+  var satBtn = document.getElementById('slt-sat');
+  if (type === 'sat') {
+    if (standsMapLayer) standsMap.removeLayer(standsMapLayer);
+    if (standsSatLayer) standsSatLayer.addTo(standsMap);
+    if (mapBtn) mapBtn.className = 'lt-b off';
+    if (satBtn) satBtn.className = 'lt-b on';
+  } else {
+    if (standsSatLayer) standsMap.removeLayer(standsSatLayer);
+    if (standsMapLayer) standsMapLayer.addTo(standsMap);
+    if (mapBtn) mapBtn.className = 'lt-b on';
+    if (satBtn) satBtn.className = 'lt-b off';
+  }
+}
+
+/**
+ * Full-screen map toggle (round 25 — owner asked, skeptical analysis agreed:
+ * more glass for the SAME instrument, nothing new inside it). The overlay is
+ * the existing #stands-map-wrap given a fixed-position class, so the caption,
+ * cones toggle, sit stepper and legend all come along for free. Three ways
+ * out: the button, Escape, and the Android back gesture — the pushState
+ * guard is safe because the app manages no other history state (verified:
+ * only hash replaceState cleanup exists).
+ */
+function flToggleStandsMapFull(fromPop) {
+  var wrap = document.getElementById('stands-map-wrap');
+  if (!wrap) return;
+  var on = !wrap.classList.contains('fullscreen');
+  wrap.classList.toggle('fullscreen', on);
+  document.body.style.overflow = on ? 'hidden' : '';
+  var btn = document.getElementById('stnd-map-expand');
+  if (btn) {
+    btn.title = on ? 'Exit full screen' : 'Full screen';
+    btn.setAttribute('aria-label', on ? 'Exit full screen map' : 'Full screen map');
+  }
+  if (on) {
+    if (!fromPop) { try { history.pushState({ flMapFull: 1 }, ''); } catch (e) { /* sandboxed */ } }
+  } else if (!fromPop) {
+    // Closed via button/Escape — consume the history entry we pushed so the
+    // NEXT back gesture doesn't need a phantom press.
+    try { if (history.state && history.state.flMapFull) history.back(); } catch (e) { /* fine */ }
+  }
+  // Leaflet must re-measure its container after the layout change.
+  setTimeout(function() { try { if (standsMap) standsMap.invalidateSize(); } catch (e) { /* fine */ } }, 130);
+}
+
+// Android back gesture / browser back closes the full-screen map instead of
+// leaving the app; Escape does the same on desktop. No-ops when not open.
+window.addEventListener('popstate', function() {
+  var wrap = document.getElementById('stands-map-wrap');
+  if (wrap && wrap.classList.contains('fullscreen')) flToggleStandsMapFull(true);
+});
+document.addEventListener('keydown', function(ev) {
+  if (ev.key === 'Escape') {
+    var wrap = document.getElementById('stands-map-wrap');
+    if (wrap && wrap.classList.contains('fullscreen')) flToggleStandsMapFull();
+  }
+});
+
+/** Plot every pinned stand; tap a marker → select + highlight its list card.
+ *  G7: the map is the Ground canvas now — grounds/boundaries alone justify it
+ *  (a boundary-first user needs the bar, invite and switcher with zero seats).
+ *  Hidden only when there is nothing at all to stand on. */
+function renderStandsMap() {
+  var wrap = document.getElementById('stands-map-wrap');
+  var stands = (flStandsState.list || []).filter(function(s){ return s.lat != null && s.lng != null; });
+  var hasGrounds = (savedGrounds || []).length > 0 || groundFeaturesNow().length > 0;
+  // '' (not 'block') so the .fullscreen class's flex layout wins when active.
+  if (wrap) wrap.style.display = (stands.length || hasGrounds) ? '' : 'none';
+  if (!stands.length && !hasGrounds) return;
+  // G8: map-only ground filter (busy estates) — auto-heals when the filtered
+  // ground no longer has a pinned seat.
+  if (flStandsMapFilter != null) {
+    var flt = stands.filter(function(s) { return (s.ground || '') === flStandsMapFilter; });
+    if (flt.length) stands = flt;
+    else flStandsMapFilter = null;
+  }
+  initStandsMap();
+  if (!standsMap) return;
+
+  // G3/G10/G8b: (re)draw ground boundaries + markers with the current filter —
+  // hidden marker types dropped, name pills honoured — beneath the seat markers.
+  renderGroundBoundaries(standsMap, { hiddenMarkerTypes: flStandsMarkerHidden, featureNames: standMarkerNamesOn() });
+
+  if (standsClusterGroup) { standsMap.removeLayer(standsClusterGroup); standsClusterGroup = null; }
+  standsMapMarkers.forEach(function(m){ standsMap.removeLayer(m); });
+  standsMapMarkers = [];
+  standsMarkerById = {};
+
+  var useClustering = typeof L.markerClusterGroup === 'function';
+  if (useClustering) standsClusterGroup = L.markerClusterGroup({ maxClusterRadius: 45 });
+
+  var bounds = [];
+  stands.forEach(function(s) {
+    var marker = L.marker([s.lat, s.lng], { icon: flStandMarkerIconFor(s.id, s.id === flStandsState.selectedId) });
+    marker.on('click', function(){
+      // Round 31: aiming — a tap on a marker is still a point on the ground
+      // (e.g. "looks toward HS12's clearing"); use its position as the target.
+      if (flStandAim) { flStandFaceAimEnd(marker.getLatLng()); return; }
+      // Round 26 (owner): on the FULL-SCREEN map the list a tap would
+      // highlight is hidden under the overlay, so a tap looked dead. There,
+      // a highseat tap goes straight to its detail — close the overlay
+      // first (consuming the back-gesture history entry properly), then open.
+      var wrap = document.getElementById('stands-map-wrap');
+      if (wrap && wrap.classList.contains('fullscreen')) {
+        selectStand(s.id);
+        flToggleStandsMapFull();
+        openStandDetail(s.id);
+        return;
+      }
+      selectStand(s.id);
+    });
+    if (useClustering) { standsClusterGroup.addLayer(marker); }
+    else { marker.addTo(standsMap); }
+    standsMapMarkers.push(marker);
+    standsMarkerById[s.id] = marker;
+    bounds.push([s.lat, s.lng]);
+  });
+  if (useClustering) standsMap.addLayer(standsClusterGroup);
+  flQueueDeclutter(standsMap); // finding H: seat pills vs ground/marker names
+  // A pending focus (a stand detail's "Where it sits" tap) centres on that seat
+  // instead of framing them all. Consumed once; selectStand() re-pans as backstop.
+  var sFocus = (flStandsState.focusId != null) ? stands.find(function(x){ return x.id === flStandsState.focusId; }) : null;
+  flStandsState.focusId = null;
+  // G7: grounds-only canvas — frame the parcels instead (zones excluded).
+  var gpts = [];
+  if (!sFocus && !bounds.length) {
+    groundFeaturesNow().forEach(function(f) {
+      if (!f || f.kind === 'no_shoot') return;
+      if (f.kind === 'marker') { // G10
+        var mk = markerFromGeometry(f.geometry);
+        if (mk) gpts.push([mk.lat, mk.lng]);
+        return;
+      }
+      var r = parseGeometry(f.geometry, f.kind === 'line' ? 2 : undefined); // G9
+      if (r && r.length) gpts = gpts.concat(r);
+    });
+  }
+  // Default framing: with nothing focused and no ground filter active, frame just
+  // the NEXT SIT's ground rather than every seat — otherwise seats on grounds 100+
+  // miles apart force a wide, empty country view (owner: "the default zoom is
+  // annoying"). A focus or a ground filter still frames exactly what was asked for;
+  // pinch out for the full picture. Falls back to fit-all if the next sit or its
+  // ground can't be resolved (e.g. forecasts not loaded on the very first paint).
+  var frameBounds = bounds;
+  if (!sFocus && flStandsMapFilter == null && bounds.length) {
+    var _pick = (typeof standTonightPick === 'function') ? standTonightPick(stands) : null;
+    if (_pick && _pick.s) {
+      var _ng = _pick.s.ground || '';
+      var _sub = stands.filter(function(s){ return (s.ground || '') === _ng; }).map(function(s){ return [s.lat, s.lng]; });
+      if (_sub.length) frameBounds = _sub;
+    }
+  }
+  // Applied now AND again after invalidateSize below (the tab's flex layout can
+  // still be sizing #stands-map-div on the first paint, which would otherwise leave
+  // an immediate fit computed against a 0-size box).
+  function _frameStandsMap() {
+    if (!standsMap) return;
+    if (sFocus) standsMap.setView([sFocus.lat, sFocus.lng], 16);
+    else if (frameBounds.length) standsMap.fitBounds(frameBounds, { padding: [34, 34], maxZoom: 13 });
+    else if (gpts.length) standsMap.fitBounds(gpts, { padding: [34, 34], maxZoom: 14 });
+  }
+  _frameStandsMap();
+  renderStandsCones();
+  renderStandFacingWedge(); // round 31: restore the selected seat's view wedge
+  syncWindBar();
+  syncStandsFilterButton(); // G8
+  setTimeout(function(){ if (standsMap) { standsMap.invalidateSize(); _frameStandsMap(); } }, 100);
+}
+
+// ── Scent-cone overlay (Feature A; round-15 step model) ──────────
+// Round 15 (owner: "it is showing a cone for the whole day, but the wind
+// changes throughout day"): the old day stepper drew ONE representative wind
+// per calendar day. The stepper now walks SITS, not days:
+//   Now            — each stand's cone from the current UK hour's wind
+//   Tonight · dusk — each stand's own dusk-hour wind (while dusk is ahead)
+//   Wed · dusk …   — future days keep the best-window wind, honestly labelled
+// All hours come from the cached hourly arrays — no extra API traffic.
+var standsConeLayers = [];
+var SWIND_CONE_STYLE = {
+  busted: { color: '#a5321f', fill: '#d84a2f' },
+  edge:   { color: '#8a6516', fill: '#e6b84e' },
+  clear:  { color: '#2f6d1f', fill: '#5ab43c' },
+  calm:   { color: '#7a756c', fill: '#b8b2a8' }
+};
+
+/** First stand's scored days — the shared basis for step labels. */
+function flStandsAnyDays() {
+  var f = flStandsState.forecasts, k;
+  if (f && f.byStandId) {
+    for (k in f.byStandId) {
+      if (f.byStandId[k] && f.byStandId[k].days && f.byStandId[k].days.length) return f.byStandId[k].days;
+    }
+  }
+  return null;
+}
+
+/**
+ * The step list for the cone stepper (round 16: every sit, dawn AND dusk).
+ * Pure of app state — takes the scored days, the current UK minutes, and a
+ * reference lat/lng (first stand) for the still-ahead checks.
+ *   Now           — always first
+ *   Today · dawn  — while the dawn window (sunrise +2h) hasn't closed
+ *   Tonight · dusk— while the dusk window (sunset +45m) hasn't closed
+ *   then dawn + dusk for every remaining forecast day.
+ * Hourly steps are deliberately NOT offered here: the map compares stands;
+ * hour-level timing lives in the stand detail's hour-by-hour table, and
+ * hour-level wind five days out would be pseudo-precision anyway.
+ */
+function flStandsWindSteps(anyDays, nowMin, lat, lng) {
+  if (!anyDays || !anyDays.length) return [{ di: 0, mode: 'now', label: 'Today' }];
+  var steps = [{ di: 0, mode: 'now', label: 'Now' }];
+  var d0 = new Date(anyDays[0].date + 'T12:00:00');
+  var sr = flCalcSunTime(d0, lat, lng, true);
+  var ss = flCalcSunTime(d0, lat, lng, false);
+  if (sr && nowMin < flToMinutes(sr) + 120) steps.push({ di: 0, mode: 'win', win: 'dawn', label: 'Today · dawn' });
+  if (ss && nowMin < flToMinutes(ss) + 45) steps.push({ di: 0, mode: 'win', win: 'dusk', label: 'Tonight · dusk' });
+  for (var di = 1; di < anyDays.length; di++) {
+    var when = di === 1 ? 'Tomorrow' : swpWeekday(anyDays[di].date);
+    steps.push({ di: di, mode: 'win', win: 'dawn', label: when + ' · dawn' });
+    steps.push({ di: di, mode: 'win', win: 'dusk', label: when + ' · dusk' });
+  }
+  return steps;
+}
+
+/**
+ * One stand's wind for one step → { dirDeg, speedKmh } | null.
+ *   now — the hourly sample at nowUkHour today
+ *   win — the hourly sample at THIS stand's own window hour that day
+ *         (dawn: sunrise hour; dusk: the hour before sunset)
+ * Falls back to the day's arrowWind on stale snapshots without hourly data.
+ */
+function flStandConeWind(s, fc, step, nowUkHour) {
+  if (!fc || !fc.days || !fc.days.length) return null;
+  var day = fc.days[step.di];
+  if (!day) return null;
+  var aw = (day.arrowWind && day.arrowWind.dirDeg != null) ? day.arrowWind : null;
+  var h = null;
+  if (step.mode === 'now') {
+    h = nowUkHour;
+  } else {
+    var sun = flCalcSunTime(new Date(day.date + 'T12:00:00'), s.lat, s.lng, step.win === 'dawn');
+    if (sun) {
+      var m = flToMinutes(sun);
+      h = Math.max(0, Math.min(23, Math.floor((step.win === 'dawn' ? m : m - 60) / 60)));
+    }
+  }
+  if (h != null) {
+    var wx = flWxHourAt(fc.hourly, day.date, h);
+    if (wx && wx.dir != null && wx.wind != null) return { dirDeg: wx.dir, speedKmh: wx.wind };
+  }
+  return aw; // stale v1 snapshot without hourly arrays — day wind beats nothing
+}
+
+/**
+ * One stand's SCORE for one step (round 16 — the markers follow the stepper;
+ * owner: "tomorrow dusk should show the cone as well as scores of tomorrow").
+ *   now — the live current-hour score (the round-11 live-bar calculation)
+ *   win — that day's dawnScore / duskScore from the same scorer the cards use
+ */
+function flStandStepScore(s, fc, step, nowUkHour) {
+  if (!fc || !fc.days || !fc.days.length) return null;
+  var day = fc.days[step.di];
+  if (!day) return null;
+  if (step.mode === 'now') {
+    var wx = flWxHourAt(fc.hourly, day.date, nowUkHour);
+    if (wx) {
+      return flScoreStandHour({
+        hour: nowUkHour, date: new Date(day.date + 'T12:00:00'), lat: s.lat, lng: s.lng,
+        species: flMySpecies(), badWinds: s.bad_winds || [], wxHour: wx
+      });
+    }
+    return day.bestScore; // no hourly coverage — the day's headline beats a blank
+  }
+  var winScore = step.win === 'dawn' ? day.dawnScore : day.duskScore;
+  return winScore != null ? winScore : day.bestScore;
+}
+
+/** The current stepper step (clamped), or null when cones are off.
+ *  Memoised per (step index, minute, forecast batch) — round-16 made every
+ *  marker badge consult this, so an uncached version recomputed sun times
+ *  once per marker per render (part of the round-17 slow-load report). */
+var _flWindStepMemo = { key: '', step: null };
+function flCurrentWindStep() {
+  if (!flStandsState.windOn) return null;
+  var f = flStandsState.forecasts;
+  var key = (flStandsState.windStepIdx || 0) + '|' + Math.floor(Date.now() / 60000) + '|' + ((f && f.asOf) || 0);
+  if (_flWindStepMemo.key === key) return _flWindStepMemo.step;
+  var stands = flStandsState.list || [];
+  var ref = stands.length ? stands[0] : null;
+  var steps = flStandsWindSteps(flStandsAnyDays(), flToMinutes(new Date()), ref && ref.lat, ref && ref.lng);
+  var idx = Math.max(0, Math.min(flStandsState.windStepIdx || 0, steps.length - 1));
+  _flWindStepMemo = { key: key, step: steps[idx] };
+  return steps[idx];
+}
+
+/** The score a stand's map badge shows: the current sit's when cones are on, today's best otherwise. */
+function flStandMarkerScore(standId) {
+  var f = flStandsState.forecasts;
+  var fc = f && f.byStandId[standId];
+  var day0 = fc && fc.days && fc.days.length ? fc.days[0] : null;
+  var step = flCurrentWindStep();
+  if (step) {
+    var stands = flStandsState.list || [];
+    for (var i = 0; i < stands.length; i++) {
+      if (stands[i].id === standId) {
+        var sc = flStandStepScore(stands[i], fc, step, Math.floor(flToMinutes(new Date()) / 60));
+        if (sc != null) return sc;
+        break;
+      }
+    }
+  }
+  return day0 ? day0.bestScore : null;
+}
+
+/** Repaint every marker + the map caption for the current step and zoom (rounds 16 + 24). */
+/** ST-4: a step label read mid-sentence ("numbers score ...") wants sentence
+ *  case, but a blanket toLowerCase() also flattened the weekday abbreviation
+ *  Intl gives us - the note read "numbers score wed · dawn". Only the three
+ *  relative words are ours to lowercase; Tue/Wed/Thu keep their capital. */
+function flStepLabelInline(label) {
+  if (!label) return '';
+  return String(label).replace(/\b(Today|Tonight|Tomorrow)\b/g, function(w) { return w.toLowerCase(); })
+    .replace(/\bDawn\b/g, 'dawn').replace(/\bDusk\b/g, 'dusk');
+}
+
+/** ST-3: how many plotted seats are outside the current view. The map's
+ *  default framing deliberately shows only the next sit's ground (owner
+ *  decision, round 26), and Locate flies off the seats altogether - both are
+ *  right, and both left the user looking at a map with no way to tell an
+ *  empty field from a filter that had eaten their estate. Count is over the
+ *  markers actually plotted, so a ground filter is already accounted for. */
+function flStandsOffScreenCount() {
+  if (!standsMap) return 0;
+  var ids = Object.keys(standsMarkerById);
+  if (!ids.length) return 0;
+  var b;
+  try { b = standsMap.getBounds(); } catch (_) { return 0; }
+  if (!b) return 0;
+  var n = 0;
+  ids.forEach(function(id) {
+    try { if (!b.contains(standsMarkerById[id].getLatLng())) n++; } catch (_) {}
+  });
+  return n;
+}
+
+/** ST-3/ST-10: frame every plotted seat. The way back from a deliberate
+ *  one-ground framing, and the way back from Locate. */
+function flStandsFitAll() {
+  if (!standsMap) return;
+  var pts = [];
+  Object.keys(standsMarkerById).forEach(function(id) {
+    try { var ll = standsMarkerById[id].getLatLng(); pts.push([ll.lat, ll.lng]); } catch (_) {}
+  });
+  if (!pts.length) { showToast('No pinned seats to show'); return; }
+  try { standsMap.fitBounds(pts, { padding: [34, 34], maxZoom: 16 }); } catch (_) {}
+  syncStandStepMarkers();
+}
+
+function syncStandStepMarkers() {
+  var badges = flStandsBadgeZoom();
+  Object.keys(standsMarkerById).forEach(function(id) {
+    try { standsMarkerById[id].setIcon(flStandMarkerIconFor(id, id === flStandsState.selectedId)); } catch (_) {}
+  });
+  flQueueDeclutter(standsMap); // finding H: setIcon rebuilds every pill
+  var note = document.getElementById('stands-map-note');
+  if (note) {
+    var step = flCurrentWindStep();
+    var when = !step ? "today's best window" : step.mode === 'now' ? 'right now' : flStepLabelInline(step.label);
+    // P82: unqualified, this read as a caption for whatever was below it —
+    // wrong the moment the view switched to Plan week. It has always described
+    // the pins directly above it; now it says which.
+    note.textContent = badges
+      ? 'Tap a pin on the map for its forecast · numbers score ' + when
+      : 'Tap a pin on the map for its forecast · colours score ' + when + ' · zoom in for numbers';
+    // ST-3/ST-10: setting textContent above has already cleared any previous
+    // button, so this rebuilds from scratch on every sync and never stacks.
+    var offN = flStandsOffScreenCount();
+    if (offN > 0) {
+      var showAll = document.createElement('button');
+      showAll.type = 'button';
+      showAll.className = 'stnd-map-showall';
+      showAll.setAttribute('data-fl-action', 'stands-fit-all');
+      showAll.textContent = offN === 1
+        ? '1 seat is off the map — show all'
+        : offN + ' seats are off the map — show all';
+      note.appendChild(showAll);
+    }
+  }
+}
+
+/** Draw a downwind scent cone per stand for the selected step; colour = scentConeVerdict. */
+function renderStandsCones() {
+  if (!standsMap) return;
+  standsConeLayers.forEach(function(l){ try { standsMap.removeLayer(l); } catch (_) {} });
+  standsConeLayers = [];
+  var step = flCurrentWindStep();
+  if (!step) { syncStandStepMarkers(); return; } // cones off — badges revert to today's best
+  var f = flStandsState.forecasts;
+  var nowUkHour = Math.floor(flToMinutes(new Date()) / 60); // UK wall clock — the round-11 rule
+  (flStandsState.list || []).forEach(function(s) {
+    if (s.lat == null || s.lng == null) return;
+    // G8: a seat filtered off the map must not throw a cone either.
+    if (flStandsMapFilter != null && (s.ground || '') !== flStandsMapFilter) return;
+    var fc = f && f.byStandId[s.id];
+    var aw = flStandConeWind(s, fc, step, nowUkHour);
+    if (!aw || aw.dirDeg == null) return;
+    var poly = flScentConePolygon(s.lat, s.lng, aw.dirDeg, aw.speedKmh);
+    if (!poly.length) return;
+    var v = flScentConeVerdict(aw.dirDeg, aw.speedKmh, s.bad_winds || []);
+    var st = SWIND_CONE_STYLE[v] || SWIND_CONE_STYLE.clear;
+    var sel = s.id === flStandsState.selectedId;
+    var pts = poly.map(function(p){ return [p.lat, p.lng]; });
+    var layer = L.polygon(pts, { color: st.color, weight: sel ? 2 : 1.3, opacity: sel ? 0.9 : 0.55, fillColor: st.fill, fillOpacity: sel ? 0.34 : 0.20, interactive: false });
+    layer.addTo(standsMap);
+    standsConeLayers.push(layer);
+  });
+  // Freshly-added cones would paint over the dashed view wedge — keep it on top.
+  if (standsFacingLayer) { try { standsFacingLayer.bringToFront(); } catch (_) {} }
+  syncStandStepMarkers();
+}
+
+/**
+ * The selected stand's view wedge (round 31) — WHERE the seat looks, drawn on
+ * the actual terrain. Deliberately unlike the scent cones: those are filled,
+ * verdict-coloured and time-travel with the stepper; this is a fixed, pale,
+ * DASHED outline with near-zero fill (a sightline, not a weather layer), a
+ * modest 160 m long so it indicates direction without claiming range.
+ * Selected stand only — 46 wedges would bury the map. Never feeds scoring.
+ */
+function renderStandFacingWedge() {
+  if (!standsMap) return;
+  if (standsFacingLayer) {
+    try { standsMap.removeLayer(standsFacingLayer); } catch (_) {}
+    standsFacingLayer = null;
+  }
+  var id = flStandsState.selectedId;
+  if (!id) return;
+  var s = (flStandsState.list || []).find(function(x) { return x.id === id; });
+  if (!s || s.facing == null || s.lat == null || s.lng == null) return;
+  // G8: no wedge for a seat the map filter is hiding.
+  if (flStandsMapFilter != null && (s.ground || '') !== flStandsMapFilter) return;
+  // Reuse the cone geometry pointing TOWARD the facing: the helper aims
+  // downwind (= windFrom + 180), so feed it facing + 180. Speed null ⇒ base
+  // length only; perKmhM 0 keeps it fixed even if that ever changes.
+  var poly = flScentConePolygon(s.lat, s.lng, (s.facing + 180) % 360, null,
+    { spreadDeg: 16, baseM: 160, perKmhM: 0, maxM: 160, arcSteps: 6 });
+  if (!poly.length) return;
+  standsFacingLayer = L.polygon(poly.map(function(p) { return [p.lat, p.lng]; }),
+    { color: '#f0e4c0', weight: 1.5, opacity: 0.85, dashArray: '4 5', fillColor: '#f0e4c0', fillOpacity: 0.07, interactive: false });
+  standsFacingLayer.addTo(standsMap);
+}
+
+/** Sync the wind-cone control bar (toggle label, step label, legend) to state. */
+function syncWindBar() {
+  var on = !!flStandsState.windOn;
+  var btn = document.getElementById('swind-toggle');
+  if (btn) { btn.textContent = 'Scent cones: ' + (on ? 'on' : 'off'); btn.setAttribute('aria-pressed', on ? 'true' : 'false'); btn.className = 'swind-btn' + (on ? ' on' : ''); }
+  var dayEl = document.getElementById('swind-day');
+  if (dayEl) dayEl.style.display = on ? 'inline-flex' : 'none';
+  var leg = document.getElementById('swind-legend');
+  if (leg) leg.style.display = on ? 'flex' : 'none';
+  // SYS78 (finding 85): the legend - the only place that ever explained what a
+  // scent cone IS - was shown only when cones were ON, so the one state that
+  // needs the explanation was the one state that never got it. A user who has
+  // never turned them on has no way in.
+  var offNote = document.getElementById('swind-off-note');
+  if (offNote) offNote.style.display = on ? 'none' : 'block';
+  var lbl = document.getElementById('swind-day-lbl');
+  if (lbl) {
+    var st2 = flCurrentWindStep();
+    if (st2) lbl.textContent = st2.label;
+  }
+  // ST-5: the index is clamped in the handler, so at "Now" and at the last
+  // dusk of the forecast the arrows did nothing at all - four presses, no
+  // movement, no feedback, and no way to tell the end of the week from a
+  // broken button. Reflect the clamp in the control.
+  var stepsN = flStandsWindSteps(
+    flStandsAnyDays(), flToMinutes(new Date()),
+    (flStandsState.list && flStandsState.list[0] && flStandsState.list[0].lat),
+    (flStandsState.list && flStandsState.list[0] && flStandsState.list[0].lng)).length;
+  var curIdx = Math.max(0, Math.min(flStandsState.windStepIdx || 0, stepsN - 1));
+  var dayWrap = document.getElementById('swind-day');
+  if (dayWrap) {
+    dayWrap.querySelectorAll('.swind-step').forEach(function(b) {
+      var dir = parseInt(b.getAttribute('data-dir'), 10) || 0;
+      var atEnd = dir < 0 ? curIdx <= 0 : curIdx >= stepsN - 1;
+      b.disabled = atEnd;
+      b.setAttribute('aria-disabled', atEnd ? 'true' : 'false');
+    });
+  }
+}
+
+/** Map ↔ list link: tap a marker → ring it + highlight/scroll its list card (keeps zoom). */
+function selectStand(id) {
+  var prev = flStandsState.selectedId;
+  flStandsState.selectedId = id;
+  if (prev && prev !== id && standsMarkerById[prev]) {
+    try { standsMarkerById[prev].setIcon(flStandMarkerIconFor(prev, false)); } catch (_) {}
+  }
+  if (standsMarkerById[id]) {
+    try {
+      standsMarkerById[id].setIcon(flStandMarkerIconFor(id, true));
+      if (standsMap) standsMap.panTo(standsMarkerById[id].getLatLng());
+    } catch (_) {}
+    flQueueDeclutter(standsMap); // finding H: selection resizes the badge
+  }
+  var prevCard = document.querySelector('.stnd-card.sel, .stnd-row.sel');
+  if (prevCard) prevCard.classList.remove('sel');
+  var card = document.getElementById('stand-card-' + id);
+  if (card) { card.classList.add('sel'); card.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  renderStandFacingWedge(); // round 31: the view wedge follows the selection
+}
+
+/**
+ * Is this day's best window wind-penalised at THIS stand? Same semantics as
+ * standTonightPick (windPenalty < 0). Hoisted out of standListCardHtml in
+ * round 21 so the compact rows share it — drives verdicts, red day ticks
+ * and the ⚠ on peak chips in both densities.
+ */
+function standDayWindBad(s, d) {
+  var hasBad = !!(s.bad_winds && s.bad_winds.length);
+  return hasBad && d && d.windPenalty && d.windPenalty[d.bestWindow === 'Dawn' ? 'dawn' : 'dusk'] < 0;
+}
+
+/**
+ * One stand list card (2026-07-16 uplift + quick wins). `showGround` adds a
+ * ground chip — used by the "Best today" flat ranking, where the group
+ * headers that normally carry the ground name are gone.
+ */
+function standListCardHtml(s, showGround) {
+  var f = flStandsState.forecasts;
+  var day = standScoreToday(s.id);
+  var fcs = f && f.byStandId[s.id];
+  var days = (fcs && fcs.days) || [];
+  var hasBad = !!(s.bad_winds && s.bad_winds.length);
+  function dayWindBad(d) { return standDayWindBad(s, d); }
+  // Hero (left): today's score gauge, labelled with the DAY it's for — the
+  // gauge is tonight's/today's number, NOT the week's peak (that's the "Best
+  // …" chip). "Tonight" for a dusk sit, "Today" when today's best window is
+  // dawn, so the label is never wrong. Same 270° gauge as the detail panel.
+  var heroWhen = day ? (day.bestWindow === 'Dawn' ? 'Today' : 'Tonight') : '';
+  var gaugeHtml = day
+    ? '<span class="stnd-card-gauge">' + standScoreGaugeSvg(day.bestScore, 52) + '<small>' + heroWhen + '</small></span>'
+    : '<span class="stnd-card-gauge"><span class="stnd-card-gauge-na">–</span><small>score</small></span>';
+  // Status line: today's window + time. The wind verdict now sits with the
+  // compass on the right (one wind story, one place), so this line is just
+  // "Dusk from 19:44".
+  var winLine = day
+    ? (day.bestWindow === 'Dawn' ? ('Dawn from ' + day.dawnTime) : ('Dusk from ' + day.duskTime))
+    : 'No forecast yet';
+  var verdict = '';
+  if (day && hasBad && day.windPenalty) {
+    verdict = dayWindBad(day) ? '<span class="w-bad">⚠ bad wind</span>' : '<span class="w-ok">✓ wind OK</span>';
+  }
+  // 7-day forecast curve + a day-label row aligned under its dots. A red
+  // tick under a day = its best window blows from this stand's bad sector
+  // (so "peak is Friday, but can I actually sit there Friday?" reads off
+  // the card without opening the planner).
+  var bestIdx = 0;
+  var chart = '', dayLabels = '';
+  if (days.length >= 2) {
+    for (var bi = 1; bi < Math.min(7, days.length); bi++) {
+      if (days[bi].bestScore > days[bestIdx].bestScore) bestIdx = bi;
+    }
+    chart = '<span class="stnd-card-chart">' + standWeekCurveSvg(days, s.id) + '</span>';
+    dayLabels = '<span class="stnd-card-days" aria-hidden="true">';
+    for (var di = 0; di < Math.min(7, days.length); di++) {
+      var dow = standDayDow(days[di].date);
+      dayLabels += '<b class="' + (di === 0 ? 'today' : '') + (di === bestIdx ? ' best' : '') + (dayWindBad(days[di]) ? ' wbad' : '') + '">'
+        + (di === 0 ? 'TDY' : (dow == null ? '·' : STND_DAY_INITIALS[dow])) + '</b>';
+    }
+    dayLabels += '</span>';
+  }
+  // Chips: the "best night" nudge — the week's best day/window (the decision
+  // this tab exists for), framed forward so a peak that ISN'T today reads as
+  // "sit Thu instead" rather than fighting the tonight/today hero. + history.
+  var chips = '';
+  if (days.length >= 2) {
+    var pd = days[bestIdx];
+    var pdow = standDayDow(pd.date);
+    var pw = pd.bestWindow.toLowerCase();
+    var peakWhen = bestIdx === 0 ? (pw === 'dusk' ? 'tonight' : 'today') : (pdow == null ? pd.date : STND_DAY_NAMES[pdow]);
+    chips += '<span class="stnd-card-chip gold">Best ' + peakWhen + ' · ' + pw
+      + (dayWindBad(pd) ? ' ⚠' : '') + '</span>';
+  }
+  if (showGround && s.ground) chips += '<span class="stnd-card-chip dim">' + esc(s.ground) + '</span>';
+  var hist = standHistoryFor(s);
+  if (hist.culls > 0) chips += '<span class="stnd-card-chip dim">' + hist.culls + (hist.culls === 1 ? ' cull here' : ' culls here') + '</span>';
+  return '<button type="button" id="stand-card-' + s.id + '" class="stnd-card' + (s.id === flStandsState.selectedId ? ' sel' : '') + '" data-fl-action="open-stand-detail" data-stand-id="' + s.id + '">'
+    + '<span class="stnd-card-hd">'
+    + '<span class="stnd-card-tt">'
+    + '<span class="stnd-card-name">' + esc(s.name) + '</span>'
+    + (s._pending ? '<span class="stnd-pending" title="Saved offline — will sync when connected">queued</span>' : '')
+    + gaugeHtml
+    + '<span class="stnd-card-win">' + esc(winLine) + '</span>'
+    + '</span>'
+    + '<span class="stnd-card-wind">'
+    + '<span class="stnd-card-compass">' + windCompassSvgDark(s.bad_winds, day && day.arrowWind, 46) + '</span>'
+    + verdict
+    + '</span>'
+    + '</span>'
+    + chart
+    + dayLabels
+    + (chips ? '<span class="stnd-card-ft">' + chips + '</span>' : '')
+    + '</button>';
+}
+
+/**
+ * Compact one-line row (round 21 — the "quicker glance" for big grounds; the
+ * owner's has 46 seats). Same data as the card, distilled: today's score in
+ * its band colour, name, best window + time, the wind verdict glyph, and the
+ * week's peak day. Everything else is one tap away in the detail.
+ */
+function standListRowHtml(s, showGround) {
+  var day = standScoreToday(s.id);
+  var f = flStandsState.forecasts;
+  var fc = f && f.byStandId[s.id];
+  var days = fc && fc.days ? fc.days : [];
+  var hasBad = !!(s.bad_winds && s.bad_winds.length);
+  var band = day ? (day.bestScore >= 65 ? '#7adf7a' : day.bestScore >= 45 ? '#f0cc74' : '#e09040') : 'rgba(255,255,255,0.35)';
+  var winTxt = day
+    ? (day.bestWindow === 'Dawn' ? 'dawn ' + day.dawnTime : 'dusk ' + day.duskTime)
+    : 'no forecast';
+  var verdict = '';
+  if (day && hasBad && day.windPenalty) {
+    verdict = standDayWindBad(s, day) ? '<span class="w-bad">⚠</span>' : '<span class="w-ok">✓</span>';
+  }
+  var peak = '';
+  if (days.length >= 2) {
+    var bi = 0;
+    for (var i = 1; i < Math.min(7, days.length); i++) {
+      if (days[i].bestScore > days[bi].bestScore) bi = i;
+    }
+    var pdow = standDayDow(days[bi].date);
+    // A9: this badge names the best day of the WEEK, but sat inches from a score
+    // and a time that are both about TODAY - three unlabelled facts, two
+    // timeframes. The card version already says "Best …"; the row now does too.
+    peak = '<span class="stnd-row-peak" title="Best window in the next 7 days">best '
+      + (bi === 0 ? 'today' : (pdow == null ? '' : STND_DAY_NAMES[pdow]))
+      + ' · ' + days[bi].bestWindow.toLowerCase() + (standDayWindBad(s, days[bi]) ? ' ⚠' : '') + '</span>';
+  }
+  return '<button type="button" id="stand-card-' + s.id + '" class="stnd-row' + (s.id === flStandsState.selectedId ? ' sel' : '') + '" data-fl-action="open-stand-detail" data-stand-id="' + s.id + '">'
+    + '<b class="stnd-row-score" style="color:' + band + ';" title="Score for today\'s best window">' + (day ? day.bestScore : '\u2013') + '</b>'
+    + '<span class="stnd-row-name">' + esc(s.name) + (s._pending ? ' <span class="stnd-pending">queued</span>' : '') + (showGround && s.ground ? '<i>' + esc(s.ground) + '</i>' : '') + '</span>'
+    + '<span class="stnd-row-win">' + esc(winTxt) + '</span>'
+    + verdict
+    + peak
+    + '<span class="stnd-row-cta">›</span>'
+    + '</button>';
+}
+
+function renderStandsList() {
+  var listEl = document.getElementById('stands-list');
+  var emptyEl = document.getElementById('stands-empty');
+  var asofEl = document.getElementById('stands-asof');
+  if (!listEl) return;
+  var stands = flStandsState.list || [];
+  if (emptyEl) emptyEl.style.display = stands.length ? 'none' : 'block';
+  var f = flStandsState.forecasts;
+  if (asofEl) {
+    if (!stands.length) asofEl.textContent = '';
+    else if (f && f.offline && f.asOf) asofEl.textContent = 'Offline — scores as of ' + new Date(f.asOf).toLocaleString();
+    else if (f && f.offline) asofEl.textContent = 'Offline — connect once to fetch forecasts';
+    else {
+      // Freshness cue (2026-07-16 quick wins): scores cache for 20 min —
+      // say when they were fetched and offer a manual refresh, so the wind
+      // call is never silently stale.
+      var updTxt = stands.length + (stands.length === 1 ? ' stand' : ' stands') + ' · 7-day outlook';
+      if (f && f.asOf) {
+        updTxt += ' · updated ' + new Date(f.asOf).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        asofEl.innerHTML = esc(updTxt)
+          + ' <button type="button" class="stnd-asof-refresh" data-fl-action="refresh-stand-forecasts">↻ refresh</button>';
+      } else {
+        asofEl.textContent = updTxt;
+      }
+    }
+  }
+  var groups = {}, order = [];
+  stands.forEach(function(s) {
+    var g = s.ground || '';
+    if (!groups[g]) { groups[g] = []; order.push(g); }
+    groups[g].push(s);
+  });
+  order.sort(function(a, b) {
+    if (a === '') return 1;
+    if (b === '') return -1;
+    return a.localeCompare(b);
+  });
+  var stTonight = standTonightPick(stands);
+  var canPlan = stands.length >= 2 && f && f.byStandId;
+  var h = '';
+  if (canPlan) {
+    // Round 27 v3 (owner: "should be one line only"): all three controls on
+    // a single edge-to-edge row — mode + sort share the width (flex:1 each),
+    // density icons docked at the end. Plan-week mode = mode bar alone,
+    // full width. Wraps only on very narrow screens (flex-wrap fallback).
+    h += '<div class="stnd-tog-row stnd-tog-line">'
+      + '<div class="stnd-plan-tog spread" role="group" aria-label="Stands view">'
+      + '<button type="button" class="spm-b' + (!flStandsState.planMode ? ' on' : '') + '" data-fl-action="set-stands-plan-mode" data-mode="list">List</button>'
+      + '<button type="button" class="spm-b' + (flStandsState.planMode ? ' on' : '') + '" data-fl-action="set-stands-plan-mode" data-mode="plan" title="Best seat this week">Plan week</button>'
+      + '</div>';
+    if (!flStandsState.planMode) {
+      // Sort (2026-07-16 quick wins) + density (round 21, icons round 23).
+      // SYS78 (finding 84): the three groups in this row are a mode switch, a
+      // sort and a display density - three different kinds of decision, all
+      // previously rendered with identical chrome and a 7px gap, so the row read
+      // as one six-segment control. They now carry their own classes purely so
+      // the stylesheet can rank them; the markup and the aria grouping are
+      // otherwise unchanged.
+      h += '<div class="stnd-plan-tog spread stnd-tog-sort" role="group" aria-label="Sort stands">'
+        + '<button type="button" class="spm-b' + (flStandsState.sortMode !== 'best' ? ' on' : '') + '" data-fl-action="set-stands-sort" data-sort="ground" title="Group by ground">Ground</button>'
+        + '<button type="button" class="spm-b' + (flStandsState.sortMode === 'best' ? ' on' : '') + '" data-fl-action="set-stands-sort" data-sort="best" title="Rank by today\'s best score">Best</button>'
+        + '</div>'
+        + '<div class="stnd-plan-tog stnd-tog-density" role="group" aria-label="List density">'
+        + '<button type="button" class="spm-b spm-ic' + (!flStandsState.compact ? ' on' : '') + '" data-fl-action="set-stands-view" data-density="cards" title="Cards" aria-label="Card view">'
+        + '<svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor" aria-hidden="true"><rect x="0.5" y="1" width="12" height="4.6" rx="1.5"/><rect x="0.5" y="7.4" width="12" height="4.6" rx="1.5"/></svg></button>'
+        + '<button type="button" class="spm-b spm-ic' + (flStandsState.compact ? ' on' : '') + '" data-fl-action="set-stands-view" data-density="compact" title="Compact" aria-label="Compact view">'
+        + '<svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor" aria-hidden="true"><rect x="0.5" y="1.5" width="12" height="2" rx="1"/><rect x="0.5" y="5.5" width="12" height="2" rx="1"/><rect x="0.5" y="9.5" width="12" height="2" rx="1"/></svg></button>'
+        + '</div>';
+    }
+    h += '</div>';
+  }
+  var itemHtml = flStandsState.compact ? standListRowHtml : standListCardHtml;
+  if (canPlan && flStandsState.planMode) {
+    h += renderStandsPlanner(stands, f);
+  } else {
+    // Order seats by today's best score (no-forecast last) — used flat in
+    // "Best" mode and WITHIN each ground in "Ground" mode, so the best seat
+    // for today always sits at the top of its group, cards and compact rows
+    // alike (owner 2026-07-20: "By Ground should show the best of that day at
+    // the top" — seats used to sit in the order they were added).
+    // ST-1: seats are numbered (HS2, HS16, HS30) and plain localeCompare is
+    // lexicographic, so HS16 sorted above HS2 on a 46-seat estate. Same cure
+    // as populateSightStandSelect got in wave R.
+    // ST-8: on a level day almost every seat ties, and the tie then broke
+    // alphabetically here but by earliest upcoming window in standTonightPick
+    // - so the hero named one seat while the "Best" list ranked another first,
+    // both showing the same score. The seat the hero names now sorts first
+    // among its equals, so the ranking always agrees with the recommendation.
+    var _heroId = (stTonight && stTonight.s) ? stTonight.s.id : null;
+    var byBestToday = function(a, b) {
+      var da = standScoreToday(a.id), db = standScoreToday(b.id);
+      return ((db ? db.bestScore : -1) - (da ? da.bestScore : -1))
+        || ((a.id === _heroId ? -1 : 0) - (b.id === _heroId ? -1 : 0))
+        || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    };
+    if (canPlan && flStandsState.sortMode === 'best') {
+      // Flat ranking by today's best score; no-forecast stands sink last.
+      // (No "Ranked" header — the highlighted Best today toggle says it.)
+      var _ranked = stands.slice().sort(byBestToday);
+      // A10: on most days the day-level factors (moon, season, weather) dominate
+      // the stand-level ones, so a majority of seats land on the identical score
+      // and the "ranking" silently becomes alphabetical. Presenting that as an
+      // order is the lie; saying it out loud is the fix, and it points at the
+      // two things that DO separate seats on a level day.
+      var _topScore = null, _tied = 0;
+      _ranked.forEach(function(st) {
+        var sc = standScoreToday(st.id);
+        if (!sc) return;
+        if (_topScore === null) { _topScore = sc.bestScore; _tied = 1; }
+        else if (sc.bestScore === _topScore) _tied++;
+      });
+      if (_tied > 1) {
+        h += '<div class="stnd-tie-note">' + _tied + ' seats tie at ' + _topScore
+          + ' today \u2014 today\'s conditions favour them equally. Wind direction and your own history here are what separate them.</div>';
+      }
+      _ranked.forEach(function(s) { h += itemHtml(s, true); });
+    } else {
+      // Round 23: a lone group needs no header — "NO GROUND" over the only
+      // list on screen was pure noise. Headers return when groups differ.
+      var soleGroup = order.length === 1;
+      order.forEach(function(g) {
+        // G3: mapped grounds carry their real acreage on the group header.
+        if (!soleGroup) h += '<div class="stnd-group-hdr">' + (g ? esc(g) : 'No ground')
+          + (g ? groundAreaSpanHtml(groundFeaturesNow(), g) : '') + '</div>';
+        // Best seat of the day first, within the ground (2026-07-20).
+        groups[g].slice().sort(byBestToday).forEach(function(s) { h += itemHtml(s, false); });
+      });
+    }
+  }
+  listEl.innerHTML = h;
+  var tonightEl = document.getElementById('stands-tonight');
+  if (tonightEl) tonightEl.innerHTML = buildTonightHero(stTonight);
+  renderStandsMap();
+  syncGroundInvite(); // G6: draw-invite over the map until a boundary exists
+}
+
+// ── History at this stand (S5) ───────────────────────────────────
+
+var STAND_HISTORY_RADIUS_M = 300;
+
+// ── All-seasons history (round 22) ───────────────────────────────────────────
+// The record card + wind evidence used to see only the LOADED season's
+// entries (the season dropdown bounds loadEntries). One lazy minimal fetch —
+// id/date/time/lat/lng/species/is_blank, no heavy JSONB — pulls every
+// located entry the user has ever made, so "4 of 5 culls on a SW wind" draws
+// on the stand's whole life. weather_data hydrates per stand exactly as
+// before (the round-13 .in(ids) + archive-backfill path works unchanged on
+// these stubs). Invalidate on save so a new cull shows next open.
+var flStandHistAll = { rows: null, loading: false };
+
+/** History rows for stand matching: all-seasons once fetched, else the loaded season. */
+function flStandHistSource() {
+  return flStandHistAll.rows
+    ? { rows: flStandHistAll.rows, allSeasons: true }
+    : { rows: allEntries || [], allSeasons: false };
+}
+
+async function flEnsureAllSeasonHistory() {
+  if (!sb || !currentUser || !navigator.onLine) return;
+  if (flStandHistAll.rows || flStandHistAll.loading) return;
+  flStandHistAll.loading = true;
+  try {
+    var r = await sb.from('cull_entries')
+      // A9: outing_start_time / outing_end_time ride along so the trends
+      // panel can divide by hours out rather than by dates. Two more `time`
+      // columns on a query that already returns one row per entry — no extra
+      // round trip, no measurable payload.
+      .select('id, date, time, lat, lng, species, is_blank, outing_start_time, outing_end_time')
+      .eq('user_id', currentUser.id)
+      .not('lat', 'is', null);
+    if (!r.error && r.data) {
+      flStandHistAll.rows = r.data;
+      // Re-render the open detail so the card upgrades in place.
+      if (flStandsState.detailId) renderStandDetail(flStandsState.detailId);
+      // SG7: the per-outing hero reads these rows too — repaint live trends.
+      var vsGo = document.getElementById('v-sightings');
+      if (vsGo && vsGo.classList.contains('active') && sightView === 'trends') renderSightingsTrends();
+    }
+  } catch (e) { /* silent — the loaded-season card is a fine fallback */ }
+  finally { flStandHistAll.loading = false; }
+}
+
+/** Culls/outings from the LOADED season's entries within 300 m of the stand. */
+function standHistoryFor(s) {
+  var out = { culls: 0, outings: 0, species: {}, dawn: 0, dusk: 0, last: null };
+  flStandHistSource().rows.forEach(function(e) {
+    if (e.lat == null || e.lng == null) return;
+    var dm = flDistMeters(s.lat, s.lng, e.lat, e.lng);
+    if (dm == null || dm > STAND_HISTORY_RADIUS_M) return;
+    if (isBlankDayEntry(e)) { out.outings++; return; }
+    out.culls++;
+    if (e.species) out.species[e.species] = (out.species[e.species] || 0) + 1;
+    if (e.date && (!out.last || e.date > out.last)) out.last = e.date;
+    // Dawn/dusk classification against the stand's sun times on that date.
+    if (e.date && e.time) {
+      var parts = e.date.split('-');
+      var d0 = new Date(Date.UTC(+parts[0], +parts[1] - 1, +parts[2], 12, 0, 0));
+      var sr = flCalcSunTime(d0, s.lat, s.lng, true);
+      var ss = flCalcSunTime(d0, s.lat, s.lng, false);
+      if (sr && ss) {
+        var tm = e.time.split(':');
+        var mins = (+tm[0]) * 60 + (+tm[1] || 0);
+        var srM = flToMinutes(sr), ssM = flToMinutes(ss);
+        if (mins >= srM - 60 && mins <= srM + 120) out.dawn++;
+        else if (mins >= ssM - 90 && mins <= ssM + 45) out.dusk++;
+      }
+    }
+  });
+  return out;
+}
+
+function standTopSpeciesLabel(hist) {
+  var keys = Object.keys(hist.species);
+  if (!keys.length) return '';
+  keys.sort(function(a, b) { return hist.species[b] - hist.species[a]; });
+  return keys.slice(0, 2).map(function(k) { return k + ' ×' + hist.species[k]; }).join(', ');
+}
+
+// ── Wind evidence (round 13; SG6 widens it to every ENCOUNTER) ──────────────
+// The forecast says what SHOULD work at this stand; the diary knows what DID.
+// Culls carry cull_entries.weather_data and — since SG5 — sightings carry the
+// same record, so the evidence line counts everything you've MET here, not
+// just what you shot: "23 of 31 encounters here came on a SW wind · today:
+// SW ✓". On most grounds sightings outnumber culls 5–10×, so the floors are
+// reached in weeks instead of seasons.
+// Honesty floors unchanged: no line below 3 winded encounters, no headline
+// wind that only produced once. Absence stays silent — zero encounters on a
+// N wind may only mean you never sat this seat on a N wind.
+
+/** Non-blank entries with GPS within the stand-history radius (all seasons once fetched). */
+function flStandCullsNear(s) {
+  return flStandHistSource().rows.filter(function(e) {
+    if (e.lat == null || e.lng == null || isBlankDayEntry(e)) return false;
+    var dm = flDistMeters(s.lat, s.lng, e.lat, e.lng);
+    return dm != null && dm <= STAND_HISTORY_RADIUS_M;
+  });
+}
+
+/** Sightings matched to this stand — explicit stand_id first, GPS radius as
+ *  fallback (the one matcher standSightingsFor also aggregates over). */
+function flStandSightingsNear(s) {
+  return (allSightings || []).filter(function(sg) {
+    if (s.id && sg.stand_id && String(sg.stand_id) === String(s.id)) return true;
+    if (sg.lat == null || sg.lng == null || s.lat == null || s.lng == null) return false;
+    var dm = flDistMeters(s.lat, s.lng, sg.lat, sg.lng);
+    return dm != null && dm <= STAND_HISTORY_RADIUS_M;
+  });
+}
+
+/**
+ * The stand's whole encounter wind record (SG6): culls + sightings merged.
+ * Each row is ONE encounter regardless of group size — the wind either
+ * produced an animal in front of you or it didn't; six hinds at once is
+ * still one sit's evidence. cullsKnown/sightsKnown let the line pick an
+ * honest noun.
+ */
+function flStandEncounterWindRecord(s) {
+  var recC = standWindRecordFrom(flStandCullsNear(s));
+  var recS = standWindRecordFrom(flStandSightingsNear(s));
+  var byWind = {};
+  Object.keys(recC.byWind).forEach(function(k) { byWind[k] = (byWind[k] || 0) + recC.byWind[k]; });
+  Object.keys(recS.byWind).forEach(function(k) { byWind[k] = (byWind[k] || 0) + recS.byWind[k]; });
+  var top = null;
+  Object.keys(byWind).forEach(function(k) {
+    if (!top || byWind[k] > top.n) top = { label: k, n: byWind[k] };
+  });
+  return {
+    known: recC.known + recS.known,
+    byWind: byWind,
+    top: top,
+    cullsKnown: recC.known,
+    sightsKnown: recS.known
+  };
+}
+
+/** Aggregate culls' stored wind → { known, top: {label, n} | null }. */
+function standWindRecordFrom(culls) {
+  var byWind = {}, known = 0;
+  (culls || []).forEach(function(e) {
+    var wx = e.weather_data;
+    if (!wx || typeof wx !== 'object' || wx.wind_dir == null) return;
+    var lbl = flWindDirLabel8(wx.wind_dir);
+    if (!lbl) return;
+    known++;
+    byWind[lbl] = (byWind[lbl] || 0) + 1;
+  });
+  var top = null;
+  Object.keys(byWind).forEach(function(k) {
+    if (!top || byWind[k] > top.n) top = { label: k, n: byWind[k] };
+  });
+  return { known: known, byWind: byWind, top: top };
+}
+
+/** The evidence line. '' below the floors (known ≥ 3, top ≥ 2). SG6: the
+ *  noun tells the truth about the pool — culls only, sightings only, or the
+ *  merged "encounters". */
+function standWindLineHtml(rec, todayDeg) {
+  if (!rec || rec.known < 3 || !rec.top || rec.top.n < 2) return '';
+  var noun = 'culls';
+  if (rec.sightsKnown > 0) noun = rec.cullsKnown > 0 ? 'encounters' : 'sightings';
+  var todayLbl = todayDeg != null ? flWindDirLabel8(todayDeg) : '';
+  var todayChip = '';
+  if (todayLbl) {
+    var match = todayLbl === rec.top.label;
+    todayChip = '<span class="stnd-hist-today' + (match ? ' match' : '') + '">today: '
+      + todayLbl + (match ? ' ✓' : '') + '</span>';
+  }
+  return '<div class="stnd-hist-wind"><span class="fl-ic fl-wind"></span>'
+    + '<span><b>' + rec.top.n + ' of ' + rec.known + '</b> ' + noun + ' here came on a <b>'
+    + rec.top.label + '</b> wind</span>' + todayChip + '</div>';
+}
+
+// Per-session guards: one evidence pass per stand at a time; one archive
+// attempt per entry (a failed fetch must not retry on every day-tap).
+var flStandWindBusy = {};
+var flWindBackfillTried = {};
+
+/**
+ * Fire-and-forget after renderStandDetail: make the matched culls' wind
+ * knowledge as complete as the network allows, then refresh the evidence
+ * line in place. Three quiet steps — hydrate weather_data for list-loaded
+ * entries (the season list omits the JSONB column), re-attach recent rows
+ * the save-time fetch missed, archive-backfill older rows (which also gives
+ * those culls a weather strip in their entry detail — the column is shared).
+ * Bounded: ≤12 archive calls per open. Never toasts, never throws.
+ */
+async function flEnsureStandWindEvidence(s, todayDeg) {
+  if (!sb || !currentUser || !navigator.onLine) return;
+  if (flStandWindBusy[s.id]) return;
+  flStandWindBusy[s.id] = true;
+  try {
+    var culls = flStandCullsNear(s);
+    var matchedSights = flStandSightingsNear(s);
+    if (!culls.length && !matchedSights.length) return;
+
+    // 1) Hydrate: list loads omit weather_data; undefined = never fetched.
+    var toHydrate = culls.filter(function(e) { return e.weather_data === undefined; });
+    if (toHydrate.length) {
+      var hr = await sb.from('cull_entries')
+        .select('id, weather_data')
+        .in('id', toHydrate.map(function(e) { return e.id; }));
+      if (!hr.error && hr.data) {
+        var byId = {};
+        hr.data.forEach(function(row) { byId[row.id] = row.weather_data || null; });
+        toHydrate.forEach(function(e) {
+          e.weather_data = (e.id in byId) ? byId[e.id] : null;
+        });
+      }
+    }
+
+    // 2) Fill the gaps, once per entry per session.
+    var nowMs = Date.now();
+    var backfilled = 0;
+    for (var i = 0; i < culls.length; i++) {
+      var e = culls[i];
+      if (e.weather_data != null || !e.date || flWindBackfillTried[e.id]) continue;
+      flWindBackfillTried[e.id] = true;
+      var ageDays = (nowMs - new Date(e.date + 'T12:00:00').getTime()) / 86400000;
+      if (ageDays <= 7) {
+        // Recent row the save-time attach missed (offline save, fetch hiccup).
+        await attachWeatherToEntry(e.id, e.date, e.time, e.lat, e.lng);
+      } else {
+        if (backfilled >= 12) continue; // bound archive traffic per open
+        var wx = await fetchCullWeatherArchive(e.date, e.time, e.lat, e.lng);
+        if (!wx) continue;
+        backfilled++;
+        var upd = await sb.from('cull_entries')
+          .update({ weather_data: wx })
+          .eq('id', e.id)
+          .eq('user_id', currentUser.id);
+        if (!upd.error) e.weather_data = wx;
+      }
+    }
+
+    // 2b) SG6: bring the matched SIGHTINGS' weather up to date too — the
+    // shared hydrate+backfill, with this stand's rows first in the queue.
+    await flEnsureSightingWeather(matchedSights.map(function(sg) { return sg.id; }));
+
+    // 3) Refresh the line in place if this stand is still on screen —
+    // from the whole encounter record.
+    if (flStandsState.detailId === s.id) {
+      var slot = document.getElementById('stnd-hist-wind-slot');
+      if (slot) slot.innerHTML = standWindLineHtml(flStandEncounterWindRecord(s), todayDeg);
+    }
+  } catch (err) {
+    flDebugLog('warn', 'Stand wind evidence pass failed', err);
+  } finally {
+    flStandWindBusy[s.id] = false;
+  }
+}
+
+function standHistoryCardHtml(s, todayDeg) {
+  var hist = standHistoryFor(s);
+  if (!hist.culls && !hist.outings) return '';
+  // Headline insight from the dawn/dusk split of what you've taken here.
+  var headline = '';
+  if (hist.culls >= 3 && (hist.dawn || hist.dusk)) {
+    if (hist.dusk > hist.dawn * 1.5) headline = 'A dusk stand — most deer here have come in the evening.';
+    else if (hist.dawn > hist.dusk * 1.5) headline = 'A dawn stand — most deer here have come at first light.';
+    else headline = 'Productive at both dawn and dusk.';
+  } else if (hist.culls > 0) {
+    headline = 'Building a record here.';
+  }
+  var sub = '<strong>' + hist.culls + '</strong> cull' + (hist.culls === 1 ? '' : 's')
+    + (hist.outings ? ' · ' + hist.outings + ' blank ' + (hist.outings === 1 ? 'day' : 'days') : '')
+    + (hist.last ? ' · last ' + esc(fmtDateYear(hist.last)) : '');
+  // Dawn/dusk mini-bar (only when windows are classified).
+  var barHtml = '';
+  var totalWin = hist.dawn + hist.dusk;
+  if (totalWin > 0) {
+    var dawnPct = Math.round(hist.dawn / totalWin * 100);
+    barHtml = '<div class="stnd-hist-bar"><span class="dawn" style="width:' + dawnPct + '%;"></span><span class="dusk" style="width:' + (100 - dawnPct) + '%;"></span></div>'
+      + '<div class="stnd-hist-baxis"><span>Dawn ' + hist.dawn + '</span><span>Dusk ' + hist.dusk + '</span></div>';
+  }
+  // Species chips, most-taken first.
+  var chips = '';
+  var spKeys = Object.keys(hist.species);
+  if (spKeys.length) {
+    spKeys.sort(function(a, b) { return hist.species[b] - hist.species[a]; });
+    chips = '<div class="stnd-hist-chips">' + spKeys.map(function(k) { return '<span class="stnd-hist-chip">' + esc(k) + ' ×' + hist.species[k] + '</span>'; }).join('') + '</div>';
+  }
+  // Wind evidence (round 13; SG6 = the whole encounter record): rendered from
+  // whatever weather_data is already in memory; flEnsureStandWindEvidence
+  // hydrates + backfills async and patches this slot in place.
+  var windLine = standWindLineHtml(flStandEncounterWindRecord(s), todayDeg);
+  return '<div class="stnd-detail-card">'
+    + '<div style="font-size:12px;font-weight:700;color:#fff;margin-bottom:4px;">Your record here <span style="font-weight:400;color:rgba(255,255,255,0.6);">(' + (flStandHistSource().allSeasons ? 'all seasons' : 'this season') + ' · within ' + STAND_HISTORY_RADIUS_M + ' m)</span></div>'
+    + (headline ? '<div style="font-size:12.5px;font-weight:600;color:#f0e4c0;margin-bottom:7px;">' + headline + '</div>' : '')
+    + '<div id="stnd-hist-wind-slot">' + windLine + '</div>'
+    + '<div style="font-size:11.5px;color:rgba(255,255,255,0.72);' + ((barHtml || chips) ? 'margin-bottom:9px;' : '') + '">' + sub + '</div>'
+    + barHtml + chips
+    + '</div>';
+}
+
+/**
+ * Live-deer sightings near this stand (SIGHTINGS-PLAN §2.4 / S5b) — matched by
+ * stand_id when set, else within STAND_HISTORY_RADIUS_M. Returns
+ * { logs, animals, species: {name: animalsSeen}, last }.
+ */
+function standSightingsFor(s) {
+  var out = { logs: 0, animals: 0, species: {}, last: null };
+  // SG6: aggregate over the ONE matcher (flStandSightingsNear) so the Seen
+  // card and the wind evidence can never disagree about what counts as "here".
+  flStandSightingsNear(s).forEach(function(sg) {
+    out.logs++;
+    var n = sightingHeadcount(sg);
+    out.animals += n;
+    if (sg.species) out.species[sg.species] = (out.species[sg.species] || 0) + n;
+    var d = sightingDatePart(sg);
+    if (d && (!out.last || d > out.last)) out.last = d;
+  });
+  return out;
+}
+
+/** "Seen here" card — live deer seen near the stand, alongside "your record
+ *  here". SG6: when the record card is absent (a watched-but-never-shot
+ *  stand), THIS card carries the encounter wind-evidence slot instead — one
+ *  slot on screen, never two (the same-number-twice law). */
+function standSightingsCardHtml(s, withWindSlot, todayDeg) {
+  var h = standSightingsFor(s);
+  if (!h.logs) return '';
+  var spKeys = Object.keys(h.species).sort(function(a, b) { return h.species[b] - h.species[a]; });
+  var chips = spKeys.length
+    ? '<div class="stnd-hist-chips">' + spKeys.map(function(k) { return '<span class="stnd-hist-chip">' + esc(k) + ' ×' + h.species[k] + '</span>'; }).join('') + '</div>'
+    : '';
+  var headline = h.animals + ' deer seen here across ' + h.logs + ' sighting' + (h.logs === 1 ? '' : 's') + '.';
+  var windSlot = withWindSlot
+    ? '<div id="stnd-hist-wind-slot">' + standWindLineHtml(flStandEncounterWindRecord(s), todayDeg) + '</div>'
+    : '';
+  return '<div class="stnd-detail-card stnd-seen-card">'
+    + '<div style="font-size:12px;font-weight:700;color:#fff;margin-bottom:4px;">' + svgEyeHtml(12, '#d8b054') + ' Seen here <span style="font-weight:400;color:rgba(255,255,255,0.6);">(live deer · within ' + STAND_HISTORY_RADIUS_M + ' m)</span></div>'
+    + '<div style="font-size:12.5px;font-weight:600;color:#f0e4c0;margin-bottom:7px;">' + esc(headline) + '</div>'
+    + windSlot
+    + (h.last ? '<div style="font-size:11.5px;color:rgba(255,255,255,0.72);' + (chips ? 'margin-bottom:9px;' : '') + '">Last seen ' + esc(fmtDateYear(h.last)) + '</div>' : '')
+    + chips
+    + '</div>';
+}
+
+/** Sun times and legal light (GB & NI: 1 h either side) at this stand.
+ *  Round 19 (owner screenshot): the line follows the SELECTED day now —
+ *  dateStr 'YYYY-MM-DD' + its display label ("Sunday"); omitted = today,
+ *  so the Sunday verdict no longer sits on Friday's sun times. */
+function standLegalLineHtml(s, dateStr, dayLabel) {
+  var d = dateStr ? new Date(dateStr + 'T12:00:00') : new Date();
+  var sr = flCalcSunTime(d, s.lat, s.lng, true);
+  var ss = flCalcSunTime(d, s.lat, s.lng, false);
+  if (!sr || !ss) return '';
+  var srM = flToMinutes(sr), ssM = flToMinutes(ss);
+  return '<div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:6px;">' + esc(dayLabel || 'Today') + ' here: sunrise ' + flFmtMins(srM)
+    + ' · sunset ' + flFmtMins(ssM)
+    + ' · legal light ' + flFmtMins(srM - 60) + '–' + flFmtMins(ssM + 60) + '</div>';
+}
+
+/** Which window the Wind check arrow should show for a day (round 19): the
+ *  PENALISED window when there is one — the arrow must depict the wind the
+ *  red sentence is warning about, not the other window's clear breeze. Both
+ *  or neither penalised → the day's best window. */
+function standWindCheckWindow(day) {
+  if (!day) return null;
+  var dawnPen = day.windPenalty && day.windPenalty.dawn < 0;
+  var duskPen = day.windPenalty && day.windPenalty.dusk < 0;
+  if (dawnPen !== duskPen) return dawnPen ? 'dawn' : 'dusk';
+  return day.bestWindow === 'Dawn' ? 'dawn' : 'dusk';
+}
+
+// ── Best windows strip (S5) ──────────────────────────────────────
+
+// buildBestWindowsStrip RETIRED (round 23, owner: "surely this could be
+// improved"): the S5-era "Other stands · best window" mini-cards predated the
+// card redesign and by round 21 duplicated the peak chips on every card AND
+// compact row (which also carry the ⚠ the strip lacked) in a stale light
+// style. The hero answers "where next?", the chips answer "when does each
+// stand peak?" — the strip answered neither better.
+
+// ── "Tonight" hero: the single best UPCOMING window across all stands ──
+
+/** The best upcoming dawn/dusk window from now (preferring the next 48 h). null if none. */
+function standTonightPick(stands) {
+  var f = flStandsState.forecasts;
+  if (!f) return null;
+  // UK wall-clock instants (round 17 — the last device-local parse in the
+  // stands journey): the window times are Europe/London strings, so the
+  // is-it-future check must pin them there or drift an hour abroad.
+  var nowMs = Date.now();
+  var horizonMs = nowMs + 48 * 3600 * 1000;
+  var cands = [];
+  stands.forEach(function(s) {
+    var fc = f.byStandId[s.id];
+    if (!fc) return;
+    fc.days.forEach(function(d, di) {
+      [['Dawn', d.dawnScore, d.dawnTime, d.windPenalty && d.windPenalty.dawn < 0],
+       ['Dusk', d.duskScore, d.duskTime, d.windPenalty && d.windPenalty.dusk < 0]].forEach(function(w) {
+        if (w[2] == null) return;
+        var dtMs = diaryLondonWallMs(d.date, w[2]);
+        if (!dtMs || isNaN(dtMs) || dtMs < nowMs) return;
+        cands.push({ s: s, win: w[0], score: w[1], time: w[2], di: di, dt: new Date(dtMs), penalised: !!w[3], moon: d.moon });
+      });
+    });
+  });
+  if (!cands.length) return null;
+  var near = cands.filter(function(c) { return c.dt.getTime() <= horizonMs; });
+  var pool = near.length ? near : cands;
+  pool.sort(function(a, b) { return b.score - a.score || a.dt - b.dt; });
+  return pool[0];
+}
+
+function buildTonightHero(b) {
+  if (!b) return '';
+  var act = b.score >= 65 ? 'High activity' : b.score >= 45 ? 'Moderate' : b.score >= 20 ? 'Low activity' : 'Minimal';
+  var when = b.di === 0 ? 'This ' + b.win.toLowerCase()
+    : b.di === 1 ? 'Tomorrow ' + b.win.toLowerCase()
+    : b.dt.toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'Europe/London' }) + ' ' + b.win.toLowerCase();
+  // Eyebrow follows the window (round 17): a 5 am pick is "this dawn", not
+  // "tonight" — the old hardcoded label contradicted the line beneath it.
+  var eyebrow = b.di === 0 ? (b.win === 'Dawn' ? 'Your next sit · this dawn' : 'Your next sit · tonight') : 'Your next sit';
+  var hasBad = !!(b.s.bad_winds && b.s.bad_winds.length);
+  var windPill = hasBad ? (b.penalised ? '<span class="stnd-th-pill bad">⚠ bad wind</span>' : '<span class="stnd-th-pill ok">✓ wind clear</span>') : '';
+  var moonPill = b.moon ? '<span class="stnd-th-pill">' + b.moon.icon + ' moon ' + b.moon.illumination + '%</span>' : '';
+  return '<button type="button" class="stnd-tonight" data-fl-action="open-stand-detail" data-stand-id="' + b.s.id + '">'
+    + '<div class="stnd-th-eyebrow">' + eyebrow + '</div>'
+    + '<div class="stnd-th-main">'
+    + '<div class="stnd-th-gauge">' + standScoreGaugeSvg(b.score, 62) + '</div>'
+    + '<div class="stnd-th-body">'
+    + '<div class="stnd-th-stand">' + esc(b.s.name) + '</div>'
+    + '<div class="stnd-th-when">' + esc(when) + ' · from ' + b.time + ' · ' + act + '</div>'
+    + '<div class="stnd-th-pills">' + windPill + moonPill + '</div>'
+    + '</div>'
+    + '<div class="stnd-th-cta">›</div>'
+    + '</div></button>';
+}
+
+// ── "Best seat this week" wind planner (ideal-wind grid) ─────────
+// Surfaces the wind verdict scoreStandDay already computed (windPenalty) as a
+// stands × 7-day grid — which seat has the right wind, which day. Each cell
+// uses that day's bestWindow (dawn/dusk); flStandWindVerdict maps the
+// −12 / −6 / 0 penalty to wrong / marginal / good. Pure re-presentation of the
+// cached forecast — no refetch, no DB.
+
+function swpWeekday(dateStr) {
+  var dt = new Date(dateStr + 'T12:00:00');
+  return isNaN(dt.getTime()) ? '' : dt.toLocaleDateString('en-GB', { weekday: 'short' });
+}
+
+/**
+ * One planner cell's verdict. `win` (round 22 lens) forces the window:
+ * 'dawn' | 'dusk' → that window's score + wind penalty; omitted → the day's
+ * best window (original behaviour). The last one-window-per-day collapse in
+ * the app — the map shed its own in round 16.
+ */
+function swpCellVerdict(d, win) {
+  if (!d) return { v: 'na', score: -1, win: '' };
+  var winKey = (win === 'dawn' || win === 'dusk') ? win : (d.bestWindow === 'Dawn' ? 'dawn' : 'dusk');
+  var pen = d.windPenalty ? d.windPenalty[winKey] : 0;
+  var score = winKey === 'dawn' ? d.dawnScore : d.duskScore;
+  if (score == null) score = d.bestScore;
+  return { v: flStandWindVerdict(pen), score: score, win: winKey === 'dawn' ? 'D' : 'E' };
+}
+
+function renderStandsPlanner(stands, f) {
+  var rows = [], nDays = 0;
+  (stands || []).forEach(function(s) {
+    var fc = f && f.byStandId[s.id];
+    if (fc && fc.days && fc.days.length) { rows.push({ s: s, days: fc.days }); nDays = Math.max(nDays, fc.days.length); }
+  });
+  if (!rows.length) return '<div class="stnd-plan"><div class="stnd-plan-hdr">Best seat this week</div><div class="stnd-plan-empty">Connect once to fetch the 7-day wind outlook.</div></div>';
+  nDays = Math.min(7, nDays);
+  var rankOf = { good: 0, marginal: 1, wrong: 2, na: 3 };
+  rows.sort(function(a, b) {
+    var ca = swpCellVerdict(a.days[0]), cb = swpCellVerdict(b.days[0]);
+    return (rankOf[ca.v] - rankOf[cb.v]) || (cb.score - ca.score);
+  });
+  // Day winner per column — the answer the planner exists for. A 'wrong'
+  // cell can never win: the grid must not recommend a seat the deer can
+  // wind, even when it has the week's highest raw score. Days where every
+  // seat is wrong-wind get no ring (honest: no good option that day).
+  // Window lens (round 22): Best (default) | Dawn | Dusk. Winners, cells and
+  // the share text all follow the lens — one selector, all layers.
+  var lens = flStandsState.planWin === 'dawn' ? 'dawn'
+           : flStandsState.planWin === 'dusk' ? 'dusk' : null;
+  var winner = [];
+  for (var wi = 0; wi < nDays; wi++) {
+    var wIdx = -1, wBest = null;
+    rows.forEach(function(r, ri) {
+      var c = swpCellVerdict(r.days[wi], lens);
+      if (c.v === 'na' || c.v === 'wrong') return;
+      if (!wBest || rankOf[c.v] < rankOf[wBest.v] || (rankOf[c.v] === rankOf[wBest.v] && c.score > wBest.score)) {
+        wIdx = ri; wBest = c;
+      }
+    });
+    winner.push(wIdx);
+  }
+  // Shareable week plan (round 5) — assembled here where the winners are
+  // known, stashed on state for shareWeekPlan() (share-week-plan action).
+  // A2: two stands can share a name across grounds ("High Seat" on two
+  // permissions). The planner row and the shared plan were name-only, so the
+  // winning seat was ambiguous exactly when it mattered most. Qualify with the
+  // ground - but only where the name alone is genuinely ambiguous, or every
+  // row grows noise it does not need.
+  var swpNameCount = {};
+  rows.forEach(function(r){ var n = (r.s && r.s.name) || ''; swpNameCount[n] = (swpNameCount[n] || 0) + 1; });
+  function swpQual(st) {
+    return (st && st.ground && swpNameCount[st.name || ''] > 1) ? st.ground : '';
+  }
+  var planLines = [];
+  for (var pi = 0; pi < nDays; pi++) {
+    var pd0 = rows[0].days[pi];
+    // ST-11: a line read "Tue 28" and the week it belonged to lived only in
+    // the reader's head. Pasted into WhatsApp on a plan that runs Jul into
+    // Aug, "Sa 1" is a different month from "Tue 28" and nothing said so.
+    // The house formatter already gives day-and-month; the header below
+    // carries the year once, per the YR1 rule.
+    var pLbl = pi === 0 ? 'Today' : fmtDate(pd0.date);
+    if (winner[pi] < 0) { planLines.push(pLbl + ': — no clear-wind seat'); continue; }
+    var wr = rows[winner[pi]];
+    var wc = swpCellVerdict(wr.days[pi], lens);
+    var wq = swpQual(wr.s);
+    planLines.push(pLbl + ': ' + wr.s.name + (wq ? ' (' + wq + ')' : '') + ' · ' + (wc.win === 'D' ? 'dawn' : 'dusk') + ' · ' + wc.score
+      + (wc.v === 'marginal' ? ' (wind marginal)' : ''));
+  }
+  var swpFrom = rows[0].days[0] && rows[0].days[0].date;
+  var swpTo = rows[0].days[nDays - 1] && rows[0].days[nDays - 1].date;
+  flStandsState.weekPlanText = 'First Light — best seat this week' + (lens ? ' (' + lens + ' only)' : '')
+    + (swpFrom && swpTo ? '\n' + fmtDateYear(swpFrom) + ' to ' + fmtDateYear(swpTo) : '')
+    + '\n' + planLines.join('\n') + '\nfirstlightdeer.co.uk';
+  // 2026-07-16 round 4 (worldclass pass): transposed layout — full-width
+  // stand blocks (name line + 7 flex cells) instead of a name column + a
+  // horizontally-scrolling grid, so the WHOLE week is always on screen and
+  // names never truncate. One day-header row in the same TDY/initials
+  // rhythm as the list cards' strips; gold ring = that day's best seat.
+  var hdr = '<div class="swp2-dayhdr" aria-hidden="true">';
+  for (var di = 0; di < nDays; di++) {
+    var hd = rows[0].days[di];
+    var dow = hd ? standDayDow(hd.date) : null;
+    var dnum = hd ? parseInt(hd.date.slice(8, 10), 10) : '';
+    // Weather cues (round 5): a day can score well AND be lashing rain —
+    // mark notably wet (≥3 mm) or gusty (≥45 km/h) days under the date so
+    // two ringed days can be chosen between. Data is already in the fetched
+    // payload (wxDay), so this costs no API traffic. Markers only when
+    // notable — seven icons in a row would be noise.
+    var wx = '';
+    if (hd && hd.wxDay) {
+      if (hd.wxDay.precip != null && hd.wxDay.precip >= 3) {
+        wx += '<svg width="8" height="9" viewBox="0 0 8 9"><path d="M4 0.5 C5.5 2.8 7 4.4 7 6 A3 3 0 1 1 1 6 C1 4.4 2.5 2.8 4 0.5 Z" fill="#8ac4e8"/></svg>';
+      }
+      if (hd.wxDay.gustMax != null && hd.wxDay.gustMax >= 45) {
+        wx += '<svg width="10" height="8" viewBox="0 0 10 8"><path d="M0.5 2.2 H5.8 A1.5 1.5 0 1 0 4.3 0.7 M0.5 5.2 H7.8 A1.5 1.5 0 1 1 6.3 6.7" stroke="rgba(255,255,255,0.65)" stroke-width="1.1" fill="none" stroke-linecap="round"/></svg>';
+      }
+    }
+    hdr += '<span class="swp2-hd' + (di === 0 ? ' today' : '') + '"><b>'
+      + (di === 0 ? 'TDY' : (dow == null ? '·' : STND_DAY_INITIALS[dow])) + '</b><i>' + dnum + '</i>'
+      + (wx ? '<span class="swp2-wx">' + wx + '</span>' : '') + '</span>';
+  }
+  hdr += '</div>';
+  var body = '';
+  rows.forEach(function(r, ri) {
+    var _q = swpQual(r.s);
+    body += '<div class="swp2-name">' + esc(r.s.name) + (_q ? '<i>' + esc(_q) + '</i>' : '') + '</div><div class="swp2-cells">';
+    for (var di = 0; di < nDays; di++) {
+      var c = swpCellVerdict(r.days[di], lens);
+      if (c.v === 'na') { body += '<span class="swp2-cell swp2-na">–</span>'; continue; }
+      // One word app-wide for the evening window: "dusk" (list cards, hero,
+      // detail all say Dusk — the planner must not drift to eve/evening).
+      var winWord = c.win === 'D' ? 'dawn' : 'dusk';
+      var dLbl = di === 0 ? 'today' : di === 1 ? 'tomorrow' : swpWeekday(r.days[di].date);
+      var ttl = r.s.name + (_q ? ' (' + _q + ')' : '') + ' · ' + dLbl + ' ' + winWord + ' · wind ' + c.v + ' · activity ' + c.score
+        + (winner[di] === ri ? ' · best seat this day' : '');
+      body += '<button type="button" class="swp2-cell swp2-' + c.v + (winner[di] === ri ? ' pick' : '') + '" data-fl-action="open-stand-day" data-stand-id="' + r.s.id + '" data-day-idx="' + di + '" title="' + esc(ttl) + '">'
+        + '<span class="swp2-score">' + c.score + '</span><span class="swp2-win">' + winWord + '</span></button>';
+    }
+    body += '</div>';
+  });
+  var legend = '<div class="swp-legend"><span class="swp-lg pick">best seat that day</span><span class="swp-lg good">wind clear</span><span class="swp-lg marginal">marginal</span><span class="swp-lg wrong">wrong wind</span></div>'
+    + '<div class="swp-lg-note">Number = deer-activity score · dawn / dusk = best window · tap a day to open it. No ring = no clear-wind seat that day · droplet / gust marks under a date = rain or strong wind due.</div>';
+  var lensTog = '<div class="stnd-plan-tog swp2-lens" role="group" aria-label="Planner window">'
+    + '<button type="button" class="spm-b' + (!lens ? ' on' : '') + '" data-fl-action="set-stands-plan-win" data-win="best">Best</button>'
+    + '<button type="button" class="spm-b' + (lens === 'dawn' ? ' on' : '') + '" data-fl-action="set-stands-plan-win" data-win="dawn">Dawn</button>'
+    + '<button type="button" class="spm-b' + (lens === 'dusk' ? ' on' : '') + '" data-fl-action="set-stands-plan-win" data-win="dusk">Dusk</button>'
+    + '</div>';
+  return '<div class="stnd-plan"><div class="stnd-plan-hdr-row"><div class="stnd-plan-hdr">Best seat this week' + (lens ? ' · ' + lens : '') + '</div>'
+    + '<button type="button" class="swp2-share" data-fl-action="share-week-plan">Share plan</button></div>'
+    + lensTog + hdr + body + legend + '</div>';
+}
+
+/**
+ * Share the planner's week summary (round 5): native share sheet where the
+ * PWA has one, clipboard fallback elsewhere. Text is assembled by
+ * renderStandsPlanner from the day-winner rings, so what you share is
+ * exactly what the grid shows.
+ */
+async function shareWeekPlan() {
+  var txt = flStandsState.weekPlanText;
+  if (!txt) { showToast('⚠️ Open Plan week first'); return; }
+  if (navigator.share) {
+    try { await navigator.share({ text: txt }); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; /* fall through to clipboard */ }
+  }
+  try {
+    await navigator.clipboard.writeText(txt);
+    showToast('📋 Week plan copied — paste it anywhere');
+  } catch (e) {
+    showToast('⚠️ Could not share on this device');
+  }
+}
+
+// ── Add entry from a stand (S5) ──────────────────────────────────
+
+async function standAddEntryHere() {
+  var s = (flStandsState.list || []).find(function(x) { return x.id === flStandsState.detailId; });
+  if (!s) return;
+  await openNewEntry();
+  // Prefill AFTER the reset: pin, location name, ground (the openEditEntry
+  // pin dance — STANDS-CODE-MAP §3).
+  formPinLat = s.lat; formPinLng = s.lng;
+  lastGpsLat = s.lat; lastGpsLng = s.lng;
+  flFormStandId = s.id; // a sighting saved from here carries its stand (round 17)
+  var loc = document.getElementById('f-location');
+  if (loc) loc.value = s.name;
+  showPinnedStrip(s.name, s.lat, s.lng);
+  if (s.ground) {
+    var gSel = document.getElementById('f-ground');
+    if (gSel) gSel.value = s.ground; // no-op if the ground no longer exists
+  }
+  go('v-form');
+}
+
+// ── Stand add/edit sheet ─────────────────────────────────────────
+
+/** G11: the stands map's current centre as a seed for a NEW stand — only when
+ *  it's actually zoomed onto ground (not the UK overview). null otherwise. */
+function standsMapSeed(force) {
+  try {
+    // G21: `force` (the "+ Add stand" path) takes the map centre at ANY zoom —
+    // a map-launched new seat should always OPEN with a location you can then
+    // nudge, never blank. The ungated centre is a visible, adjustable starting
+    // pin (you see it in the preview + drag it), so unlike the marker's hidden
+    // ground tag there's no silent-mis-file risk. Without force (the marker/
+    // feature editor's view seed, standsMapSeedLL) it stays gated at zoom ≥ 10
+    // so a wide overview doesn't drop the editor on a meaningless centre.
+    if (standsMap && (force || standsMap.getZoom() >= 10)) {
+      var c = standsMap.getCenter();
+      // AK: a centre taken at a WIDE zoom is a placeholder, not a place. G21
+      // takes it regardless so the sheet is never blank, and that is right —
+      // but the difference matters downstream. A centre at zoom 14 is a spot
+      // the user deliberately went and looked at, and nothing may move it. A
+      // centre at zoom 6 is the middle of the county, and if they then name a
+      // ground the app can do far better than leaving the pin there. Same
+      // threshold standsMapSeedLL has always used to call a centre meaningless.
+      if (c) return { lat: c.lat, lng: c.lng, vague: standsMap.getZoom() < 10 };
+    }
+  } catch (e) { /* map not ready */ }
+  return null;
+}
+
+/** G16c: the stands-map view as a [lat,lng] seed for the boundary editor, or
+ *  null when the map isn't usefully zoomed (falls back to the ground's own
+ *  furniture then GPS). Lets "Add a marker on <ground>" keep you where you are. */
+function standsMapSeedLL() {
+  var s = standsMapSeed();
+  return s ? [s.lat, s.lng] : null;
+}
+
+function openStandSheet(standId, seed) {
+  if (!currentUser) return;
+  var s = standId ? (flStandsState.list || []).find(function(x) { return x.id === standId; }) : null;
+  // G11 (owner: "add a stand where the map is zoomed in, not near Bedworth"):
+  // a NEW stand pre-fills its location from the stands map's current centre,
+  // so you name it and save — no second trip to the pin map. Finding G: 6 dp,
+  // not the old 5, so a seed and a GPS fix on the same spot agree to the
+  // metre instead of ~1 m apart; the pin map still lets you nudge.
+  var seedLat = s ? s.lat : (seed && seed.lat != null ? round6(seed.lat) : null);
+  var seedLng = s ? s.lng : (seed && seed.lng != null ? round6(seed.lng) : null);
+  flStandsState.sheet = {
+    editingId: s ? s.id : null,
+    lat: seedLat,
+    lng: seedLng,
+    locName: (seedLat != null && seedLng != null) ? flPlaceRef(seedLat, seedLng, 6) : '',
+    badWinds: (s && s.bad_winds) ? s.bad_winds.slice() : [],
+    facing: (s && s.facing != null) ? s.facing : null,
+    photos: (s && s.photos) ? s.photos.slice() : [],
+    newPhotos: [],
+    removedPaths: [],
+    // AK: two flags recording WHO put this pin here, because the whole of the
+    // fix below turns on that and nothing else.
+    //
+    // locAuto — the app placed it and the user has not yet confirmed it, so the
+    // app may still move it. True for a G21 map-centre seed taken at a zoom too
+    // wide to mean anything (see standsMapSeed), false for a centre the user
+    // deliberately zoomed to, false for a saved stand, and cleared the instant
+    // a pin or a GPS fix arrives.
+    //
+    // locSeededFrom — the ground whose centroid the pin came from. It licenses
+    // the "approximate" line under the coordinates and keeps the mismatch
+    // advisory from arguing with a position the app chose a moment earlier.
+    locAuto: !!(!s && seedLat != null && seed && seed.vague),
+    locSeededFrom: null
+  };
+  var t = document.getElementById('stand-sheet-title');
+  if (t) t.textContent = s ? 'Edit stand' : 'Add stand';
+  var nameEl = document.getElementById('stand-name');
+  if (nameEl) nameEl.value = s ? s.name : '';
+  var notesEl = document.getElementById('stand-notes');
+  if (notesEl) notesEl.value = (s && s.notes) || '';
+  populateStandGroundSelect(s ? s.ground : '');
+  renderStandSheetLocLine();
+  // AK: an EDIT can open straight onto a mismatch that predates the advisory —
+  // a stand saved before its ground was ever drawn, or one whose boundary has
+  // since been retraced around it. Judge on open, not only on change.
+  refreshStandGroundPinWarning();
+  renderStandSheetWinds();
+  renderStandSheetFacing();
+  renderStandSheetPhotos();
+  var ov = document.getElementById('stand-sheet-ov');
+  if (ov) { ov.classList.add('open'); document.body.style.overflow = 'hidden'; }
+  renderStandSheetLocMap(); // G12: paint the location preview once the sheet is up
+}
+
+function closeStandSheet() {
+  var ov = document.getElementById('stand-sheet-ov');
+  if (ov) { ov.classList.remove('open'); document.body.style.overflow = ''; }
+}
+
+function populateStandGroundSelect(selected) {
+  var sel = document.getElementById('stand-ground');
+  if (!sel) return;
+  var h = '<option value="">No ground</option>';
+  (savedGrounds || []).forEach(function(g) {
+    h += '<option value="' + esc(g) + '"' + (g === selected ? ' selected' : '') + '>' + esc(g) + '</option>';
+  });
+  // A renamed/removed ground on an existing stand stays selectable (stale
+  // labels just group alone — the entries convention).
+  if (selected && (savedGrounds || []).indexOf(selected) === -1) {
+    h += '<option value="' + esc(selected) + '" selected>' + esc(selected) + '</option>';
+  }
+  sel.innerHTML = h;
+}
+
+// G12: the location preview map (a non-interactive window into the map). Its
+// own instance — created lazily, reused across sheet opens, all interaction
+// disabled so it never fights the sheet's scroll; the transparent .slm-tap
+// button over it opens the full pin editor.
+var standLocMap = null, standLocMapLayer = null;
+var flStandMiniMap = null, flEntryMiniMap = null; // detail-view satellite snippets
+var flMapModal = null; // fullscreen "open the map in place" overlay (tap a snippet)
+
+function renderStandSheetLocMap() {
+  var wrap = document.getElementById('stand-loc-map-wrap');
+  if (!wrap) return;
+  var sh = flStandsState.sheet;
+  var has = sh && sh.lat != null && sh.lng != null;
+  wrap.style.display = has ? '' : 'none';
+  if (!has || typeof L === 'undefined' || !document.getElementById('stand-loc-map')) return;
+  if (!standLocMap) {
+    standLocMap = L.map('stand-loc-map', {
+      zoomControl: false, attributionControl: false, dragging: false,
+      scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false,
+      keyboard: false, touchZoom: false, tap: false
+    }).setView([sh.lat, sh.lng], 15);
+    var tiles = mapProviderTileUrls();
+    standLocMapLayer = L.tileLayer(tiles.std, tileOptsForUrl(tiles.std)).addTo(standLocMap);
+    bumpMapLoadEstimate('stand-loc-map');
+  } else {
+    standLocMap.setView([sh.lat, sh.lng], 15);
+  }
+  renderGroundBoundaries(standLocMap); // show the seat sitting inside its ground
+  // The sheet is only just visible on first open — Leaflet must re-measure.
+  setTimeout(function() { try { if (standLocMap) standLocMap.invalidateSize(); } catch (e) {} }, 60);
+}
+
+// ── Detail map snippets (stand + cull entry) ────────────────────────────────
+// A small NON-interactive satellite map — same idea as the stand-sheet preview —
+// so a seat / a kill finally shows WHERE it sits, not just a line of text. The
+// whole card is the tap target (the Leaflet layer is pointer-events:none so the
+// click reaches the card), opening the full map focused on that point.
+function flDestPoint(lat, lng, bearingDeg, distM) {
+  var R = 6378137, br = bearingDeg * Math.PI / 180;
+  var la = lat * Math.PI / 180, lo = lng * Math.PI / 180, dr = distM / R;
+  var la2 = Math.asin(Math.sin(la) * Math.cos(dr) + Math.cos(la) * Math.sin(dr) * Math.cos(br));
+  var lo2 = lo + Math.atan2(Math.sin(br) * Math.sin(dr) * Math.cos(la), Math.cos(dr) - Math.sin(la) * Math.sin(la2));
+  return [la2 * 180 / Math.PI, lo2 * 180 / Math.PI];
+}
+function flFacingConePolygon(lat, lng, bearingDeg, rangeM) {
+  var pts = [[lat, lng]], half = 34;
+  for (var a = -half; a <= half + 0.01; a += 8.5) pts.push(flDestPoint(lat, lng, bearingDeg + a, rangeM));
+  return pts;
+}
+function flSeatMarkerIcon() {
+  // Distinct from cull pins: bigger, gold, dark centre — the facing cone and the
+  // legend disambiguate it further, so it never reads as a Red-deer (gold) pin.
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="42" viewBox="0 0 32 42">'
+    + '<filter id="flseat"><feDropShadow dx="0" dy="1" stdDeviation="1.6" flood-opacity="0.35"/></filter>'
+    + '<path d="M16 2C9.4 2 4 7.4 4 14c0 9.5 12 24 12 24s12-14.5 12-24C28 7.4 22.6 2 16 2z" fill="#d8b054" stroke="#fff" stroke-width="2.2" filter="url(#flseat)"/>'
+    + '<circle cx="16" cy="14.5" r="6.2" fill="#12280a"/><circle cx="16" cy="14.5" r="2.5" fill="#f0cc74"/>'
+    + '</svg>';
+  return L.divIcon({ html: svg, iconSize: [32, 42], iconAnchor: [16, 42], className: '' });
+}
+function flAddSatLayerWithFallback(map) {
+  var tiles = mapProviderTileUrls();
+  var sat = L.tileLayer(tiles.sat, tileOptsForUrl(tiles.sat)).addTo(map);
+  // Resilience — the same safety net the main maps have (maybeFallbackFromMapbox),
+  // scoped to this map. The satellite source is usually Mapbox, whose public token
+  // can be URL-restricted (401 off an un-allowlisted origin), over quota (402/429),
+  // or simply offline — any of which leaves it grey with no Satellite toggle to
+  // escape. If its tiles error, swap THIS map to the free, unrestricted ESRI World
+  // Imagery, and heal the main maps too. Legacy/ESRI is left alone (an error there
+  // is just offline, with nowhere better to fall back to).
+  if (tiles.mode === 'hybrid' || tiles.mode === 'mapbox') {
+    var satErrs = 0, satOk = false, satSwapped = false;
+    var swapToEsri = function() {
+      if (satSwapped || satOk) return;
+      satSwapped = true;
+      try { map.removeLayer(sat); } catch (e) {}
+      try { L.tileLayer(TILE_SAT_ESRI, esriTileOpts()).addTo(map); } catch (e) {}
+      maybeFallbackFromMapbox('detail mini-map tile errors');
+    };
+    // A single successful tile means Mapbox works here — never swap. Otherwise a
+    // couple of errors (a small map only spans ~2–4 tiles) or a short timeout with
+    // nothing loaded means the source is blocked; drop to unrestricted ESRI.
+    sat.on('tileload', function() { satOk = true; });
+    sat.on('tileerror', function() { satErrs++; if (satErrs >= 2) swapToEsri(); });
+    setTimeout(function() { if (!satOk && satErrs >= 1) swapToEsri(); }, 2600);
+  }
+  return sat;
+}
+function flMiniMapCommon(el, lat, lng) {
+  var map = L.map(el, {
+    zoomControl: false, attributionControl: false, dragging: false,
+    scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false,
+    keyboard: false, touchZoom: false, tap: false
+  }).setView([lat, lng], 15);
+  flAddSatLayerWithFallback(map);
+  try { renderGroundBoundaries(map); } catch (e) {}
+  return map;
+}
+// Feature drawing is shared between the little preview and the fullscreen modal,
+// so both show exactly the same picture — just at different sizes / interactivity.
+function flDrawStandMapFeatures(map, s, doFit) {
+  var ring = L.circle([s.lat, s.lng], { radius: STAND_HISTORY_RADIUS_M, color: '#ffffff', weight: 1.3, opacity: 0.7, fill: false, dashArray: '4 6' }).addTo(map);
+  if (s.facing != null) {
+    L.polygon(flFacingConePolygon(s.lat, s.lng, s.facing, STAND_HISTORY_RADIUS_M * 0.82), {
+      color: '#d8b054', weight: 1, opacity: 0.65, fillColor: '#d8b054', fillOpacity: 0.16
+    }).addTo(map);
+  }
+  var near = flStandCullsNear(s), seen = {};
+  near.forEach(function(e) {
+    var clr = SP_COLORS[e.species] || '#5a7a30';
+    if (e.species) seen[e.species] = clr;
+    L.marker([e.lat, e.lng], { icon: makeMarkerIcon(clr, e.sex), opacity: 0.92 }).addTo(map);
+  });
+  L.marker([s.lat, s.lng], { icon: flSeatMarkerIcon(), zIndexOffset: 1000 }).addTo(map);
+  if (doFit) { try { map.fitBounds(ring.getBounds(), { padding: [8, 8] }); } catch (e) {} }
+  var lh = '<span class="mml"><span class="mml-seat"></span>This seat</span>';
+  if (s.facing != null) lh += '<span class="mml"><span class="mml-cone"></span>Looks ' + esc(flWindDirLabel8(s.facing)) + '</span>';
+  Object.keys(seen).forEach(function(sp) {
+    var n = near.filter(function(e){ return e.species === sp; }).length;
+    lh += '<span class="mml"><span class="mml-dot" style="background:' + seen[sp] + ';"></span>' + esc(sp) + ' · ' + n + '</span>';
+  });
+  if (!Object.keys(seen).length) lh += '<span class="mml mml-none">No culls logged within ' + STAND_HISTORY_RADIUS_M + ' m yet</span>';
+  return { ring: ring, legend: lh };
+}
+function flDrawEntryMapFeatures(map, e, doFit) {
+  var seen = {};
+  (allEntries || []).forEach(function(x) {
+    if (x.id === e.id || x.lat == null || x.lng == null || isBlankDayEntry(x)) return;
+    if (flDistMeters(e.lat, e.lng, x.lat, x.lng) > STAND_HISTORY_RADIUS_M) return;
+    var clr = SP_COLORS[x.species] || '#5a7a30';
+    if (x.species) seen[x.species] = clr;
+    L.marker([x.lat, x.lng], { icon: makeMarkerIcon(clr, x.sex), opacity: 0.5 }).addTo(map);
+  });
+  var kc = SP_COLORS[e.species] || '#5a7a30';
+  L.marker([e.lat, e.lng], { icon: makeMarkerIcon(kc, e.sex), zIndexOffset: 1000 }).addTo(map);
+  if (doFit) { try { map.fitBounds(L.latLng(e.lat, e.lng).toBounds(700), { padding: [8, 8] }); } catch (x) {} }
+  var lh = '<span class="mml"><span class="mml-dot" style="background:' + kc + ';box-shadow:0 0 0 2px rgba(0,0,0,0.14);"></span>This cull</span>';
+  Object.keys(seen).forEach(function(sp) {
+    if (sp === e.species) return;
+    lh += '<span class="mml"><span class="mml-dot" style="background:' + seen[sp] + ';opacity:.6;"></span>' + esc(sp) + '</span>';
+  });
+  return { legend: lh };
+}
+function flRenderStandMiniMap(s) {
+  if (typeof L === 'undefined' || !s || s.lat == null || s.lng == null) return;
+  var el = document.getElementById('stand-mini-map');
+  if (!el) return;
+  if (flStandMiniMap) { try { flStandMiniMap.remove(); } catch (e) {} flStandMiniMap = null; }
+  var map = flMiniMapCommon(el, s.lat, s.lng);
+  flStandMiniMap = map;
+  var res = flDrawStandMapFeatures(map, s, true);
+  var leg = document.getElementById('stand-mini-legend');
+  if (leg) leg.innerHTML = res.legend;
+  // renderStandDetail runs BEFORE go('v-stand-detail'), so the map may init in a
+  // display:none view (0×0) — re-measure and re-fit once it's on screen.
+  setTimeout(function() { try { if (flStandMiniMap) { flStandMiniMap.invalidateSize(); flStandMiniMap.fitBounds(res.ring.getBounds(), { padding: [8, 8] }); } } catch (e) {} }, 70);
+}
+function flRenderEntryMiniMap(e) {
+  if (typeof L === 'undefined' || !e || e.lat == null || e.lng == null) return;
+  var el = document.getElementById('entry-mini-map');
+  if (!el) return;
+  if (flEntryMiniMap) { try { flEntryMiniMap.remove(); } catch (x) {} flEntryMiniMap = null; }
+  var map = flMiniMapCommon(el, e.lat, e.lng);
+  flEntryMiniMap = map;
+  var res = flDrawEntryMapFeatures(map, e, true);
+  var leg = document.getElementById('entry-mini-legend');
+  if (leg) leg.innerHTML = res.legend;
+  setTimeout(function() { try { if (flEntryMiniMap) { flEntryMiniMap.invalidateSize(); flEntryMiniMap.fitBounds(L.latLng(e.lat, e.lng).toBounds(700), { padding: [8, 8] }); } } catch (x) {} }, 70);
+}
+
+// Tapping a detail snippet opens the map IN PLACE — a fullscreen, interactive
+// (pan/zoom) overlay — instead of throwing you to another tab. Close (✕ / Escape /
+// Android back) returns you exactly where you were. A "full board" link inside is
+// the opt-in path to the whole stands / cull map.
+function flOpenMapModal(kind, id) {
+  if (typeof L === 'undefined' || !id || flMapModal) return;
+  var rec, title, sub, fullAct, fullAttr, fullLabel;
+  if (kind === 'stand') {
+    rec = (flStandsState.list || []).find(function(x){ return x.id === id; });
+    if (!rec || rec.lat == null || rec.lng == null) return;
+    title = rec.name || 'Stand';
+    sub = (rec.ground ? rec.ground + ' · ' : '') + (rec.facing != null ? 'looks ' + flWindDirLabel8(rec.facing) : flPlaceRef(rec.lat, rec.lng, 6));
+    fullAct = 'stand-open-map'; fullAttr = 'data-stand-id'; fullLabel = 'Stands map ›';
+  } else {
+    rec = (allEntries || []).find(function(x){ return x.id === id; });
+    if (!rec || rec.lat == null || rec.lng == null) return;
+    title = rec.species || 'Cull';
+    sub = rec.location_name || flPlaceRef(rec.lat, rec.lng, 6);
+    fullAct = 'cull-open-map'; fullAttr = 'data-entry-id'; fullLabel = 'All culls ›';
+  }
+  var ov = document.createElement('div');
+  ov.className = 'fl-map-modal';
+  ov.id = 'fl-map-modal';
+  ov.innerHTML =
+    '<div class="fmm-bar">'
+      + '<button type="button" class="fmm-close" data-fl-action="close-map-modal" aria-label="Close map">✕</button>'
+      + '<div class="fmm-ttl"><div class="fmm-t">' + esc(title) + '</div><div class="fmm-s">' + esc(sub) + '</div></div>'
+      + '<button type="button" class="fmm-full" data-fl-action="' + fullAct + '" ' + fullAttr + '="' + esc(String(id)) + '">' + fullLabel + '</button>'
+    + '</div>'
+    + '<div class="fmm-map" id="fl-map-modal-map"></div>'
+    + '<div class="fmm-legend" id="fl-map-modal-legend"></div>';
+  document.body.appendChild(ov);
+  document.body.style.overflow = 'hidden';
+  var mapEl = document.getElementById('fl-map-modal-map');
+  var map = L.map(mapEl, { zoomControl: true, attributionControl: false }).setView([rec.lat, rec.lng], 15);
+  flMapModal = { map: map, el: ov };
+  flAddSatLayerWithFallback(map);
+  try { renderGroundBoundaries(map); } catch (e) {}
+  var res = (kind === 'stand') ? flDrawStandMapFeatures(map, rec, true) : flDrawEntryMapFeatures(map, rec, true);
+  var leg = document.getElementById('fl-map-modal-legend');
+  if (leg && res && res.legend) leg.innerHTML = res.legend;
+  try { history.pushState({ flMapModal: 1 }, ''); } catch (e) {}
+  setTimeout(function() { try { if (flMapModal) flMapModal.map.invalidateSize(); } catch (e) {} }, 90);
+}
+function flCloseMapModal(fromPop) {
+  if (!flMapModal) return;
+  var m = flMapModal; flMapModal = null;
+  try { m.map.remove(); } catch (e) {}
+  try { m.el.remove(); } catch (e) {}
+  document.body.style.overflow = '';
+  // Consume the history entry we pushed (mirrors flToggleStandsMapFull) so the
+  // next back gesture doesn't need a phantom press — unless we ARE the pop.
+  if (!fromPop) { try { if (history.state && history.state.flMapModal) history.back(); } catch (e) {} }
+}
+// Android back / browser back / Escape close the map modal instead of leaving.
+window.addEventListener('popstate', function() { if (flMapModal) flCloseMapModal(true); });
+document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape' && flMapModal) flCloseMapModal(); });
+
+function flOpenStandOnMap(id) {
+  if (!id) return;
+  flCloseMapModal(); // if we came from the in-place modal, close it first
+  flStandsState.focusId = id;
+  go('v-stands');
+  setTimeout(function() { try { if (typeof selectStand === 'function') selectStand(id); } catch (e) {} }, 360);
+}
+function flOpenCullOnMap(id) {
+  if (!id) return;
+  flCloseMapModal(); // if we came from the in-place modal, close it first
+  flCullFocusId = id;
+  go('v-stats');
+  setTimeout(function() {
+    try { if (cullMap) { cullMap.invalidateSize(); renderCullMapPins(); } } catch (e) {}
+    var wrap = document.getElementById('cullmap-wrap');
+    if (wrap) { try { wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {} }
+  }, 280);
+}
+
+function renderStandSheetLocLine() {
+  var el = document.getElementById('stand-loc-line');
+  if (!el) return;
+  var sh = flStandsState.sheet;
+  if (sh.lat != null && sh.lng != null) {
+    el.textContent = ''; var _pn = document.createElement('span'); _pn.className = 'fl-ic fl-pin'; el.appendChild(_pn); el.appendChild(document.createTextNode(' ' + (sh.locName || flPlaceRef(sh.lat, sh.lng, 6))));
+    el.classList.add('set');
+    // AK: this is the one place the user looks to find out where the seat is, so
+    // it is the one place a guess has to admit to being one. Without it the
+    // centre of a 25 ha wood is displayed in exactly the same six decimal places
+    // as a GPS fix taken standing at the ladder.
+    if (sh.locSeededFrom) {
+      var _ap = document.createElement('div');
+      _ap.className = 'stnd-loc-approx';
+      _ap.textContent = 'Approximate — the centre of ' + sh.locSeededFrom + '. Tap the map to place the seat.';
+      el.appendChild(_ap);
+    }
+  } else {
+    el.textContent = 'No location set — pin or GPS required';
+    el.classList.remove('set');
+  }
+}
+
+function renderStandSheetWinds() {
+  var grid = document.getElementById('stand-wind-grid');
+  if (!grid) return;
+  var on = flStandsState.sheet.badWinds;
+  grid.querySelectorAll('.stnd-wind-btn').forEach(function(b) {
+    b.classList.toggle('on', on.indexOf(b.getAttribute('data-dir')) !== -1);
+  });
+}
+
+function toggleStandWind(dir) {
+  if (!dir) return;
+  var arr = flStandsState.sheet.badWinds;
+  var i = arr.indexOf(dir);
+  if (i === -1) arr.push(dir); else arr.splice(i, 1);
+  renderStandSheetWinds();
+}
+
+// ── Facing — "looks towards" (round 30) ─────────────────────────
+// A pure memory aid the owner asked for: which way the seat faces. Stored as
+// compass degrees (N = 0 … NW = 315) so finer-grained capture stays possible
+// later, but picked and displayed as the same 8 points as the bad-winds grid.
+// Deliberately touches NOTHING else — no scoring, no logger, no planner.
+
+var FL_FACE_DEG = { N: 0, NE: 45, E: 90, SE: 135, S: 180, SW: 225, W: 270, NW: 315 };
+
+/**
+ * Single-select facing grid. Round 31: facing can now be ANY degree (set by
+ * pointing on the map), so the lit chip is the NEAREST 8-way sector, and an
+ * exact readout ("Looks 205° (SW)") sits beside the point-on-map button.
+ */
+function renderStandSheetFacing() {
+  var grid = document.getElementById('stand-face-grid');
+  if (!grid) return;
+  var deg = flStandsState.sheet.facing;
+  var lbl = deg != null ? flWindDirLabel8(deg) : null;
+  grid.querySelectorAll('.stnd-wind-btn').forEach(function(b) {
+    b.classList.toggle('on', lbl != null && b.getAttribute('data-dir') === lbl);
+  });
+  var out = document.getElementById('stand-face-val');
+  if (out) out.textContent = deg != null ? 'Looks ' + deg + '° (' + lbl + ')' : '';
+}
+
+/**
+ * Set the facing from a grid tap. Tapping the LIT chip clears — judged by
+ * sector, not exact degree, so a map-set 205° clears on the first tap of its
+ * glowing SW chip instead of silently rounding to 225 and needing a second.
+ */
+function setStandFacing(dir) {
+  var deg = FL_FACE_DEG[dir];
+  if (deg == null) return;
+  var cur = flStandsState.sheet.facing;
+  flStandsState.sheet.facing = (cur != null && flWindDirLabel8(cur) === dir) ? null : deg;
+  renderStandSheetFacing();
+}
+
+// ── Facing aim mode (round 31) ───────────────────────────────────
+// "Which way does this seat look?" is a question about the GROUND, not a
+// compass rose — so let the owner answer it on the map: the sheet steps
+// aside, one tap where the seat looks, and the exact bearing (stand → tap)
+// comes back into the form. The stand stays fixed; the tap is the target.
+
+var flStandAim = false;
+
+function flStandFaceAimStart() {
+  var sh = flStandsState.sheet;
+  if (!sh || sh.lat == null || sh.lng == null) { showToast('⚠️ Set the stand location first'); return; }
+  if (!standsMap || !(flStandsState.list || []).length) {
+    showToast('📍 Point on map needs the stands map — pick a direction below for now');
+    return;
+  }
+  var ov = document.getElementById('stand-sheet-ov');
+  if (ov) ov.classList.remove('open');
+  document.body.style.overflow = '';
+  flStandAim = true;
+  var bar = document.getElementById('stand-aim-bar');
+  if (bar) bar.style.display = 'flex';
+  var wrap = document.getElementById('stands-map-wrap');
+  if (wrap && wrap.scrollIntoView) wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  try { standsMap.setView([sh.lat, sh.lng], Math.max(standsMap.getZoom() || 0, 15)); } catch (_) {}
+}
+
+/** Finish aim mode: with a tap → store the bearing; null (✕) → unchanged. Sheet returns either way. */
+function flStandFaceAimEnd(tapLatLng) {
+  if (!flStandAim) return;
+  flStandAim = false;
+  var bar = document.getElementById('stand-aim-bar');
+  if (bar) bar.style.display = 'none';
+  var sh = flStandsState.sheet;
+  if (tapLatLng && sh && sh.lat != null && sh.lng != null) {
+    var b = flBearingDeg(sh.lat, sh.lng, tapLatLng.lat, tapLatLng.lng);
+    if (b != null) sh.facing = Math.round(b) % 360;
+  }
+  var ov = document.getElementById('stand-sheet-ov');
+  if (ov) { ov.classList.add('open'); document.body.style.overflow = 'hidden'; }
+  renderStandSheetFacing();
+}
+
+/** Kill a pending aim WITHOUT reopening the sheet — the any-navigation guard in go(). */
+function flStandFaceAimAbort() {
+  if (!flStandAim) return;
+  flStandAim = false;
+  var bar = document.getElementById('stand-aim-bar');
+  if (bar) bar.style.display = 'none';
+}
+
+// ── Stand photos (round 32) ──────────────────────────────────────
+// "The seat and its view" — up to STAND_PHOTOS_MAX photos per stand so a
+// high seat can be recognised from the approach path (46 seats, guests…).
+// Storage piggybacks the PRIVATE cull-photos bucket under <uid>/ (the
+// sightings precedent) — folder-scoped policies already cover it, and the
+// shared compressPhotoFile keeps uploads ~100–200 KB. Recall only: nothing
+// in scoring, the planner or the logger reads these.
+
+var flStandPhotoUrlCache = {}; // path → { url, exp } — one sign per session per photo
+
+/** Signed URL for a stand photo path, session-cached (24 h TTL upstream). */
+async function flStandPhotoSignedUrl(path) {
+  var hit = flStandPhotoUrlCache[path];
+  var now = Date.now();
+  if (hit && hit.exp > now + 60000) return hit.url;
+  var sh = await sb.storage.from('cull-photos').createSignedUrl(path, CULL_PHOTO_SIGN_EXPIRES);
+  var url = sh && sh.data && sh.data.signedUrl;
+  if (url) flStandPhotoUrlCache[path] = { url: url, exp: now + CULL_PHOTO_SIGN_EXPIRES * 1000 };
+  return url || null;
+}
+
+/**
+ * Sign every <img data-stand-photo> under rootEl that hasn't loaded yet.
+ * Imgs are built WITHOUT src (the flSignSightThumbs pattern) — src arrives
+ * here, and the enclosing open-stand-photo button gets data-url for the
+ * lightbox tap. Offline/failed signs leave the dark placeholder tile.
+ */
+function flSignStandPhotoImgs(rootEl) {
+  if (!sb || !currentUser) return;
+  var imgs = (rootEl || document).querySelectorAll('img[data-stand-photo]');
+  imgs.forEach(function(img) {
+    if (img.getAttribute('src')) return;
+    var path = img.getAttribute('data-stand-photo');
+    if (!path) return;
+    flStandPhotoSignedUrl(path).then(function(url) {
+      if (!url) return;
+      img.src = url;
+      var btn = img.closest('[data-fl-action="open-stand-photo"]');
+      if (btn) btn.setAttribute('data-url', url);
+    }).catch(function() { /* offline — placeholder stays */ });
+  });
+}
+
+/** Sheet photo row: existing thumbs (signed lazily) + pending previews + add tile until the cap. */
+function standSheetPhotoRowHtml(existing, pending) {
+  var h = '';
+  (existing || []).forEach(function(p, i) {
+    h += '<div class="stnd-ph-thumb"><img data-stand-photo="' + esc(p) + '" alt="Stand photo ' + (i + 1) + '">'
+      + '<button type="button" class="stnd-ph-x" data-fl-action="stand-photo-remove" data-kind="old" data-idx="' + i + '" aria-label="Remove photo">×</button></div>';
+  });
+  (pending || []).forEach(function(p, i) {
+    h += '<div class="stnd-ph-thumb"><img src="' + esc(p.previewUrl) + '" alt="New photo ' + (i + 1) + '">'
+      + '<button type="button" class="stnd-ph-x" data-fl-action="stand-photo-remove" data-kind="new" data-idx="' + i + '" aria-label="Remove photo">×</button></div>';
+  });
+  var total = (existing ? existing.length : 0) + (pending ? pending.length : 0);
+  if (total < STAND_PHOTOS_MAX) {
+    h += '<button type="button" class="stnd-ph-add" data-fl-action="stand-photo-add" aria-label="Add photo">'
+      + '<span>＋</span><small>' + (total ? 'Add' : 'Add photo') + '</small></button>';
+  }
+  return h;
+}
+
+function renderStandSheetPhotos() {
+  var row = document.getElementById('stand-photo-row');
+  if (!row) return;
+  var sh = flStandsState.sheet;
+  row.innerHTML = standSheetPhotoRowHtml(sh.photos, sh.newPhotos);
+  flSignStandPhotoImgs(row);
+}
+
+function standPhotoAddClick() {
+  var sh = flStandsState.sheet;
+  if (sh.photos.length + sh.newPhotos.length >= STAND_PHOTOS_MAX) return;
+  var inp = document.getElementById('stand-photo-input');
+  if (inp) { inp.value = ''; inp.click(); }
+}
+
+/** Compress each picked file to a pending preview; uploads happen at save. */
+async function handleStandPhotoInput(input) {
+  var sh = flStandsState.sheet;
+  var files = Array.prototype.slice.call((input && input.files) || []);
+  if (!files.length) return;
+  var room = STAND_PHOTOS_MAX - sh.photos.length - sh.newPhotos.length;
+  if (files.length > room) {
+    files = files.slice(0, Math.max(0, room));
+    showToast('⚠️ Up to ' + STAND_PHOTOS_MAX + ' photos per stand');
+  }
+  for (var i = 0; i < files.length; i++) {
+    try {
+      var c = await compressPhotoFile(files[i], { filename: 'stand.jpg' });
+      sh.newPhotos.push({ file: c.file, previewUrl: c.previewUrl });
+    } catch (e) {
+      showToast('⚠️ Could not read that photo');
+      console.warn('handleStandPhotoInput:', e);
+    }
+  }
+  renderStandSheetPhotos();
+}
+
+function standPhotoRemove(el) {
+  var sh = flStandsState.sheet;
+  var kind = el.getAttribute('data-kind');
+  var idx = parseInt(el.getAttribute('data-idx'), 10);
+  if (isNaN(idx)) return;
+  if (kind === 'old' && sh.photos[idx] != null) {
+    // Deletion is deferred to a successful save — cancelling the sheet must
+    // leave the stored photo untouched.
+    sh.removedPaths.push(sh.photos[idx]);
+    sh.photos.splice(idx, 1);
+  } else if (kind === 'new' && sh.newPhotos[idx] != null) {
+    try { URL.revokeObjectURL(sh.newPhotos[idx].previewUrl); } catch (e) {}
+    sh.newPhotos.splice(idx, 1);
+  }
+  renderStandSheetPhotos();
+}
+
+/** Detail card: the stand's photos as a tap-to-open grid (1/2/3-up). */
+function standPhotosCardHtml(s) {
+  var ph = (s && s.photos) || [];
+  if (!ph.length) return '';
+  var h = '<div class="stnd-detail-card"><div style="font-size:12px;font-weight:700;color:#fff;margin-bottom:8px;">Photos</div>'
+    + '<div class="stnd-ph-grid n' + Math.min(ph.length, 3) + '">';
+  ph.slice(0, 3).forEach(function(p, i) {
+    h += '<button type="button" class="stnd-ph-cell" data-fl-action="open-stand-photo" aria-label="Open photo ' + (i + 1) + '">'
+      + '<img data-stand-photo="' + esc(p) + '" alt="Stand photo ' + (i + 1) + '"></button>';
+  });
+  h += '</div></div>';
+  return h;
+}
+
+/** Lightbox tap — the signer stamped data-url once the thumb resolved. */
+function flOpenStandPhoto(el) {
+  var url = el.getAttribute('data-url');
+  if (!url) {
+    var img = el.querySelector('img');
+    url = img && img.getAttribute('src');
+  }
+  if (url) openPhotoLightbox(url);
+}
+
+function standSheetPickPin() {
+  openPinDrop({
+    lat: flStandsState.sheet.lat,
+    lng: flStandsState.sheet.lng,
+    onConfirm: function(lat, lng, name) {
+      flStandsState.sheet.lat = lat;   // already 6 dp — confirmPinDrop rounds
+      flStandsState.sheet.lng = lng;
+      flStandsState.sheet.locName = name;
+      flStandsState.sheet.locAuto = false;      // AK: the user placed this one
+      flStandsState.sheet.locSeededFrom = null; // AK: and it is no longer a guess
+      renderStandSheetLocLine();
+      renderStandSheetLocMap(); // G12: reflect the new pin in the preview
+      maybeAutoSelectStandGroundFromPin(lat, lng); // finding F
+      refreshStandGroundPinWarning(); // AK: after finding F, so it judges the final pair
+    }
+  });
+}
+
+function standSheetUseGps() {
+  if (!navigator.geolocation) { showToast('⚠️ GPS not available on this device'); return; }
+  showToast('📡 Getting GPS fix…');
+  navigator.geolocation.getCurrentPosition(function(pos) {
+    // G13 (owner: "GPS location moves slightly out on save"): the saved value
+    // was ALWAYS exactly what GPS gave — verified round-trip — but two things
+    // made it look off: (1) 5dp truncation lost ~1 m; use 6dp (~0.11 m, the
+    // app's boundary-geometry standard) so nothing is dropped. (2) a 30 s
+    // cached fix could be stale if you'd walked on; force a FRESH fix.
+    flStandsState.sheet.lat = round6(pos.coords.latitude);
+    flStandsState.sheet.lng = round6(pos.coords.longitude);
+    flStandsState.sheet.locName = flStandsState.sheet.lat + ', ' + flStandsState.sheet.lng;
+    flStandsState.sheet.locAuto = false;      // AK: a real fix, not a placeholder
+    flStandsState.sheet.locSeededFrom = null; // AK: and no longer a guess
+    renderStandSheetLocLine();
+    renderStandSheetLocMap(); // G12: reflect the GPS fix in the preview
+    maybeAutoSelectStandGroundFromPin(flStandsState.sheet.lat, flStandsState.sheet.lng); // finding F
+    refreshStandGroundPinWarning(); // AK: after finding F, so it judges the final pair
+  }, function() {
+    showToast('⚠️ Could not get a GPS fix');
+  }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+}
+
+/** ST-6 (WCAG 3.3.1): every failed save was a bare toast. On a sheet long
+ *  enough to scroll, the toast fades three seconds later and nothing on the
+ *  page says which field is wrong - focus stayed on BODY and aria-invalid was
+ *  never set, so a screen reader heard nothing at all. Say it on the field,
+ *  scroll it into view, and put the caret in it. */
+function flStandSheetInvalid(el, msg) {
+  showToast(msg);
+  if (!el) return;
+  var isField = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+  el.setAttribute('aria-invalid', 'true');
+  // A location is not typed into a field, so that branch hands us the button
+  // that sets one. It is focusable already; a plain div fallback is not, and
+  // focus() on it would silently do nothing - so give it a programmatic stop.
+  if (!isField && el.tagName !== 'BUTTON' && el.tagName !== 'A' && !el.hasAttribute('tabindex')) {
+    el.setAttribute('tabindex', '-1');
+  }
+  var evt = isField ? 'input' : 'click';
+  var clear = function() { el.removeAttribute('aria-invalid'); el.removeEventListener(evt, clear); };
+  el.addEventListener(evt, clear);
+  try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) { }
+  try { el.focus({ preventScroll: true }); } catch (_) { try { el.focus(); } catch (__) { } }
+}
+
+async function saveStandFromSheet() {
+  if (!currentUser || !sb) return;
+  var sh = flStandsState.sheet;
+  var nameEl = document.getElementById('stand-name');
+  var name = nameEl ? nameEl.value.trim() : '';
+  if (!name) { flStandSheetInvalid(nameEl, '⚠️ Give the stand a name'); return; }
+  if (sh.lat == null || sh.lng == null) {
+    flStandSheetInvalid(document.getElementById('stand-loc-pin-btn') || document.getElementById('stand-loc-line'),
+      '⚠️ Set the stand location (pin or GPS)');
+    return;
+  }
+  if (!sh.editingId && flEffectiveStands().length >= STANDS_MAX) {
+    showToast('⚠️ Stand limit reached (' + STANDS_MAX + ') — delete one first');
+    return;
+  }
+  var groundSel = document.getElementById('stand-ground');
+  var notesEl = document.getElementById('stand-notes');
+  // Offline: queue the save in the stand outbox and show the seat NOW.
+  // Photos are the one thing that can't ride along — an upload needs signal
+  // by definition — so photo additions/removals hold the save online-only.
+  if (!navigator.onLine) {
+    if (sh.newPhotos.length || sh.removedPaths.length) {
+      showToast('📶 Photo changes need signal — undo them to save offline, or wait for connection');
+      return;
+    }
+    var offFields = normalizeStandFields({
+      name: name, lat: sh.lat, lng: sh.lng,
+      ground: groundSel ? groundSel.value : null,
+      bad_winds: sh.badWinds,
+      notes: notesEl ? notesEl.value : null,
+      facing: sh.facing,
+      photos: []
+    });
+    delete offFields.photos; // never queued: updates must not touch server photos
+    var offId = sh.editingId || mintStandId();
+    var offOk = queueStandOp(currentUser.id,
+      sh.editingId ? { op: 'update', id: offId, fields: offFields }
+                   : { op: 'create', id: offId, stand: offFields });
+    if (!offOk) { showToast('⚠️ Could not save offline — storage full. Free space and try again.'); flHapticError(); return; }
+    var baseList = flStandsState.list || flCachedStands();
+    flStandsState.list = applyStandOutbox(baseList, standOutbox(currentUser.id));
+    updateOfflineBadge();
+    showToast('📶 Stand saved offline · will sync when connected');
+    flHapticSuccess();
+    var wasEditing = sh.editingId;
+    closeStandSheet();
+    renderStandsList();
+    flRevealRow(document.getElementById('stand-card-' + offId));
+    if (wasEditing && flStandsState.detailId === wasEditing) renderStandDetail(wasEditing);
+    return;
+  }
+  // Photos (round 32): upload new ones FIRST, write the final array on the
+  // row, and delete removed/replaced objects only AFTER the row update
+  // succeeds — an orphaned object is recoverable; a row pointing at a
+  // deleted object is not. Any failure rolls back this save's uploads so
+  // retries can't stack orphans.
+  var photoPaths = sh.photos.slice();
+  var uploadedNow = [];
+  for (var pi = 0; pi < sh.newPhotos.length; pi++) {
+    var pPath = newCullPhotoPath(currentUser.id);
+    try {
+      var up = await sb.storage.from('cull-photos').upload(pPath, sh.newPhotos[pi].file, { upsert: true, contentType: 'image/jpeg' });
+      if (up.error) throw up.error;
+      photoPaths.push(pPath);
+      uploadedNow.push(pPath);
+    } catch (ePh) {
+      if (uploadedNow.length) { try { await sb.storage.from('cull-photos').remove(uploadedNow); } catch (e2) {} }
+      showToast('⚠️ Photo upload failed — stand not saved, try again');
+      console.warn('stand photo upload:', ePh);
+      return;
+    }
+  }
+  var savedRow = null;
+  try {
+    savedRow = await saveStand(sb, currentUser.id, {
+      id: sh.editingId,
+      name: name,
+      lat: sh.lat,
+      lng: sh.lng,
+      ground: groundSel ? groundSel.value : null,
+      bad_winds: sh.badWinds,
+      notes: notesEl ? notesEl.value : null,
+      facing: sh.facing,
+      photos: photoPaths
+    });
+  } catch (e) {
+    if (uploadedNow.length) { try { await sb.storage.from('cull-photos').remove(uploadedNow); } catch (e2) {} }
+    if (e && e.code === '23505') {
+      // Post per-ground migration this only fires for a real same-ground clash;
+      // name the ground so it's obvious which HS2 is the problem.
+      var gv = groundSel ? (groundSel.value || '').trim() : '';
+      showToast('⚠️ You already have a stand called “' + name + '”' + (gv ? ' on ' + gv : ''));
+    } else showToast('⚠️ Could not save the stand — try again');
+    console.warn('saveStandFromSheet:', e);
+    return;
+  }
+  if (sh.removedPaths.length) {
+    try { await sb.storage.from('cull-photos').remove(sh.removedPaths); } catch (e3) { /* orphan tolerable */ }
+    sh.removedPaths.forEach(function(p) { delete flStandPhotoUrlCache[p]; });
+  }
+  sh.newPhotos.forEach(function(np) { try { URL.revokeObjectURL(np.previewUrl); } catch (e4) {} });
+  sh.photos = photoPaths; sh.newPhotos = []; sh.removedPaths = [];
+  showToast('✅ Stand saved');
+  var savedId = sh.editingId || (savedRow && savedRow.id) || null;
+  closeStandSheet();
+  await refreshStandsView(true);
+  // AL: the row exists only after the refresh has rebuilt the list, so the
+  // reveal has to come last. Editing an existing stand gets it too — the sheet
+  // closes onto a list that may have re-sorted under the new score, and the
+  // seat you were just working on is the one you want to see.
+  if (savedId) flRevealRow(document.getElementById('stand-card-' + savedId));
+  if (sh.editingId && flStandsState.detailId === sh.editingId) renderStandDetail(sh.editingId);
+}
+
+// ── Stand detail ─────────────────────────────────────────────────
+
+function openStandDetail(standId, dayIdx) {
+  if (!standId) return;
+  flStandsState.detailId = standId;
+  flStandsState.selectedId = standId;
+  flStandsState.detailDayIdx = (dayIdx != null ? dayIdx : 0);
+  renderStandDetail(standId);
+  go('v-stand-detail');
+  // Sightings power the "Seen here" card — load lazily, then repaint if still open (S5b).
+  if (!sightingsLoaded) {
+    loadSightings().then(function() {
+      if (flStandsState.detailId === standId) renderStandDetail(standId);
+    });
+  }
+}
+
+/** A7: reflect flStandsState.hourlyOpen onto the already-rendered panel. Falls
+ *  back to a full detail render only if the panel is not on screen (e.g. the
+ *  state was flipped before the stand was ever opened). */
+function flPaintStandHourly() {
+  var wrap = document.getElementById('stnd-hourly');
+  if (!wrap) {
+    if (flStandsState.detailId) renderStandDetail(flStandsState.detailId);
+    return;
+  }
+  var isOpen = !!flStandsState.hourlyOpen;
+  var bodyEl = wrap.querySelector('.stnd-hourly-body');
+  var car = wrap.querySelector('.stnd-hourly-car');
+  var tog = wrap.querySelector('.stnd-hourly-tog');
+  if (bodyEl) bodyEl.hidden = !isOpen;
+  if (car) car.textContent = isOpen ? '\u25b4' : '\u25be';
+  if (tog) tog.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  wrap.classList.toggle('is-open', isOpen);
+}
+
+function renderStandDetail(standId) {
+  var s = (flStandsState.list || []).find(function(x) { return x.id === standId; });
+  var body = document.getElementById('stand-detail-body');
+  var title = document.getElementById('stand-detail-title');
+  var meta = document.getElementById('stand-detail-meta');
+  if (!body) return;
+  if (!s) { body.innerHTML = ''; return; }
+  if (title) title.textContent = s.name;
+  if (meta) meta.textContent = (s.ground ? s.ground + ' · ' : '') + flPlaceRef(s.lat, s.lng, 6)
+    + (s.facing != null ? ' · looks ' + flWindDirLabel8(s.facing) : '');
+  var f = flStandsState.forecasts;
+  var fc = f && f.byStandId[s.id];
+  var selIdx = fc && fc.days.length ? Math.min(flStandsState.detailDayIdx || 0, fc.days.length - 1) : 0;
+  var h = '';
+  // Wind-check verdict: state the answer for the selected day in words (driven by
+  // the same windPenalty the score uses), rather than making the reader judge
+  // whether the arrow sits in the red arc.
+  var wcDay = fc && fc.days.length ? fc.days[selIdx] : null;
+  var wcWhen = selIdx === 0 ? 'Today'
+    : wcDay ? new Date(wcDay.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'Europe/London' }) : 'Today';
+  var wcVerdict;
+  if (!(s.bad_winds && s.bad_winds.length)) {
+    wcVerdict = 'No bad winds set — edit the stand to add them, so this seat scores differently when the wind is wrong.';
+  } else if (!wcDay || !wcDay.windPenalty) {
+    wcVerdict = 'Bad winds: <strong>' + esc(s.bad_winds.join(', ')) + '</strong>. This seat scores lower when the wind swings in from them.';
+  } else {
+    var wcBadList = '<strong>' + esc(s.bad_winds.join(', ')) + '</strong>';
+    var wcDawnPen = wcDay.windPenalty.dawn < 0, wcDuskPen = wcDay.windPenalty.dusk < 0;
+    if (!wcDawnPen && !wcDuskPen) {
+      wcVerdict = '<span style="color:#7adf7a;font-weight:700;">✓ ' + wcWhen + ': wind stays clear of your bad sector (' + wcBadList + ').</span>';
+    } else {
+      var wcWin = wcDawnPen && wcDuskPen ? 'at dawn and dusk' : wcDawnPen ? 'at dawn' : 'at dusk';
+      wcVerdict = '<span style="color:#f0a0a0;font-weight:700;">⚠ ' + wcWhen + ': wind blows from your bad sector (' + wcBadList + ') ' + wcWin + '</span> — scent carries to the deer; the scores below are already docked.';
+    }
+  }
+  // Round 19 (owner screenshot): the arrow must show the wind the SENTENCE
+  // is about. Old behaviour drew the best window's wind — a "⚠ NE at dusk"
+  // verdict beside a clear dawn westerly arrow. Now: the penalised window's
+  // wind (via the round-16 cone resolver on cached hourly), and the caption
+  // names the window so the picture is unambiguous.
+  var wcWinKey = standWindCheckWindow(wcDay);
+  var wcArrow = wcDay && wcDay.arrowWind ? wcDay.arrowWind : null;
+  if (wcDay && wcWinKey) {
+    var wcW = flStandConeWind(s, fc, { di: selIdx, mode: 'win', win: wcWinKey },
+      Math.floor(flToMinutes(new Date()) / 60));
+    if (wcW && wcW.dirDeg != null) wcArrow = wcW;
+  }
+  // Where it sits — satellite snippet leading the screen: the seat, the way it
+  // looks, its 300 m record radius, and the culls taken around it. Tap → full
+  // stands map on this seat. (flRenderStandMiniMap paints it after innerHTML.)
+  var sdWhere = (s.ground ? s.ground : '') + (s.facing != null ? (s.ground ? ' · ' : '') + 'looks ' + flWindDirLabel8(s.facing) : '');
+  h += '<div class="stnd-detail-card stnd-map-card" data-fl-action="expand-map" data-map-kind="stand" data-map-id="' + esc(String(s.id)) + '" role="button" tabindex="0" aria-label="Expand ' + esc(s.name) + ' map">'
+    + '<div class="stnd-card-lbl">Where it sits' + (sdWhere ? '<span class="r">' + esc(sdWhere) + '</span>' : '') + '</div>'
+    + '<div class="stnd-mini" id="stand-mini-map"><span class="mini-exp" aria-hidden="true">⤢</span><span class="mini-base">Satellite</span></div>'
+    + '<div class="stnd-mini-legend" id="stand-mini-legend"></div>'
+    + '</div>';
+  h += '<div class="stnd-detail-card" style="display:flex;align-items:center;gap:14px;">'
+    + '<span style="display:flex;flex-direction:column;align-items:center;gap:3px;">'
+    + '<span class="stnd-card-compass">' + windCompassSvgDark(s.bad_winds, wcArrow, 64) + '</span>'
+    + '<span style="font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:rgba(255,255,255,0.6);">Wind from' + (wcDay && wcWinKey ? ' · ' + wcWinKey : '') + '</span>'
+    + '</span>'
+    + '<div style="flex:1;"><div style="font-size:12px;font-weight:700;color:#fff;margin-bottom:3px;">Wind check</div>'
+    + '<div style="font-size:11.5px;color:rgba(255,255,255,0.72);line-height:1.5;">'
+    + wcVerdict
+    + '</div>'
+    + standLegalLineHtml(s, wcDay && wcDay.date, wcWhen)
+    + '</div></div>';
+  if (fc && fc.days.length) {
+    // World-class pass (owner 2026-07-07): the forecast is a DARK gold-accented
+    // panel like the homepage — radial gauge hero, tappable 7-day ribbon,
+    // twin Dawn/Dusk cards for the selected day.
+    var bestI = 0;
+    fc.days.forEach(function(d, i) { if (d.bestScore > fc.days[bestI].bestScore) bestI = i; });
+    var bd = fc.days[bestI];
+    var sd = fc.days[selIdx];
+    var hasBadWinds = !!(s.bad_winds && s.bad_winds.length);
+
+    h += '<div class="stnd-fc">';
+
+    // ── Hero: gauge + best window of the week ──
+    var bdt = new Date(bd.date + 'T12:00:00');
+    var bLabel = bestI === 0 ? 'Today' : bestI === 1 ? 'Tomorrow'
+      : bdt.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric' });
+    var actLabel = bd.bestScore >= 65 ? 'High activity' : bd.bestScore >= 45 ? 'Moderate' : bd.bestScore >= 20 ? 'Low activity' : 'Minimal';
+    h += '<div class="stnd-fc-hero">'
+      + standScoreGaugeSvg(bd.bestScore, 76)
+      + '<div style="flex:1;min-width:0;">'
+      + '<div class="stnd-fc-eyebrow">Best window this week</div>'
+      + '<div class="stnd-fc-big">' + esc(bLabel) + ' ' + bd.bestWindow.toLowerCase() + '</div>'
+      + '<div class="stnd-fc-sub">from ' + (bd.bestWindow === 'Dawn' ? bd.dawnTime : bd.duskTime) + ' · ' + actLabel + '</div>'
+      + '</div></div>';
+
+    // ── Week ribbon (tappable) ──
+    h += '<div class="stnd-ribbon">';
+    fc.days.forEach(function(d, i) {
+      var dt = new Date(d.date + 'T12:00:00');
+      var band = d.bestScore >= 65 ? '#7adf7a' : d.bestScore >= 45 ? '#f0cc74' : 'rgba(255,255,255,0.55)';
+      h += '<button type="button" class="stnd-ribbon-chip' + (i === selIdx ? ' on' : '') + (i === bestI ? ' best' : '') + '" data-fl-action="stand-day" data-day-idx="' + i + '">'
+        + '<span class="rc-day">' + (i === 0 ? 'Now' : dt.toLocaleDateString('en-GB', { weekday: 'short' })) + '</span>'
+        + '<span class="rc-date">' + dt.getDate() + '</span>'
+        + '<span class="rc-score" style="color:' + band + ';">' + d.bestScore + '</span>'
+        + '</button>';
+    });
+    h += '</div>';
+
+    // ── Selected day: the homepage live-panel anatomy, per stand & day ──
+    var sdt = new Date(sd.date + 'T12:00:00');
+
+    // Windows + solunar for this day at this stand.
+    var srD = flCalcSunTime(sdt, s.lat, s.lng, true);
+    var ssD = flCalcSunTime(sdt, s.lat, s.lng, false);
+    var srM2 = srD ? flToMinutes(srD) : 6 * 60;
+    var ssM2 = ssD ? flToMinutes(ssD) : 20 * 60;
+    var dawnS = srM2 - 60, dawnE = srM2 + 120, duskS = ssM2 - 90, duskE = ssM2 + 45;
+    var sol = flGetSolunar(sdt, s.lat, s.lng);
+    var nowMin = selIdx === 0 ? flToMinutes(new Date()) : null;
+    function tlSeg(startM, endM, cls) {
+      if (endM < startM) return tlSeg(startM, 1440, cls) + tlSeg(0, endM, cls);
+      return '<div class="stnd-tl-seg ' + cls + '" style="left:' + (startM / 14.4).toFixed(2) + '%;width:' + ((endM - startM) / 14.4).toFixed(2) + '%;"></div>';
+    }
+
+    h += '<div class="stnd-fc-day">' + standLiveBarHtml(s, fc, sd, sdt, selIdx);
+
+    standDayFactors(sd, sdt, hasBadWinds).forEach(function(fr) {
+      h += '<div class="stnd-fr' + (fr.good === true ? ' good' : fr.good === false ? ' bad' : '') + '">'
+        + '<span class="stnd-fr-ic">' + fr.icon + '</span><span>' + fr.text + '</span></div>';
+    });
+
+    h += '<div class="stnd-tl-lbl">' + (selIdx === 0 ? "Today's peak windows" : 'Peak windows') + '</div>'
+      + '<div class="stnd-tl">'
+      + tlSeg(dawnS, dawnE, 'win') + tlSeg(duskS, duskE, 'win')
+      + tlSeg(sol.major1.start, sol.major1.end, 'sol') + tlSeg(sol.major2.start, sol.major2.end, 'sol')
+      + (nowMin != null ? '<div class="stnd-tl-now" style="left:' + (nowMin / 14.4).toFixed(2) + '%;"></div>' : '')
+      + '</div>'
+      + '<div class="stnd-tl-axis"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>'
+      + '<div class="stnd-tl-key"><span><i class="k-win"></i> Dawn/dusk peak</span><span><i class="k-sol"></i> Solunar major</span>'
+      + (nowMin != null ? '<span><i class="k-now"></i> Now</span>' : '') + '</div>';
+
+    var nowInDawn = nowMin != null && nowMin >= dawnS && nowMin <= dawnE;
+    var nowInDusk = nowMin != null && nowMin >= duskS && nowMin <= duskE;
+    h += '<div class="stnd-wc2-grid">'
+      + '<div class="stnd-wc2' + (nowInDawn ? ' on' : '') + '"><div class="stnd-wc2-t win">● Dawn peak' + (nowInDawn ? ' <span class="now">• Now</span>' : '') + '</div>'
+      + '<div class="stnd-wc2-big">' + flFmtMins(dawnS) + ' – ' + flFmtMins(dawnE) + '</div>'
+      + '<div class="stnd-wc2-sub">score ' + sd.dawnScore + (hasBadWinds ? (sd.windPenalty && sd.windPenalty.dawn < 0 ? ' · ⚠ bad wind' : ' · ✓ wind OK') : '') + '</div></div>'
+      + '<div class="stnd-wc2' + (nowInDusk ? ' on' : '') + '"><div class="stnd-wc2-t win">● Dusk peak' + (nowInDusk ? ' <span class="now">• Now</span>' : '') + '</div>'
+      + '<div class="stnd-wc2-big">' + flFmtMins(duskS) + ' – ' + flFmtMins(duskE) + '</div>'
+      + '<div class="stnd-wc2-sub">score ' + sd.duskScore + (hasBadWinds ? (sd.windPenalty && sd.windPenalty.dusk < 0 ? ' · ⚠ bad wind' : ' · ✓ wind OK') : '') + '</div></div>'
+      + '<div class="stnd-wc2"><div class="stnd-wc2-t sol">● Solunar peak · Moon overhead</div>'
+      + '<div class="stnd-wc2-big">' + flFmtMins(sol.major1.peak) + '</div>'
+      + '<div class="stnd-wc2-sub">Moon directly above — gravitational pull at peak, deer move more</div></div>'
+      + '<div class="stnd-wc2"><div class="stnd-wc2-t sol">● Solunar peak · Moon underfoot</div>'
+      + '<div class="stnd-wc2-big">' + flFmtMins(sol.major2.peak) + '</div>'
+      + '<div class="stnd-wc2-sub">Moon directly below — opposite gravitational effect, also a peak period</div></div>'
+      + '</div>';
+
+    // Hour-by-hour at this stand for the selected day (2026-07-17).
+    h += standHourlyPanelHtml(s, fc, sd, sdt, selIdx);
+
+    h += '</div>';
+
+    h += '<div class="stnd-fc-foot">Based on: moon phase · solunar periods (moon gravity) · rut calendar · seasonal body condition · temperature · barometric pressure · wind speed — scored for this stand\'s exact spot. Weather via Open-Meteo. Guidance, not gospel.'
+      + (f && f.offline && f.asOf ? ' Offline — as of ' + new Date(f.asOf).toLocaleString() + '.' : '')
+      + '</div>'
+      + '</div>';
+  } else {
+    h += '<div class="stnd-detail-card" style="font-size:12px;color:rgba(255,255,255,0.72);">No forecast available' + (f && f.offline ? ' — offline and nothing cached yet.' : ' yet.') + '</div>';
+  }
+  h += standPhotosCardHtml(s); // round 32: the seat & its view, above Notes
+  if (s.notes) {
+    h += '<div class="stnd-detail-card"><div style="font-size:12px;font-weight:700;color:#fff;margin-bottom:4px;">Notes</div>'
+      + '<div style="font-size:12.5px;color:rgba(255,255,255,0.72);line-height:1.55;white-space:pre-wrap;">' + esc(s.notes) + '</div></div>';
+  }
+  var todayWindDeg = fc && fc.days && fc.days.length && fc.days[0].arrowWind
+    ? fc.days[0].arrowWind.dirDeg : null;
+  var histCardHtml = standHistoryCardHtml(s, todayWindDeg);
+  h += histCardHtml;
+  // SG6: if the record card is absent, the Seen-here card carries the
+  // encounter wind-evidence slot — one slot, whichever card is present.
+  h += standSightingsCardHtml(s, !histCardHtml, todayWindDeg);
+  h += '<div style="display:flex;gap:10px;margin:0 14px 10px;">'
+    + '<button type="button" class="stnd-loc-btn" style="flex:1;justify-content:center;" data-fl-action="stand-add-entry">＋ Add entry here</button>'
+    + '<button type="button" class="stnd-loc-btn" style="flex:1;justify-content:center;" data-fl-action="open-stand-sheet" data-stand-id="' + s.id + '"><span class="fl-ic fl-edit"></span> Edit stand</button>'
+    + '</div>'
+    + '<button type="button" class="stnd-danger-btn" id="stand-delete-btn" data-fl-action="delete-stand">Delete stand</button>';
+  body.innerHTML = h;
+  flSignStandPhotoImgs(body); // round 32: resolve photo thumbs (session-cached signs)
+  flRenderStandMiniMap(s); // "Where it sits" satellite snippet (needs the DOM present)
+  // Round 22: pull the stand's whole-life history once (re-renders on arrival),
+  // then round 13's pass completes the wind knowledge and patches the line.
+  flEnsureAllSeasonHistory().catch(function() { /* silent */ });
+  flEnsureStandWindEvidence(s, todayWindDeg).catch(function() { /* silent */ });
+}
+
+async function deleteStandFromDetail() {
+  var id = flStandsState.detailId;
+  if (!id) return;
+  var victim = (flStandsState.list || []).find(function(x) { return x.id === id; });
+  // M71: was a 3.5 s two-tap arm on the button. That idiom is right for a map
+  // vertex (you tap the thing itself, and there is an undo stack) but wrong
+  // here: a stand carries photos, wind history and every entry logged at it,
+  // none of which the button text could summarise. One modal, one vocabulary,
+  // and it states what goes with it.
+  var nPhotos = (victim && victim.photos) ? victim.photos.length : 0;
+  if (!(await flConfirm({
+    title: 'Delete ' + ((victim && victim.name) ? victim.name : 'this stand') + '?',
+    body: 'The stand, its location and its wind notes'
+      + (nPhotos ? ' and ' + nPhotos + ' photo' + (nPhotos === 1 ? '' : 's') : '')
+      + ' are deleted permanently. Culls and sightings you logged here stay in your diary, but they will no longer be linked to a stand.',
+    action: 'Delete stand',
+    tone: 'danger'
+  }))) return;
+  // Offline: tombstone it in the outbox — a queued create annihilates
+  // (nothing ever reaches the server), a synced stand queues a real delete
+  // whose photo reaping runs server-side at flush (deleteStand handles it).
+  if (!navigator.onLine) {
+    if (!queueStandOp(currentUser.id, { op: 'delete', id: id })) {
+      showToast('⚠️ Could not queue the delete — storage full');
+      return;
+    }
+    flStandsState.list = (flStandsState.list || []).filter(function (x) { return x && x.id !== id; });
+    flStandsState.detailId = null;
+    updateOfflineBadge();
+    showToast('🗑 Delete queued · will sync when connected');
+    go('v-stands');
+    renderStandsList();
+    return;
+  }
+  try {
+    await deleteStand(sb, id);
+  } catch (e) {
+    showToast('⚠️ Could not delete — try again');
+    console.warn('deleteStandFromDetail:', e);
+    return;
+  }
+  // Round 32: reap the stand's stored photos AFTER the row is gone — a
+  // failed remove leaves recoverable orphans, never a broken reference.
+  if (victim && victim.photos && victim.photos.length) {
+    try { await sb.storage.from('cull-photos').remove(victim.photos); } catch (e5) { /* orphans tolerable */ }
+    victim.photos.forEach(function(p) { delete flStandPhotoUrlCache[p]; });
+  }
+  flStandsState.detailId = null;
+  flStandsState.list = null; // force reload on the way back
+  showToast('🗑 Stand deleted');
+  go('v-stands');
+}
+
 // ── Ground field UI ───────────────────────────────────────────
 function appendGroundOptions(parent, names) {
   names.forEach(function(g) {
@@ -6857,6 +18268,8 @@ function handleGroundSelect(sel) {
     customInput.value = '';
     maybeAutoSelectSyndicateFromGround(sel.value);
   }
+  refreshGroundPinWarning();
+  queueCullSeasonAdvisory();   // the ground's boundary is the fallback location
 }
 
 function getGroundValue() {
@@ -7339,6 +18752,12 @@ function setPlanGroundFilter(key) {
 // ══════════════════════════════════════════════════════════════
 var syndicateEditingId = null;
 var syndicateAllocMemberId = null;
+// Season context for the OPEN manage sheet — set by openSyndicateManageSheet
+// from the syndicate's own start month, read by the save handlers (which run
+// later from the dispatcher and must NOT fall back to the personal
+// currentSeason for a syndicate whose month differs).
+var syndicateEditingSeason = null;
+var syndicateEditingSeasonStartMonth = 8;
 
 /** Label shown in syndicate UI — matches account name / email local-part. */
 function syndicateDisplayNameFromUser(user) {
@@ -7378,6 +18797,96 @@ function syndicateInviteUrl(token) {
   return window.location.origin + window.location.pathname + '?syndicate_invite=' + encodeURIComponent(token || '');
 }
 
+// ── Account & settings sheet ─────────────────────────────────────────────
+// Bottom sheet (#settings-ov, tsheet pattern) holding the account row,
+// profile card, danger zone and legal links that previously sat at the
+// bottom of the Stats scroll. Opened from the gear in either header or the
+// "Account & settings" button at the old Stats location. The element ids
+// inside are unchanged, so onSignedIn paints and the dispatcher actions
+// (name / password / season edits, sign-out, delete) work as before; the
+// edit modals are higher-z overlays and stack above the sheet.
+function openSettingsSheet() {
+  if (!currentUser) return;
+  // Refresh the season-start row in case metadata changed on another device.
+  renderProfileSeasonStartRow();
+  renderProfileSpeciesRow();
+  renderSettingsAppRows();
+  renderSettingsGroundsRow();
+  var ov = document.getElementById('settings-ov');
+  if (ov) { ov.classList.add('open'); document.body.style.overflow = 'hidden'; }
+}
+
+function closeSettingsSheet() {
+  var ov = document.getElementById('settings-ov');
+  if (ov) { ov.classList.remove('open'); document.body.style.overflow = ''; }
+}
+
+/** Fill the App card rows (version + offline queue) in the settings sheet. */
+function renderSettingsAppRows() {
+  var v = document.getElementById('app-version-value');
+  if (v) v.textContent = 'v' + FL_APP_VERSION;
+  var s = document.getElementById('offline-sync-value');
+  if (s) {
+    var q = getOfflineQueueForCurrentUser();
+    var qStands = currentUser ? standOutboxCount(currentUser.id) : 0;
+    if (q.length === 0 && qStands === 0) {
+      s.textContent = navigator.onLine ? 'All synced' : 'Offline · nothing queued';
+    } else {
+      var sBits = [];
+      if (q.length) sBits.push(q.length + ' entr' + (q.length === 1 ? 'y' : 'ies'));
+      if (qStands) sBits.push(qStands + ' stand' + (qStands === 1 ? '' : 's'));
+      s.textContent = sBits.join(' · ') + ' waiting';
+    }
+  }
+}
+
+/**
+ * Manual update check from the settings sheet. reg.update() re-fetches
+ * sw.js; if the byte-compare finds a new version, the registration's
+ * `updatefound` listener (modules/sw-bridge.mjs) takes over and shows the
+ * standard "New version available — Reload" banner once it's installed.
+ */
+async function checkAppUpdates() {
+  var btn = document.getElementById('app-update-btn');
+  if (!('serviceWorker' in navigator)) { showToast('⚠️ Updates are handled by your browser here'); return; }
+  if (!navigator.onLine) { showToast('📶 Offline — try again when connected'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  try {
+    var reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) {
+      showToast('ℹ️ Updates apply automatically on next reload');
+    } else {
+      await reg.update();
+      if (reg.installing || reg.waiting) {
+        showToast('⬇️ Update found — downloading…');
+      } else {
+        showToast('✅ You’re on the latest version');
+      }
+    }
+  } catch (e) {
+    showToast('⚠️ Could not check for updates');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Check'; }
+  }
+}
+
+/**
+ * Manual offline sync from the settings sheet. syncOfflineQueue() carries
+ * its own guards + result toasts (offline / not signed in / nothing to
+ * sync / per-entry results); this wrapper just manages the button state
+ * and refreshes the row afterwards.
+ */
+async function syncOfflineNow() {
+  var btn = document.getElementById('offline-sync-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+  try {
+    await syncOfflineQueue();
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Sync now'; }
+    renderSettingsAppRows();
+  }
+}
+
 function openSynModal() {
   var ov = document.getElementById('syn-ov');
   if (ov) { ov.classList.add('open'); document.body.style.overflow = 'hidden'; }
@@ -7415,12 +18924,14 @@ function buildSyndicateStepperGrid(valuesObj, prefix) {
       + '<div class="tgrid-sp"><div class="tgrid-dot" style="background:' + sp.color + ';"></div>' + esc(sp.name) + '</div>'
       + '<div class="tstepper">'
       + '<button type="button" class="tstep-btn" data-fl-action="synd-tstep" data-step-id="' + p + '-' + mk + '" data-step-delta="-1">−</button>'
-      + '<input class="tstep-val" id="' + p + '-' + mk + '" type="number" value="' + mv + '" min="0">'
+      + '<input class="tstep-val" id="' + p + '-' + mk + '" type="number" value="' + mv + '" min="0" max="999" step="1"'
+      + ' inputmode="numeric" pattern="[0-9]*" aria-label="' + esc(sp.name) + ' stags/bucks target">'
       + '<button type="button" class="tstep-btn" data-fl-action="synd-tstep" data-step-id="' + p + '-' + mk + '" data-step-delta="1">+</button>'
       + '</div>'
       + '<div class="tstepper">'
       + '<button type="button" class="tstep-btn" data-fl-action="synd-tstep" data-step-id="' + p + '-' + fk + '" data-step-delta="-1">−</button>'
-      + '<input class="tstep-val" id="' + p + '-' + fk + '" type="number" value="' + fv + '" min="0">'
+      + '<input class="tstep-val" id="' + p + '-' + fk + '" type="number" value="' + fv + '" min="0" max="999" step="1"'
+      + ' inputmode="numeric" pattern="[0-9]*" aria-label="' + esc(sp.name) + ' hinds/does target">'
       + '<button type="button" class="tstep-btn" data-fl-action="synd-tstep" data-step-id="' + p + '-' + fk + '" data-step-delta="1">+</button>'
       + '</div>'
       + '</div>';
@@ -7432,7 +18943,9 @@ function buildSyndicateStepperGrid(valuesObj, prefix) {
 
 function syndTstep(stepId, delta) {
   var el = document.getElementById(stepId);
-  if (el) el.value = Math.max(0, (parseInt(el.value, 10) || 0) + delta);
+  // M72: clamp BOTH ends. min="0" was declared and max was not, so the
+  // steppers happily ran past any sane season target.
+  if (el) el.value = Math.min(999, Math.max(0, (parseInt(el.value, 10) || 0) + delta));
 }
 
 function readSyndicateSteppers(prefix) {
@@ -7441,8 +18954,9 @@ function readSyndicateSteppers(prefix) {
   PLAN_SPECIES.forEach(function(sp) {
     var em = document.getElementById(p + '-' + sp.key + 'm');
     var ef = document.getElementById(p + '-' + sp.key + 'f');
-    o[sp.name + '-m'] = em ? Math.max(0, parseInt(em.value, 10) || 0) : 0;
-    o[sp.name + '-f'] = ef ? Math.max(0, parseInt(ef.value, 10) || 0) : 0;
+    // M72: typed values bypass the steppers, so clamp on the way out too.
+    o[sp.name + '-m'] = em ? Math.min(999, Math.max(0, parseInt(em.value, 10) || 0)) : 0;
+    o[sp.name + '-f'] = ef ? Math.min(999, Math.max(0, parseInt(ef.value, 10) || 0)) : 0;
   });
   return o;
 }
@@ -7503,15 +19017,25 @@ async function populateSyndicateAttributionDropdown(selectedId) {
     }).sort(function(a, b) {
       return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
     });
+    // Build the whole option list as ONE string and assign innerHTML once.
+    // The old code appended each option with `+=` AFTER the await above, so if
+    // this ran twice concurrently (e.g. the entry form re-opened before the
+    // first loadMySyndicateRows() resolved), each call appended its own set and
+    // the dropdown DOUBLED — "Personal only" stayed single (it's a replace) but
+    // every syndicate showed twice. Assigning once makes concurrent calls
+    // idempotent: the last write wins with the full, correct list. The per-build
+    // `known` map still de-dupes duplicate membership rows within one build.
     var known = {};
+    var html = '<option value="">Personal only (no syndicate)</option>';
     opts.forEach(function(o) {
       if (known[o.id]) return;
       known[o.id] = true;
-      sel.innerHTML += '<option value="' + esc(o.id) + '">' + esc(o.name) + '</option>';
+      html += '<option value="' + esc(o.id) + '">' + esc(o.name) + '</option>';
     });
     if (chosen && !known[chosen]) {
-      sel.innerHTML += '<option value="' + esc(chosen) + '">Previously assigned (not active)</option>';
+      html += '<option value="' + esc(chosen) + '">Previously assigned (not active)</option>';
     }
+    sel.innerHTML = html;
     sel.value = chosen;
   } catch (e) {
     console.warn('populateSyndicateAttributionDropdown:', e);
@@ -7632,12 +19156,34 @@ function renderSyndicateProgressBars(s, summaryRows, season) {
 
   var totalTarget = 0;
   var totalActual = 0;
+  var pestTotal = 0; // sum of pest-bag quantity (b) — folded into the Total, kept OUT of the deer % ring
   var html = '';
   var rendered = 0;
 
   ordered.forEach(function(spName) {
     var pair = bySp[spName];
     var sp = planSpeciesMeta(spName);
+    // Pest species (Rabbit / Grey Squirrel / Pigeon / Corvid, plus the sexed
+    // Fox / Wild Boar) have no syndicate target — render a single "×N" bagged
+    // line instead of the deer ♂/♀ target bars (which otherwise showed a phantom
+    // "Female" row and an "N/0" bar). Kept OUT of the deer target-progress totals
+    // below, since a pest bag has no target and would skew the "actual/target" ring.
+    if (isPestSpecies(spName)) {
+      var bag = (pair.m ? parseInt(pair.m.actual_total, 10) || 0 : 0)
+              + (pair.f ? parseInt(pair.f.actual_total, 10) || 0 : 0);
+      if (bag <= 0) return;
+      pestTotal += bag;
+      if (rendered > 0) html += '<div class="plan-divider"></div>';
+      rendered++;
+      html += '<div class="plan-sp-section">';
+      html += '<div class="plan-sp-hdr">';
+      html += '<div class="plan-sp-dot" style="background:' + sp.color + ';"></div>';
+      html += '<div class="plan-sp-name">' + esc(sp.name) + '</div>';
+      html += '<div class="plan-sp-total">×' + bag + '</div>';
+      html += '</div>';
+      html += '</div>';
+      return;
+    }
     var mTarget = pair.m ? parseInt(pair.m.target_total, 10) || 0 : 0;
     var fTarget = pair.f ? parseInt(pair.f.target_total, 10) || 0 : 0;
     var mActual = pair.m ? parseInt(pair.m.actual_total, 10) || 0 : 0;
@@ -7656,55 +19202,24 @@ function renderSyndicateProgressBars(s, summaryRows, season) {
     html += '<div class="plan-sp-hdr">';
     html += '<div class="plan-sp-dot" style="background:' + sp.color + ';"></div>';
     html += '<div class="plan-sp-name">' + esc(sp.name) + '</div>';
-    html += '<div class="plan-sp-total">' + spActual + '/' + spTarget + '</div>';
+    html += '<div class="plan-sp-total' + (spTarget > 0 ? '' : ' plan-sp-total--none') + '">'
+      + (spTarget > 0 ? (spActual + '/' + spTarget) : (spActual + ' · no target')) + '</div>';
     html += '</div>';
 
     if (mTarget > 0 || mActual > 0) {
-      var mPct = mTarget > 0 ? Math.min(100, Math.round(mActual / mTarget * 100)) : (mActual > 0 ? 100 : 0);
-      var mDone = mTarget > 0 && mActual >= mTarget;
-      var mBar = mTarget === 0 ? 'linear-gradient(90deg,#a0988a,#c0b8a8)' : mDone ? 'linear-gradient(90deg,#2d7a1a,#7adf7a)' : 'linear-gradient(90deg,#5a7a30,#7adf7a)';
-      html += '<div class="plan-sex-row">';
-      html += '<div class="plan-sex-icon">♂</div>';
-      html += '<div class="plan-sex-lbl">' + esc(sp.mLbl) + '</div>';
-      html += '<div class="plan-bar-wrap"><div class="plan-bar" style="width:' + mPct + '%;background:' + mBar + ';"></div></div>';
-      html += '<div class="plan-count ' + (mDone ? 'plan-count-done' : mActual === 0 ? 'plan-count-zero' : '') + '">' + mActual + '/' + mTarget + (mDone ? ' ✓' : '') + '</div>';
-      html += '</div>';
+      html += flPlanSexRowHtml('♂', esc(sp.mLbl), mTarget, mActual);
       if (mode === 'individual' && pair.m) {
         var ma = parseInt(pair.m.my_allocation, 10) || 0;
         var my = parseInt(pair.m.my_actual, 10) || 0;
-        var yPct = ma > 0 ? Math.min(100, Math.round(my / ma * 100)) : (my > 0 ? 100 : 0);
-        var yDone = ma > 0 && my >= ma;
-        var yBar = ma === 0 ? 'linear-gradient(90deg,#a0988a,#c0b8a8)' : yDone ? 'linear-gradient(90deg,#b8860b,#f0c870)' : 'linear-gradient(90deg,#c8a84b,#f0c870)';
-        html += '<div class="plan-sex-row synd-plan-yours">';
-        html += '<div class="plan-sex-icon"></div>';
-        html += '<div class="plan-sex-lbl">Yours</div>';
-        html += '<div class="plan-bar-wrap"><div class="plan-bar" style="width:' + yPct + '%;background:' + yBar + ';"></div></div>';
-        html += '<div class="plan-count ' + (yDone ? 'plan-count-done' : my === 0 ? 'plan-count-zero' : '') + '" style="font-size:10px;">' + my + '/' + (ma || '–') + (yDone ? ' ✓' : '') + '</div>';
-        html += '</div>';
+        html += flPlanSexRowHtml('', 'Yours', ma, my, { gold: true, small: true, rowClass: 'synd-plan-yours', noneLabel: 'no allocation' });
       }
     }
     if (fTarget > 0 || fActual > 0) {
-      var fPct = fTarget > 0 ? Math.min(100, Math.round(fActual / fTarget * 100)) : (fActual > 0 ? 100 : 0);
-      var fDone = fTarget > 0 && fActual >= fTarget;
-      var fBar = fTarget === 0 ? 'linear-gradient(90deg,#a0988a,#c0b8a8)' : fDone ? 'linear-gradient(90deg,#2d7a1a,#7adf7a)' : 'linear-gradient(90deg,#5a7a30,#7adf7a)';
-      html += '<div class="plan-sex-row">';
-      html += '<div class="plan-sex-icon">♀</div>';
-      html += '<div class="plan-sex-lbl">' + esc(sp.fLbl) + '</div>';
-      html += '<div class="plan-bar-wrap"><div class="plan-bar" style="width:' + fPct + '%;background:' + fBar + ';"></div></div>';
-      html += '<div class="plan-count ' + (fDone ? 'plan-count-done' : fActual === 0 ? 'plan-count-zero' : '') + '">' + fActual + '/' + fTarget + (fDone ? ' ✓' : '') + '</div>';
-      html += '</div>';
+      html += flPlanSexRowHtml('♀', esc(sp.fLbl), fTarget, fActual);
       if (mode === 'individual' && pair.f) {
         var fa = parseInt(pair.f.my_allocation, 10) || 0;
         var fy = parseInt(pair.f.my_actual, 10) || 0;
-        var fyPct = fa > 0 ? Math.min(100, Math.round(fy / fa * 100)) : (fy > 0 ? 100 : 0);
-        var fyDone = fa > 0 && fy >= fa;
-        var fyBar = fa === 0 ? 'linear-gradient(90deg,#a0988a,#c0b8a8)' : fyDone ? 'linear-gradient(90deg,#b8860b,#f0c870)' : 'linear-gradient(90deg,#c8a84b,#f0c870)';
-        html += '<div class="plan-sex-row synd-plan-yours">';
-        html += '<div class="plan-sex-icon"></div>';
-        html += '<div class="plan-sex-lbl">Yours</div>';
-        html += '<div class="plan-bar-wrap"><div class="plan-bar" style="width:' + fyPct + '%;background:' + fyBar + ';"></div></div>';
-        html += '<div class="plan-count ' + (fyDone ? 'plan-count-done' : fy === 0 ? 'plan-count-zero' : '') + '" style="font-size:10px;">' + fy + '/' + (fa || '–') + (fyDone ? ' ✓' : '') + '</div>';
-        html += '</div>';
+        html += flPlanSexRowHtml('', 'Yours', fa, fy, { gold: true, small: true, rowClass: 'synd-plan-yours', noneLabel: 'no allocation' });
       }
     }
     html += '</div>';
@@ -7713,19 +19228,63 @@ function renderSyndicateProgressBars(s, summaryRows, season) {
   if (!rendered) {
     return '<div style="font-size:11px;color:var(--muted);padding:4px 0;">No targets for ' + esc(season) + ' yet.</div>';
   }
-  var totalPct = totalTarget > 0 ? Math.min(100, Math.round(totalActual / totalTarget * 100)) : 0;
-  html += '<div class="plan-total-row">';
-  html += '<div class="plan-total-lbl">Total</div>';
-  html += '<div class="plan-total-bar"><div class="plan-total-fill" style="width:' + totalPct + '%;"></div></div>';
-  html += '<div class="plan-total-count">' + totalActual + '/' + totalTarget + '</div>';
-  html += '</div>';
+  var deerPct = totalTarget > 0 ? Math.min(100, Math.round(totalActual / totalTarget * 100)) : 0;
+  var _prC = 2 * Math.PI * 16;
+  var _fltSpacer = '<div style="flex:1;"></div>';
+  // PP-4 gold ring — DEER vs the deer target only. Pests never enter this %, so a
+  // bag can't fake deer-plan progress. Drawn only when a deer target exists (a 0
+  // target has no meaningful %); otherwise a spacer keeps the count right-aligned
+  // (this also removes the old misleading "0% next to a culled-but-untargeted deer").
+  var _fltDeerCol = totalTarget > 0
+    ? ('<div class="plan-ring" role="img" aria-label="' + deerPct + '% of deer target culled">'
+        + '<svg class="plan-ring-svg" width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">'
+        + '<circle cx="20" cy="20" r="16" fill="none" stroke="#ede9e2" stroke-width="3.2"/>'
+        + '<circle cx="20" cy="20" r="16" fill="none" stroke="#d8b054" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="' + (_prC * deerPct / 100).toFixed(1) + ' ' + _prC.toFixed(1) + '" transform="rotate(-90 20 20)"/>'
+        + '<text x="20" y="20.5" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="700" fill="#8a6a12" font-family="DM Mono,monospace">' + deerPct + '%</text>'
+        + '</svg></div>')
+    : _fltSpacer;
+  var _fltDeerCount = totalActual + (totalTarget > 0 ? '/' + totalTarget : '');
+  var _fltTight = ' style="border-top:none;padding-top:4px;margin-top:0;"';
+
+  if (pestTotal > 0) {
+    // Split summary: Deer (vs target) · Pests (bag) · Total = deer + pests. The
+    // percentage stays on the deer line; the Total is the true harvest count so a
+    // pest bag is genuinely counted without skewing the deer-plan %.
+    var _fltDeerShown = (totalTarget > 0 || totalActual > 0);
+    if (_fltDeerShown) {
+      html += '<div class="plan-total-row">';
+      html += '<div class="plan-total-lbl">Deer</div>';
+      html += _fltDeerCol;
+      html += '<div class="plan-total-count">' + _fltDeerCount + '</div>';
+      html += '</div>';
+    }
+    html += '<div class="plan-total-row"' + (_fltDeerShown ? _fltTight : '') + '>';
+    html += '<div class="plan-total-lbl">Pests</div>';
+    html += _fltSpacer;
+    html += '<div class="plan-total-count">×' + pestTotal + '</div>';
+    html += '</div>';
+    html += '<div class="plan-total-row"' + _fltTight + '>';
+    html += '<div class="plan-total-lbl">Total</div>';
+    html += _fltSpacer;
+    html += '<div class="plan-total-count" style="font-size:13px;">' + (totalActual + pestTotal) + '</div>';
+    html += '</div>';
+  } else {
+    // No pests — single deer total row (ring only when a deer target is set).
+    html += '<div class="plan-total-row">';
+    html += '<div class="plan-total-lbl">Total</div>';
+    html += _fltDeerCol;
+    html += '<div class="plan-total-count">' + _fltDeerCount + '</div>';
+    html += '</div>';
+  }
   return html;
 }
 
 async function renderOneSyndicateCard(row) {
   var s = row.syndicate;
   var isMgr = row.role === 'manager';
-  var season = currentSeason;
+  // Per-row season: each syndicate buckets by ITS OWN start month (§2 context
+  // rule) — never the viewer's personal currentSeason (step-4 choke point).
+  var season = getCurrentSeason(syndicateSeasonStartMonth(s));
   var sum = await fetchSyndicateSummaryRpc(s.id, season);
   var rows = [];
   if (sum.ok) rows = sum.rows || [];
@@ -7805,7 +19364,7 @@ async function renderSyndicateSection() {
     body.innerHTML = parts.join('');
     enhanceKeyboardClickables(body);
   } catch (e) {
-    body.innerHTML = '<div style="padding:12px;font-size:12px;color:#c62828;">' + esc(e.message || 'Failed to load syndicates') + '</div>';
+    body.innerHTML = '<div style="padding:12px;font-size:12px;color:var(--red);">' + esc(e.message || 'Failed to load syndicates') + '</div>';
   }
 }
 
@@ -7898,7 +19457,7 @@ async function saveSyndicateCreate() {
     await renderSyndicateSection();
     openSyndicateManageSheet(r.data);
   } catch (e) {
-    showToast('⚠️ ' + (e.message || 'Could not create'));
+    showToast('⚠️ ' + friendlyErr(e, 'Could not create'));
   }
   if (btn) { btn.disabled = false; btn.textContent = 'Create syndicate'; }
 }
@@ -7910,6 +19469,13 @@ async function openSyndicateManageSheet(sid) {
   var sr = await sb.from('syndicates').select('*').eq('id', syndicateEditingId).single();
   if (sr.error || !sr.data) { showToast('⚠️ Syndicate not found'); return; }
   var s = sr.data;
+  // Syndicate context: everything in this sheet buckets by THIS syndicate's
+  // start month (default August), independent of the viewer's personal
+  // setting (§2 context rule). Stored on module state for the save handlers.
+  var synMonth = syndicateSeasonStartMonth(s);
+  var synSeason = getCurrentSeason(synMonth);
+  syndicateEditingSeason = synSeason;
+  syndicateEditingSeasonStartMonth = synMonth;
   var isMgr = false;
   var mr = await sb.from('syndicate_members').select('role').eq('syndicate_id', s.id).eq('user_id', currentUser.id).eq('status', 'active').limit(1);
   if (mr.data && mr.data[0] && mr.data[0].role === 'manager') isMgr = true;
@@ -7929,10 +19495,10 @@ async function openSyndicateManageSheet(sid) {
   }
 
   document.getElementById('syn-modal-title').textContent = s.name;
-  document.getElementById('syn-modal-sub').textContent = (isMgr ? 'Manager' : 'Member') + ' · ' + currentSeason;
+  document.getElementById('syn-modal-sub').textContent = (isMgr ? 'Manager' : 'Member') + ' · ' + seasonLabel(synSeason, synMonth);
 
   var targets = {};
-  var tr = await sb.from('syndicate_targets').select('species, sex, target').eq('syndicate_id', s.id).eq('season', currentSeason);
+  var tr = await sb.from('syndicate_targets').select('species, sex, target').eq('syndicate_id', s.id).eq('season', synSeason);
   if (tr.data) tr.data.forEach(function(row) { targets[row.species + '-' + row.sex] = row.target; });
 
   var bodyHtml = '';
@@ -7972,7 +19538,7 @@ async function openSyndicateManageSheet(sid) {
       if (m.role === 'member' && !isSelf) {
         rmCell = '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">'
           + '<button type="button" class="syn-member-promote" data-fl-action="synd-promote-member" data-member-user-id="' + esc(m.user_id) + '" style="flex-shrink:0;padding:6px 10px;font-size:11px;border:1.5px solid #2d7a1a;color:#2d7a1a;border-radius:8px;background:transparent;font-weight:600;cursor:pointer;">Promote</button>'
-          + '<button type="button" class="syn-member-rm" data-fl-action="synd-remove-member" data-member-user-id="' + esc(m.user_id) + '" style="flex-shrink:0;padding:6px 10px;font-size:11px;border:1.5px solid #c62828;color:#c62828;border-radius:8px;background:transparent;font-weight:600;cursor:pointer;">Remove</button>'
+          + '<button type="button" class="syn-member-rm" data-fl-action="synd-remove-member" data-member-user-id="' + esc(m.user_id) + '" style="flex-shrink:0;padding:6px 10px;font-size:11px;border:1.5px solid var(--red);color:var(--red);border-radius:8px;background:transparent;font-weight:600;cursor:pointer;">Remove</button>'
           + '</div>';
       } else if (m.role === 'member' && isSelf) {
         rmCell = '<span style="font-size:10px;color:var(--muted);white-space:nowrap;">Use Leave below</span>';
@@ -7987,7 +19553,7 @@ async function openSyndicateManageSheet(sid) {
       } else {
         rmCell = '<span style="font-size:10px;color:var(--muted);white-space:nowrap;">—</span>';
       }
-      bodyHtml += '<div class="syn-member-row" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:#faf8f4;border:1.5px solid #ece8e2;border-radius:10px;">'
+      bodyHtml += '<div class="syn-member-row" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:var(--sand);border:1.5px solid var(--line);border-radius:10px;">'
         + '<div style="min-width:0;">'
         + '<div style="font-weight:600;font-size:13px;color:var(--bark);">' + esc(label)
         + (isSelf ? ' <span style="color:var(--muted);font-weight:500;">(you)</span>' : '')
@@ -7999,7 +19565,7 @@ async function openSyndicateManageSheet(sid) {
   }
 
   if (s.allocation_mode === 'group' && isMgr) {
-    bodyHtml += '<div style="font-size:11px;font-weight:700;margin-bottom:8px;color:var(--bark);">Group targets · ' + esc(currentSeason) + '</div>'
+    bodyHtml += '<div style="font-size:11px;font-weight:700;margin-bottom:8px;color:var(--bark);">Group targets · ' + esc(seasonLabel(synSeason, synMonth)) + '</div>'
       + buildSyndicateStepperGrid(targets, 'syntt')
       + '<button type="button" class="tsheet-save" style="width:100%;margin-top:14px;" data-fl-action="save-syndicate-targets">Save targets</button>';
   } else if (s.allocation_mode === 'group' && !isMgr) {
@@ -8026,6 +19592,26 @@ async function openSyndicateManageSheet(sid) {
   }
 
   if (isMgr) {
+    // Manager-only: syndicate season start month (season-year feature step 4).
+    // Writes syndicates.season_start_month (step-2 column); every member's
+    // syndicate views re-bucket on their next load. The §6 warning fires in
+    // syndSaveSeasonStart before anything is written.
+    var monthOpts = '';
+    for (var mi = 1; mi <= 12; mi++) {
+      monthOpts += '<option value="' + mi + '"' + (mi === synMonth ? ' selected' : '') + '>'
+        + esc(FULL_MONTHS[mi - 1]) + (mi === 8 ? ' (default)' : '') + '</option>';
+    }
+    // Stacked layout (select over button) — .copy-targets-btn is width:100%
+    // in diary.css, so a side-by-side flex row collapses the select to a
+    // sliver (found in preview, 2026-07-06). Mirrors the Per-member
+    // allocations select + invite-button patterns already in this sheet.
+    bodyHtml += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line);">'
+      + '<div style="font-size:11px;font-weight:700;margin-bottom:8px;">Season start month</div>'
+      + '<p style="font-size:11px;color:var(--muted);margin-bottom:8px;">This syndicate&rsquo;s year runs 12 months from this month. It sets how targets, allocations, summaries and team exports are grouped — for every member.</p>'
+      + '<select id="syn-season-start-select" aria-label="Syndicate season start month" style="width:100%;padding:10px;border:1.5px solid #e0dcd6;border-radius:10px;font-size:13px;">' + monthOpts + '</select>'
+      + '<button type="button" class="copy-targets-btn" data-fl-action="synd-save-season-start">Save season start</button>'
+      + '</div>';
+
     var invRows = [];
     try {
       var invFetch = await sb.from('syndicate_invites')
@@ -8044,7 +19630,7 @@ async function openSyndicateManageSheet(sid) {
       return expMs > nowMs && used < max;
     });
 
-    bodyHtml += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #ece8e2;">'
+    bodyHtml += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line);">'
       + '<div style="font-size:11px;font-weight:700;margin-bottom:8px;">Invite link</div>'
       + '<p style="font-size:11px;color:var(--muted);margin-bottom:8px;">Generate a link and send it to members. They must be signed in to accept.</p>'
       + '<button type="button" class="copy-targets-btn" style="width:100%;margin-bottom:8px;" data-fl-action="synd-generate-invite">Generate new invite link</button>'
@@ -8061,42 +19647,66 @@ async function openSyndicateManageSheet(sid) {
           : 'unknown';
         var shortToken = String(inv.token || '').slice(0, 10) + '…';
         var u = syndicateInviteUrl(inv.token);
-        bodyHtml += '<div style="padding:10px 10px;border:1.5px solid #ece8e2;border-radius:10px;background:#faf8f4;">'
+        bodyHtml += '<div style="padding:10px 10px;border:1.5px solid var(--line);border-radius:10px;background:var(--sand);">'
           + '<div style="font-size:11px;color:var(--bark);font-weight:600;">' + esc(shortToken) + '</div>'
           + '<div style="font-size:10px;color:var(--muted);margin-top:2px;">Uses left: ' + esc(String(left)) + ' · Expires: ' + esc(expLbl) + '</div>'
           + '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">'
           + '<button type="button" class="copy-targets-btn" style="padding:6px 10px;font-size:11px;" data-fl-action="synd-copy-existing-invite" data-invite-url="' + esc(u) + '">Copy</button>'
-          + '<button type="button" style="padding:6px 10px;font-size:11px;border:1.5px solid #c62828;color:#c62828;border-radius:8px;background:transparent;font-weight:600;cursor:pointer;" data-fl-action="synd-revoke-invite" data-invite-id="' + esc(inv.id) + '">Revoke</button>'
+          + '<button type="button" style="padding:6px 10px;font-size:11px;border:1.5px solid var(--red);color:var(--red);border-radius:8px;background:transparent;font-weight:600;cursor:pointer;" data-fl-action="synd-revoke-invite" data-invite-id="' + esc(inv.id) + '">Revoke</button>'
           + '</div></div>';
       });
       bodyHtml += '</div>';
     }
     bodyHtml += '</div>';
 
-    var br = await sb.rpc('syndicate_member_actuals_for_manager', { p_syndicate_id: s.id, p_season: currentSeason });
+    var br = await sb.rpc('syndicate_member_actuals_for_manager', { p_syndicate_id: s.id, p_season: synSeason });
     if (!br.error && br.data && br.data.length) {
+      // M72: this list used to be a 220px-tall scroller nested inside the
+      // sheet's own scroller. Two scroll surfaces under one thumb means a
+      // flick either moves the wrong thing or gets trapped, and the inner box
+      // gave no clue how much was below the fold. It now flows with the sheet
+      // and states its own length, capped so a busy season cannot make the
+      // settings sheet endless.
+      var _feedAll = br.data;
+      var _feedCap = 40;
+      var _feed = _feedAll.slice(0, _feedCap);
       bodyHtml += '<div style="margin-top:16px;"><div style="font-size:11px;font-weight:700;margin-bottom:6px;">Manager · culled by member</div>'
-        + '<p style="font-size:10px;color:var(--muted);margin:0 0 6px 0;">Each line is one cull, newest first.</p>'
-        + '<div style="font-size:11px;font-family:DM Sans,sans-serif;color:var(--bark);max-height:220px;overflow:auto;line-height:1.45;">';
-      br.data.forEach(function(row) {
+        + '<p style="font-size:10px;color:var(--muted);margin:0 0 6px 0;">Each line is one cull, newest first · '
+        + (_feedAll.length > _feedCap
+            ? ('showing the latest ' + _feedCap + ' of ' + _feedAll.length + ' this season')
+            : (_feedAll.length + ' this season'))
+        + '.</p>'
+        + '<div style="font-size:11px;font-family:DM Sans,sans-serif;color:var(--bark);line-height:1.45;">';
+      _feed.forEach(function(row) {
         var nm = row.user_id
           ? (memberNameById[row.user_id] || ('Member ' + (row.user_id || '').slice(0, 8)))
           : 'Former members (account removed)';
-        var sexLbl = row.sex === 'm' ? 'Stags/Bucks' : 'Hinds/Does';
-        var dateStr = row.cull_date ? fmtDate(row.cull_date) : '—';
+        // Pest-aware (v3): fox rows label Dog/Vixen; sex-less pest rows show
+        // no sex; deer keep the historical grouped label.
+        var sexLbl = (row.sex === 'm' || row.sex === 'f')
+          ? (isPestSpecies(row.species)
+              ? sexLabel(row.sex, row.species)
+              : (row.sex === 'm' ? 'Stags/Bucks' : 'Hinds/Does'))
+          : '';
+        var dateStr = row.cull_date ? fmtDateYear(row.cull_date) : '—'; // YR1: team feed spans seasons
         bodyHtml += '<span style="font-weight:600;">' + esc(nm) + '</span>'
           + ' <span style="color:var(--muted);">·</span> ' + esc(row.species)
           + ' <span style="color:var(--muted);">' + esc(sexLbl) + '</span>'
           + ' <span style="color:var(--muted);">·</span> ' + esc(dateStr)
           + '<br>';
       });
-      bodyHtml += '</div></div>';
+      bodyHtml += '</div>';
+      if (_feedAll.length > _feedCap) {
+        bodyHtml += '<p style="font-size:10px;color:var(--muted);margin:6px 0 0 0;">'
+          + (_feedAll.length - _feedCap) + ' older culls this season are not listed here \u2014 the full record is in Stats and the team export.</p>';
+      }
+      bodyHtml += '</div>';
     }
 
-    bodyHtml += '<div style="margin-top:20px;"><button type="button" style="width:100%;padding:12px;background:none;border:1.5px solid #c62828;color:#c62828;border-radius:12px;font-weight:700;" data-fl-action="synd-delete">Delete syndicate</button></div>';
+    bodyHtml += '<div style="margin-top:20px;"><button type="button" style="width:100%;padding:12px;background:none;border:1.5px solid var(--red);color:var(--red);border-radius:12px;font-weight:700;" data-fl-action="synd-delete">Delete syndicate</button></div>';
   }
 
-  bodyHtml += '<div style="margin-top:16px;"><button type="button" style="width:100%;padding:12px;border:1.5px solid #e0dcd6;border-radius:12px;background:#faf8f4;font-weight:600;" data-fl-action="synd-leave">Leave syndicate</button></div>';
+  bodyHtml += '<div style="margin-top:16px;"><button type="button" style="width:100%;padding:12px;border:1.5px solid #e0dcd6;border-radius:12px;background:var(--sand);font-weight:600;" data-fl-action="synd-leave">Leave syndicate</button></div>';
 
   var smb = document.getElementById('syn-modal-body');
   if (smb) {
@@ -8113,7 +19723,7 @@ async function openSyndicateManageSheet(sid) {
     if (sel) {
       sel.addEventListener('change', function() {
         syndicateAllocMemberId = sel.value || null;
-        loadSyndicateAllocGrid(s.id, currentSeason, syndicateAllocMemberId);
+        loadSyndicateAllocGrid(s.id, synSeason, syndicateAllocMemberId);
       });
     }
   }
@@ -8147,14 +19757,17 @@ async function loadSyndicateAllocGrid(syndicateId, season, memberUserId) {
 async function saveSyndicateTargets() {
   if (!sb || !currentUser || !syndicateEditingId) return;
   var o = readSyndicateSteppers('syntt');
+  // Season key from the open sheet's syndicate context (set by
+  // openSyndicateManageSheet) — NOT the personal currentSeason.
+  var season = syndicateEditingSeason || getCurrentSeason(syndicateEditingSeasonStartMonth);
   var rows = [];
   PLAN_SPECIES.forEach(function(sp) {
-    rows.push({ syndicate_id: syndicateEditingId, season: currentSeason, species: sp.name, sex: 'm', target: o[sp.name + '-m'] || 0 });
-    rows.push({ syndicate_id: syndicateEditingId, season: currentSeason, species: sp.name, sex: 'f', target: o[sp.name + '-f'] || 0 });
+    rows.push({ syndicate_id: syndicateEditingId, season: season, species: sp.name, sex: 'm', target: o[sp.name + '-m'] || 0 });
+    rows.push({ syndicate_id: syndicateEditingId, season: season, species: sp.name, sex: 'f', target: o[sp.name + '-f'] || 0 });
   });
   // RLS: syndicate_targets_all_manager (WITH CHECK is_syndicate_manager(syndicate_id))
   var r = await sb.from('syndicate_targets').upsert(rows, { onConflict: 'syndicate_id,season,species,sex' });
-  if (r.error) { showToast('⚠️ ' + (r.error.message || 'Save failed')); return; }
+  if (r.error) { showToast('⚠️ ' + friendlyErr(r.error, 'Save failed')); return; }
   showToast('✅ Targets saved');
   statsNeedsFullRebuild = true;
   await renderSyndicateSection();
@@ -8164,11 +19777,13 @@ async function saveSyndicateAlloc() {
   if (!sb || !syndicateEditingId || !syndicateAllocMemberId) { showToast('⚠️ Pick a member'); return; }
   var rows = [];
   var o = readSyndicateSteppers('synalloc');
+  // Season key from the open sheet's syndicate context — see saveSyndicateTargets.
+  var season = syndicateEditingSeason || getCurrentSeason(syndicateEditingSeasonStartMonth);
   PLAN_SPECIES.forEach(function(sp) {
     rows.push({
       syndicate_id: syndicateEditingId,
       user_id: syndicateAllocMemberId,
-      season: currentSeason,
+      season: season,
       species: sp.name,
       sex: 'm',
       allocation: o[sp.name + '-m'] || 0
@@ -8176,7 +19791,7 @@ async function saveSyndicateAlloc() {
     rows.push({
       syndicate_id: syndicateEditingId,
       user_id: syndicateAllocMemberId,
-      season: currentSeason,
+      season: season,
       species: sp.name,
       sex: 'f',
       allocation: o[sp.name + '-f'] || 0
@@ -8184,9 +19799,51 @@ async function saveSyndicateAlloc() {
   });
   // RLS: syndicate_alloc_all_manager
   var r = await sb.from('syndicate_member_allocations').upsert(rows, { onConflict: 'syndicate_id,user_id,season,species,sex' });
-  if (r.error) { showToast('⚠️ ' + (r.error.message || 'Save failed')); return; }
+  if (r.error) { showToast('⚠️ ' + friendlyErr(r.error, 'Save failed')); return; }
   showToast('✅ Allocations saved');
   statsNeedsFullRebuild = true;
+  await renderSyndicateSection();
+}
+
+/**
+ * Manager-only: change the syndicate's season start month. Mirrors the
+ * personal saveSeasonStartEdit flow — validate → no-op if unchanged →
+ * flConfirm warning (plan §6: affects ALL members' syndicate views; targets
+ * and allocations keep their season keys but count against the new window;
+ * reversible) → single-column update → re-render sheet + cards.
+ */
+async function syndSaveSeasonStart() {
+  if (!sb || !currentUser || !syndicateEditingId) return;
+  var sel = document.getElementById('syn-season-start-select');
+  if (!sel) return;
+  var v = validateSeasonStartMonth(sel.value);
+  if (!v.ok) { showToast('⚠️ ' + v.error); return; }
+
+  var prev = normalizeSeasonStartMonth(syndicateEditingSeasonStartMonth);
+  if (v.value === prev) { showToast('Season start unchanged'); return; }
+
+  var exampleKey = syndicateEditingSeason || getCurrentSeason(prev);
+  var oldB = seasonBoundsForKey(exampleKey, prev);
+  var newB = seasonBoundsForKey(exampleKey, v.value);
+  var confirmed = await flConfirm({
+    title: 'Change the syndicate season?',
+    body: 'This changes how seasons are counted for EVERY member\'s syndicate views, targets and team exports. This syndicate\'s seasons currently run '
+      + seasonStartWindowText(oldB) + '. After this change, season ' + exampleKey + ' will cover '
+      + seasonStartWindowText(newB) + '. Existing targets and allocations keep their season names '
+      + 'but now count against the new dates. You can change this back at any time.',
+    action: 'Change season',
+    tone: 'warn'
+  });
+  if (!confirmed) { sel.value = String(prev); return; }
+
+  // RLS: syndicates_update_manager (manager-only via is_syndicate_manager).
+  var r = await sb.from('syndicates').update({ season_start_month: v.value }).eq('id', syndicateEditingId);
+  if (r.error) { showToast('⚠️ ' + friendlyErr(r.error, 'Save failed')); return; }
+  showToast('✅ Syndicate seasons now start in ' + (FULL_MONTHS[v.value - 1] || ('month ' + v.value)));
+  statsNeedsFullRebuild = true;
+  // Re-open re-fetches the row, so the sheet re-derives its season context;
+  // then repaint the cards behind the sheet with the new bucketing.
+  await openSyndicateManageSheet(syndicateEditingId);
   await renderSyndicateSection();
 }
 
@@ -8203,8 +19860,14 @@ async function syndGenerateInvite() {
     max_uses: SYNDICATE_INVITE_DEFAULT_MAX_USES,
     used_count: 0
   });
-  if (r.error) { showToast('⚠️ ' + (r.error.message || 'Could not create invite')); return; }
+  if (r.error) { showToast('⚠️ ' + friendlyErr(r.error, 'Could not create invite')); return; }
   var url = syndicateInviteUrl(tok);
+  // Order matters: openSyndicateManageSheet() rebuilds bodyHtml, which recreates
+  // an EMPTY #syn-invite-out (display:none). Writing the link first meant it
+  // survived exactly one DB round trip and then vanished, leaving the manager
+  // with a burnt invite row and no link. Refresh first, then render into the
+  // fresh box — and never await anything between the write and the user seeing it.
+  await openSyndicateManageSheet(syndicateEditingId);
   var out = document.getElementById('syn-invite-out');
   if (out) {
     out.style.display = 'block';
@@ -8212,7 +19875,6 @@ async function syndGenerateInvite() {
       + '<br><button type="button" class="copy-targets-btn" style="margin-top:8px;" data-fl-action="synd-copy-invite" data-invite-url="' + esc(url) + '">Copy link</button>';
   }
   showToast('✅ Invite link ready');
-  await openSyndicateManageSheet(syndicateEditingId);
 }
 
 function syndCopyInvite(el) {
@@ -8241,7 +19903,7 @@ async function syndRevokeInvite(inviteId) {
     .eq('id', inviteId)
     .eq('syndicate_id', syndicateEditingId);
   if (r.error) {
-    showToast('⚠️ ' + (r.error.message || 'Could not revoke invite'));
+    showToast('⚠️ ' + friendlyErr(r.error, 'Could not revoke invite'));
     return;
   }
   showToast('✅ Invite revoked');
@@ -8291,7 +19953,7 @@ async function syndPromoteMember(userId) {
     .eq('user_id', userId)
     .eq('status', 'active');
   if (r.error) {
-    showToast('⚠️ ' + (r.error.message || 'Could not promote member'));
+    showToast('⚠️ ' + friendlyErr(r.error, 'Could not promote member'));
     return;
   }
   showToast('✅ Member promoted to manager');
@@ -8326,7 +19988,7 @@ async function syndDemoteMember(userId) {
     .eq('status', 'active')
     .eq('role', 'manager');
   if (r.error) {
-    showToast('⚠️ ' + (r.error.message || 'Could not demote member'));
+    showToast('⚠️ ' + friendlyErr(r.error, 'Could not demote member'));
     return;
   }
   showToast('✅ Manager demoted to member');
@@ -8345,7 +20007,7 @@ async function syndDelete() {
   }))) return;
   // RLS: syndicates_delete_manager
   var r = await sb.from('syndicates').delete().eq('id', syndicateEditingId);
-  if (r.error) { showToast('⚠️ ' + (r.error.message || 'Delete failed')); return; }
+  if (r.error) { showToast('⚠️ ' + friendlyErr(r.error, 'Delete failed')); return; }
   showToast('🗑 Syndicate deleted');
   closeSynModal();
   statsNeedsFullRebuild = true;
@@ -8367,7 +20029,7 @@ async function syndRemoveMember(userId) {
   // RLS: syndicate_members_update_manager (manager removes another member)
   var r = await sb.from('syndicate_members').update({ status: 'left' }).eq('syndicate_id', syndicateEditingId).eq('user_id', userId);
   if (r.error) {
-    showToast('⚠️ ' + (r.error.message || 'Could not remove member'));
+    showToast('⚠️ ' + friendlyErr(r.error, 'Could not remove member'));
     return;
   }
   showToast('✅ Member removed');
@@ -8526,7 +20188,7 @@ async function renderSyndicateMessagesSection(syndicate, isMgr) {
       ? '<span class="synd-msg-mgr-badge" title="Manager">Manager</span>'
       : '';
     var pinPill = isPinned
-      ? '<span class="synd-msg-pin-pill" title="Pinned by manager" aria-label="Pinned message">📌 Pinned</span>'
+      ? '<span class="synd-msg-pin-pill" title="Pinned by manager" aria-label="Pinned message"><span class="fl-ic fl-pin"></span> Pinned</span>'
       : '';
     var when = '';
     var ts = m.created_at ? Date.parse(m.created_at) : NaN;
@@ -8655,7 +20317,7 @@ async function postSyndicateMessage() {
     }
     showToast('✅ Message posted');
   } catch (e) {
-    showToast('⚠️ ' + ((e && e.message) || 'Could not post'));
+    showToast('⚠️ ' + friendlyErr(e, 'Could not post'));
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Post'; }
   }
@@ -8682,7 +20344,7 @@ async function softDeleteSyndicateMessage(messageId) {
     .eq('id', messageId)
     .is('deleted_at', null);
   if (r.error) {
-    showToast('⚠️ ' + (r.error.message || 'Could not delete'));
+    showToast('⚠️ ' + friendlyErr(r.error, 'Could not delete'));
     return;
   }
   showToast('🗑 Message removed');
@@ -8719,10 +20381,10 @@ async function pinSyndicateMessage(messageId) {
     .eq('id', messageId)
     .is('deleted_at', null);
   if (r.error) {
-    showToast('⚠️ ' + (r.error.message || 'Could not pin'));
+    showToast('⚠️ ' + friendlyErr(r.error, 'Could not pin'));
     return;
   }
-  showToast('📌 Message pinned');
+  showToast('Message pinned');
   var sr = await sb.from('syndicates').select('*').eq('id', syndicateEditingId).single();
   if (!sr.error && sr.data) {
     await renderSyndicateMessagesSection(sr.data, syndicateManageSheetIsManager);
@@ -8742,10 +20404,10 @@ async function unpinSyndicateMessage(messageId) {
     .update({ pinned_at: null })
     .eq('id', messageId);
   if (r.error) {
-    showToast('⚠️ ' + (r.error.message || 'Could not unpin'));
+    showToast('⚠️ ' + friendlyErr(r.error, 'Could not unpin'));
     return;
   }
-  showToast('📌 Message unpinned');
+  showToast('Message unpinned');
   var sr = await sb.from('syndicates').select('*').eq('id', syndicateEditingId).single();
   if (!sr.error && sr.data) {
     await renderSyndicateMessagesSection(sr.data, syndicateManageSheetIsManager);
@@ -8825,7 +20487,7 @@ async function tryRedeemSyndicateInviteFromUrl() {
     if (document.getElementById('v-stats') && document.getElementById('v-stats').classList.contains('active')) buildStats();
     await renderSyndicateSection();
   } catch (e) {
-    showToast('⚠️ Invite: ' + (e.message || 'invalid'));
+    showToast('⚠️ Invite: ' + friendlyErr(e, 'invalid'));
     history.replaceState(null, '', window.location.pathname + window.location.hash);
   }
 }
@@ -8905,49 +20567,70 @@ function deleteGroundByIdx(btn) {
 }
 
 async function deleteGround(name) {
+  // Finding S: "any boundary/lines/markers" was a category, not an answer. A
+  // ground with nothing on it and a ground with eleven features read the same
+  // warning, so the question the user actually has — what am I about to lose?
+  // — went unanswered in both directions. Count it and say it.
+  var sm = groundContentSummary(name, groundFeaturesNow(), gmbManageStands());
+  var body;
+  if (sm.empty) {
+    body = 'Nothing is mapped on it and no seat is tagged to it — only the name and its targets go.';
+  } else {
+    body = (sm.furniture
+      ? 'Also removed: ' + sm.furnitureLabel + ' — and this ground’s targets.'
+      : 'Nothing is mapped on it. Its targets go with it.')
+      + ' ' + (sm.seats ? sm.seatLabel : 'High seats')
+      + ' and any diary entries are KEPT — they only lose the ground tag.';
+  }
   if (!(await flConfirm({
-    title: 'Remove \u201C' + name + '\u201D from your grounds?',
-    body: 'Targets for this ground will be deleted. Diary entries are kept, but any entry tagged with this ground will no longer show one.',
-    action: 'Remove ground',
+    title: 'Remove “' + name + '” from your grounds?',
+    body: body,
+    action: sm.furniture ? 'Remove anyway' : 'Remove ground',
     tone: 'warn'
   }))) return;
+  await deleteGroundCascade(name);
+}
+
+/**
+ * G17: remove a ground everywhere it's referenced — WITHOUT its own confirm,
+ * so callers pick how they ask (the targets manager uses flConfirm above; the
+ * map picker's Edit mode uses an inline confirm card). "Delete anyway"
+ * semantics (owner G17): the ground's map furniture (boundaries / lines /
+ * markers) IS removed with it — but HIGH SEATS ARE KEPT (ground set to null,
+ * so you can never lose a seat by tidying), and diary entries likewise keep
+ * their row and only lose the tag. Fixes a latent bug: the old deleteGround
+ * left ground_features orphaned (they kept painting after the ground was gone)
+ * and left seats pointing at a ground that no longer existed.
+ */
+async function deleteGroundCascade(name) {
   if (!sb || !currentUser) return;
-
   try {
-    // Clear ground on existing diary rows (entries are not deleted)
     var clearRes = await sb.from('cull_entries')
-      .update({ ground: null })
-      .eq('user_id', currentUser.id)
-      .eq('ground', name);
+      .update({ ground: null }).eq('user_id', currentUser.id).eq('ground', name);
     if (clearRes.error) throw clearRes.error;
+    await sb.from('stands')
+      .update({ ground: null }).eq('user_id', currentUser.id).eq('ground', name);
+    await sb.from('ground_features')
+      .delete().eq('user_id', currentUser.id).eq('ground', name);
+    await sb.from('grounds').delete().eq('user_id', currentUser.id).eq('name', name);
+    await sb.from('ground_targets').delete().eq('user_id', currentUser.id).eq('ground', name);
 
-    // Remove from grounds table
-    await sb.from('grounds')
-      .delete()
-      .eq('user_id', currentUser.id)
-      .eq('name', name);
-
-    // Remove ground targets for this ground
-    await sb.from('ground_targets')
-      .delete()
-      .eq('user_id', currentUser.id)
-      .eq('ground', name);
-
-    // Remove from local array
     savedGrounds = savedGrounds.filter(function(g){ return g !== name; });
     delete groundTargets[name];
-
     if (planGroundFilter === name) planGroundFilter = 'overview';
+    if (flLastGround === name) setLastGroundVisited('');
 
     await loadGroundTargets(currentSeason);
     if (savedGrounds.length === 0) {
       var aggDel = sumGroundTargetsAgg(groundTargets);
       if (summedGroundTargetsAnyPositive(aggDel)) await syncCullTargetsFromGroundTargetsAgg(aggDel);
     }
-
     populateGroundDropdown();
     renderGroundSections();
     renderPlanGroundFilter();
+    await refreshGroundsData();
+    flStandsState.list = null;
+    await refreshStandsView(true);
     await loadEntries();
     renderPlanCard(allEntries, currentSeason);
     if (document.getElementById('v-stats') && document.getElementById('v-stats').classList.contains('active')) buildStats();
@@ -8955,7 +20638,54 @@ async function deleteGround(name) {
     showToast('🗑 ' + name + ' removed');
   } catch(e) {
     showToast('⚠️ Could not remove ground');
-    console.warn('deleteGround error:', e);
+    console.warn('deleteGroundCascade error:', e);
+  }
+}
+
+/**
+ * G17: rename a ground everywhere — the name is the key that links a ground
+ * to its boundaries/lines/markers, its high seats, its diary entries and its
+ * targets, so every one of them is repointed to the new name (nothing
+ * orphaned). Validates like the add flow (non-empty, <=120, not a duplicate).
+ * Returns { ok } so the caller can leave the field open on failure.
+ */
+async function renameGround(oldName, newName) {
+  newName = (newName || '').trim();
+  if (!sb || !currentUser) return { ok: false };
+  if (!newName) { showToast('⚠️ Name it first'); return { ok: false }; }
+  if (newName.length > 120) { showToast('⚠️ Ground name too long (120 characters max)'); return { ok: false }; }
+  if (newName === oldName) return { ok: true };
+  if (savedGrounds.indexOf(newName) !== -1) { showToast('⚠️ “' + newName + '” already exists'); return { ok: false }; }
+  if (!navigator.onLine) { showToast('⚠️ Still offline — renaming needs signal'); return { ok: false }; }
+  try {
+    await sb.from('grounds').upsert({ user_id: currentUser.id, name: newName }, { onConflict: 'user_id,name' });
+    await sb.from('ground_features').update({ ground: newName }).eq('user_id', currentUser.id).eq('ground', oldName);
+    await sb.from('stands').update({ ground: newName }).eq('user_id', currentUser.id).eq('ground', oldName);
+    await sb.from('cull_entries').update({ ground: newName }).eq('user_id', currentUser.id).eq('ground', oldName);
+    await sb.from('ground_targets').update({ ground: newName }).eq('user_id', currentUser.id).eq('ground', oldName);
+    await sb.from('grounds').delete().eq('user_id', currentUser.id).eq('name', oldName);
+
+    savedGrounds = savedGrounds.filter(function(g){ return g !== oldName; });
+    if (savedGrounds.indexOf(newName) === -1) savedGrounds.push(newName);
+    savedGrounds.sort();
+    if (groundTargets[oldName] != null) { groundTargets[newName] = groundTargets[oldName]; delete groundTargets[oldName]; }
+    if (planGroundFilter === oldName) planGroundFilter = newName;
+    if (flLastGround === oldName) setLastGroundVisited(newName);
+
+    populateGroundDropdown();
+    renderGroundSections();
+    renderPlanGroundFilter();
+    await refreshGroundsData();
+    flStandsState.list = null;
+    await refreshStandsView(true);
+    await loadEntries();
+    renderPlanCard(allEntries, currentSeason);
+    showToast('✓ Renamed to “' + newName + '”');
+    return { ok: true };
+  } catch(e) {
+    showToast('⚠️ Could not rename — check signal and try again');
+    console.warn('renameGround error:', e);
+    return { ok: false };
   }
 }
 
@@ -9015,11 +20745,12 @@ async function openSummaryFilter() {
     seasonSet[currentSeason] = true;
   }
   var seasons = Object.keys(seasonSet).sort().reverse();
+  var summarySm = personalSeasonStartMonth();
   seasons.forEach(function(s) {
     if (s === '__all__') return; // first option is already "All Seasons"
     var opt = document.createElement('option');
     opt.value = s;
-    opt.textContent = seasonLabel(s);
+    opt.textContent = seasonLabel(s, summarySm);
     if (s === currentSeason) opt.selected = true;
     seasonSel.appendChild(opt);
   });
@@ -9252,7 +20983,7 @@ function pinmapSearchNow(val) {
         var name = formatUkLocationLabel(r.address || {}, displayFirst) || displayFirst || 'Location';
         var enc = encodeURIComponent(name);
         var tip = r.display_name ? ' title="' + diaryEscAttr(r.display_name) + '"' : '';
-        return '<div tabindex="0" role="button" data-fl-action="pinmap-select" data-lat="' + r.lat + '" data-lng="' + r.lon + '" data-place-name="' + enc + '" '
+        return '<div tabindex="0" role="button" data-fl-action="pinmap-select" data-lat="' + Number(r.lat) + '" data-lng="' + Number(r.lon) + '" data-place-name="' + enc + '" '
           + tip
           + ' style="padding:10px 14px;font-size:12px;color:white;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.08);">'
           + '<div style="font-weight:600;">' + diaryEscHtml(name) + '</div>'
@@ -9277,12 +21008,18 @@ function openPhotoLightbox(url) {
   var lb = document.getElementById('photo-lightbox');
   var img = document.getElementById('photo-lightbox-img');
   img.src = url;
+  // The markup ships alt="" so the thumbnail-sized placeholder is skipped, but
+  // once it is the only content of a full-screen lightbox an empty alt means a
+  // screen reader announces nothing at all. There is no per-photo caption to
+  // draw on here, so name it generically rather than leave it silent.
+  img.alt = 'Entry photo';
   lb.style.display = 'flex';
   document.body.style.overflow = 'hidden';
 }
 function closePhotoLightbox() {
   document.getElementById('photo-lightbox').style.display = 'none';
   document.getElementById('photo-lightbox-img').src = '';
+  document.getElementById('photo-lightbox-img').alt = '';
   document.body.style.overflow = '';
 }
 

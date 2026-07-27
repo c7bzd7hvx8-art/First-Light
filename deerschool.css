@@ -1,12 +1,12 @@
 /* Deer School — Styles v2.0 */
 :root{
   --forest:#1a3a0e; --deep:#0e2a08; --moss:#5a7a30; --leaf:#7adf7a;
-  --gold:#c8a84b; --amber:#f0c870; --cream:#f2efe9; --stone:#ede9e2;
+  --gold:#d8b054; --amber:#f0cc74; --cream:#f2efe9; --stone:#ede9e2;
   --bark:#3d2b1f; --muted:#a0988a; --red:#c62828; --green:#2d7a1a;
   --correct:#1a6e12; --incorrect:#b71c1c;
 }
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-body{background:var(--deep);font-family:'DM Sans',sans-serif;color:var(--bark);max-width:430px;margin:0 auto;min-height:100vh;}
+body{background:var(--deep);font-family:'DM Sans',sans-serif;color:var(--bark);max-width:430px;margin:0 auto;min-height:100vh;padding-top:env(safe-area-inset-top,0px);}
 .view{display:none;flex-direction:column;min-height:100vh;}
 .view.active{display:flex;}
 button{font-family:'DM Sans',sans-serif;}
@@ -22,7 +22,7 @@ a:focus-visible,
 .back-link-btn:focus-visible,
 .reset-btn:focus-visible,
 .quiz-back:focus-visible {
-  outline: 2px solid rgba(200, 168, 75, 0.9);
+  outline: 2px solid rgba(216, 176, 84, 0.9);
   outline-offset: 2px;
 }
 
@@ -33,25 +33,27 @@ a:focus-visible,
 /* ── DISCLAIMER ── */
 #v-disclaimer{background:linear-gradient(160deg,#0a1a06,#162810,#1e3a12);justify-content:center;align-items:center;padding:32px 24px;gap:0;}
 .disc-logo{text-align:center;margin-bottom:28px;}
-.disc-logo img{width:56px;height:56px;border-radius:14px;display:block;margin:0 auto 12px;}
+.disc-logo img{width:68px;height:68px;border-radius:16px;display:block;margin:0 auto 14px;box-shadow:0 10px 24px rgba(0,0,0,0.5),0 0 0 1px rgba(216,176,84,0.45);}
 .disc-logo h1{font-family:'Playfair Display',serif;font-size:22px;color:white;margin-bottom:4px;}
-.disc-logo p{font-size:10px;color:rgba(200,168,75,0.65);text-transform:uppercase;letter-spacing:1.2px;font-family:'DM Mono',monospace;}
-.disc-card{background:rgba(255,255,255,0.04);border:1px solid rgba(200,168,75,0.2);border-radius:16px;padding:20px;width:100%;max-width:340px;margin-bottom:20px;}
-.disc-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(200,168,75,0.12);border:1px solid rgba(200,168,75,0.3);border-radius:20px;padding:4px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--amber);font-family:'DM Mono',monospace;margin-bottom:12px;}
+.disc-logo p{font-size:10px;color:rgba(216,176,84,0.65);text-transform:uppercase;letter-spacing:1.2px;font-family:'DM Mono',monospace;}
+.disc-card{background:rgba(255,255,255,0.04);border:1px solid rgba(216,176,84,0.2);border-radius:16px;padding:20px;width:100%;max-width:340px;margin-bottom:20px;}
+.disc-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(216,176,84,0.12);border:1px solid rgba(216,176,84,0.3);border-radius:20px;padding:4px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--amber);font-family:'DM Mono',monospace;margin-bottom:12px;}
 .disc-title{font-family:'Playfair Display',serif;font-size:16px;color:white;margin-bottom:10px;line-height:1.3;}
-.disc-body{font-size:12px;color:rgba(255,255,255,0.55);line-height:1.7;}
+.disc-body{font-size:12px;color:rgba(255,255,255,0.6);line-height:1.7;}
 .disc-body strong{color:rgba(255,255,255,0.75);}
 .disc-btn{width:100%;max-width:340px;padding:14px;background:linear-gradient(135deg,var(--moss),var(--deep));color:white;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;}
+.disc-home-link{display:inline-flex;align-items:center;justify-content:center;min-height:44px;margin-top:16px;padding:0 16px;border-radius:10px;font-size:11.5px;font-weight:600;letter-spacing:0.4px;font-family:'DM Mono',monospace;color:rgba(216,176,84,0.62);text-decoration:none;-webkit-tap-highlight-color:transparent;}
+.disc-home-link:hover{color:rgba(216,176,84,0.92);background:rgba(216,176,84,0.07);}
 
 /* ── DASHBOARD ── */
 #v-dashboard{background:var(--cream);}
 .dash-hdr{background:linear-gradient(160deg,#0a1506,#0f2008,#0a1a05);padding:56px 20px 24px;flex-shrink:0;position:relative;overflow:hidden;}
 .dash-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
-.dash-back{display:flex;align-items:center;gap:6px;text-decoration:none;}
+.dash-back{display:flex;align-items:center;gap:6px;text-decoration:none;min-height:44px;padding:0 8px;margin:-10px -8px;border-radius:9px;-webkit-tap-highlight-color:transparent;}
 .dash-back img{width:24px;height:24px;border-radius:6px;opacity:0.7;}
-.dash-back span{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:rgba(200,168,75,0.6);font-family:'DM Mono',monospace;}
+.dash-back span{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:rgba(216,176,84,0.6);font-family:'DM Mono',monospace;}
 .dash-title{font-family:'Playfair Display',serif;font-size:32px;color:white;line-height:1;margin-bottom:6px;letter-spacing:-0.3px;}
-.dash-sub{font-size:10px;color:rgba(200,168,75,0.65);text-transform:uppercase;letter-spacing:1px;font-weight:600;font-family:'DM Mono',monospace;}
+.dash-sub{font-size:10px;color:rgba(216,176,84,0.65);text-transform:uppercase;letter-spacing:1px;font-weight:600;font-family:'DM Mono',monospace;}
 .dash-scroll{flex:1;overflow-y:auto;padding:18px 16px 40px;}
 .dash-kicker{
   font-size:9px;
@@ -101,7 +103,7 @@ a:focus-visible,
 .mode-btn-sub{font-size:10px;color:var(--muted);line-height:1.4;}
 .mode-btn.primary{background:linear-gradient(145deg,#1a3a0e,#0a1a05);color:white;box-shadow:0 6px 20px rgba(10,30,5,0.35);border:1px solid rgba(255,255,255,0.06);}
 .mode-btn.primary .mode-btn-title{color:white;}
-.mode-btn.primary .mode-btn-sub{color:rgba(255,255,255,0.5);}
+.mode-btn.primary .mode-btn-sub{color:rgba(255,255,255,0.6);}
 .tool-grid{
   display:grid;
   grid-template-columns:1fr 1fr 1fr;
@@ -183,7 +185,7 @@ a:focus-visible,
 .back-link-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:11px;background:rgba(0,0,0,0.04);border:none;border-radius:10px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;text-decoration:none;font-family:'DM Sans',sans-serif;}
 /* Quick Reference Card */
 .ref-tab{flex-shrink:0;padding:8px 16px;border-radius:20px;border:1px solid rgba(0,0,0,0.12);background:white;color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:'DM Sans',sans-serif;display:inline-flex;align-items:center;gap:5px;box-shadow:0 1px 4px rgba(0,0,0,0.06);}
-.ref-tab.active{background:var(--gold);border-color:var(--gold);color:#0f1a0f;font-weight:700;box-shadow:0 2px 8px rgba(201,168,76,0.35);}
+.ref-tab.active{background:var(--gold);border-color:var(--gold);color:#0f1a0f;font-weight:700;box-shadow:0 2px 8px rgba(216,176,84,0.35);}
 .ref-card{background:white;border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,0.06);}
 .ref-card-title{font-size:12px;font-weight:700;color:var(--bark);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #f0ece4;display:flex;align-items:center;gap:6px;}
 .ref-table{width:100%;border-collapse:collapse;font-size:11px;}
@@ -227,7 +229,7 @@ a:focus-visible,
 .quiz-hdr{background:linear-gradient(160deg,#0f1e0a,#0a1506);padding:44px 18px 16px;flex-shrink:0;}
 .quiz-meta-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
 .quiz-back{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.15);border-radius:50%;width:32px;height:32px;color:white;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-style:solid;}
-.quiz-cat-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--amber);background:rgba(200,168,75,0.15);border:1px solid rgba(200,168,75,0.25);border-radius:10px;padding:3px 9px;font-family:'DM Mono',monospace;}
+.quiz-cat-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--amber);background:rgba(216,176,84,0.15);border:1px solid rgba(216,176,84,0.25);border-radius:10px;padding:3px 9px;font-family:'DM Mono',monospace;}
 .quiz-session-chip{
   display:inline-flex;
   align-items:center;
@@ -237,16 +239,16 @@ a:focus-visible,
   font-family:'DM Mono',monospace;
   letter-spacing:0.5px;
   text-transform:uppercase;
-  color:rgba(200,168,75,0.75);
-  background:rgba(200,168,75,0.12);
-  border:1px solid rgba(200,168,75,0.22);
+  color:rgba(216,176,84,0.75);
+  background:rgba(216,176,84,0.12);
+  border:1px solid rgba(216,176,84,0.22);
   border-radius:999px;
   padding:4px 10px;
   margin:0 0 10px;
 }
 .quiz-progress-wrap{height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;}
 .quiz-progress-bar{height:100%;background:linear-gradient(90deg,var(--gold),var(--amber));border-radius:2px;transition:width 0.4s ease;}
-.quiz-count{font-size:10px;color:rgba(255,255,255,0.4);font-family:'DM Mono',monospace;margin-top:5px;text-align:right;}
+.quiz-count{font-size:10px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;margin-top:5px;text-align:right;}
 .quiz-scroll{flex:1;overflow-y:auto;padding:16px 16px 16px;}
 
 /* Question card */
@@ -258,6 +260,8 @@ a:focus-visible,
 .options-wrap{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;}
 .opt-btn{width:100%;padding:14px 16px;border-radius:12px;border:1.5px solid var(--stone);border-left-width:5px;border-left-color:transparent;background:white;font-size:13px;font-weight:500;color:var(--bark);cursor:pointer;text-align:left;line-height:1.4;transition:border-color 0.15s,background 0.15s,box-shadow 0.15s;font-family:'DM Sans',sans-serif;}
 .opt-btn:active{transform:scale(0.98);}
+.opt-btn.selected{border-color:var(--gold);border-left-color:var(--gold);background:#fbf7ec;box-shadow:0 0 0 1px rgba(216,176,84,0.25) inset;}
+.opt-btn.selected::before{content:'\25CF ';color:var(--gold);font-weight:900;}
 .opt-btn.selected-correct{background:#e8f5e9;border-color:#43a047;border-left-color:#2e7d32;color:#1b5e20;box-shadow:0 0 0 1px rgba(67,160,71,0.2) inset;}
 .opt-btn.selected-correct::before{content:'✓ ';font-weight:900;}
 .opt-btn.selected-incorrect{background:#ffebee;border-color:#e53935;border-left-color:#c62828;color:#b71c1c;box-shadow:0 0 0 1px rgba(229,57,53,0.15) inset;}
@@ -321,11 +325,11 @@ a:focus-visible,
 #v-results{background:var(--cream);}
 .results-hdr{background:linear-gradient(160deg,#0f1e0a,#0a1506);padding:54px 18px 20px;flex-shrink:0;text-align:center;}
 .results-score{font-family:'Playfair Display',serif;font-size:56px;color:white;line-height:1;margin-bottom:4px;}
-.results-score span{font-size:20px;font-weight:400;color:rgba(255,255,255,0.4);}
+.results-score span{font-size:20px;font-weight:400;color:rgba(255,255,255,0.6);}
 .results-verdict{font-size:14px;font-weight:700;padding:5px 16px;border-radius:20px;display:inline-block;margin-bottom:8px;}
 .results-verdict.pass{background:rgba(45,122,26,0.25);color:#7adf7a;border:1px solid rgba(45,122,26,0.4);}
 .results-verdict.fail{background:rgba(198,40,40,0.2);color:#ff8a80;border:1px solid rgba(198,40,40,0.3);}
-.results-sub{font-size:10px;color:rgba(200,168,75,0.6);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;}
+.results-sub{font-size:10px;color:rgba(216,176,84,0.6);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;}
 .results-scroll{flex:1;overflow-y:auto;padding:16px 16px 32px;}
 .results-card{background:white;border-radius:14px;padding:16px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,0.05);}
 .results-card-title{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--moss);font-family:'DM Mono',monospace;margin-bottom:12px;}
@@ -377,4 +381,104 @@ a:focus-visible,
   grid-template-columns:1fr 1fr;
   gap:8px;
   margin-top:10px;
+}
+
+/* Visually-hidden text that remains available to assistive tech.
+   Used for the live-region answer verdict in the quiz view. */
+.fl-sr-only{
+  position:absolute;
+  width:1px;
+  height:1px;
+  margin:-1px;
+  padding:0;
+  overflow:hidden;
+  clip:rect(0 0 0 0);
+  clip-path:inset(50%);
+  white-space:nowrap;
+  border:0;
+}
+
+/* Quick Reference panels are focusable (tabpanel), so they need their own
+   focus ring - the block above only covers buttons and links. */
+.ref-section-block:focus-visible{
+  outline:2px solid rgba(216,176,84,0.9);
+  outline-offset:2px;
+}
+
+/* ── Confirm sheet ────────────────────────────────────────────
+   Styling for flConfirm(), which replaces native confirm(). */
+body.fl-confirm-open{overflow:hidden;}
+
+.fl-confirm-overlay{
+  position:fixed;
+  inset:0;
+  z-index:10000;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+  background:rgba(14,42,8,0.72);
+  -webkit-backdrop-filter:blur(2px);
+  backdrop-filter:blur(2px);
+}
+.fl-confirm-card{
+  width:100%;
+  max-width:340px;
+  background:var(--cream);
+  border-radius:18px;
+  padding:22px 20px 18px;
+  box-shadow:0 18px 48px rgba(0,0,0,0.45);
+  border:1px solid rgba(61,43,31,0.12);
+}
+.fl-confirm-title{
+  font-family:'DM Sans',sans-serif;
+  font-size:17px;
+  font-weight:700;
+  line-height:1.25;
+  color:var(--bark);
+  margin-bottom:8px;
+}
+.fl-confirm-body{
+  font-family:'DM Sans',sans-serif;
+  font-size:13px;
+  font-weight:400;
+  line-height:1.5;
+  color:#5c5044;
+  margin-bottom:18px;
+}
+.fl-confirm-row{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+}
+.fl-confirm-btn{
+  min-height:44px;
+  padding:11px 14px;
+  border:none;
+  border-radius:11px;
+  font-size:13px;
+  font-weight:700;
+  cursor:pointer;
+  line-height:1.2;
+}
+.fl-confirm-cancel{
+  background:var(--stone);
+  color:var(--bark);
+  border:1px solid rgba(61,43,31,0.16);
+}
+.fl-confirm-ok{
+  background:var(--forest);
+  color:var(--cream);
+}
+.fl-confirm-ok.danger{
+  background:var(--red);
+  color:#fff;
+}
+.fl-confirm-btn:focus-visible{
+  outline:2px solid rgba(216,176,84,0.9);
+  outline-offset:2px;
+}
+
+@media (prefers-reduced-motion:reduce){
+  .fl-confirm-overlay{-webkit-backdrop-filter:none;backdrop-filter:none;}
 }

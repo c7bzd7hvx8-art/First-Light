@@ -2,12 +2,26 @@
 <html lang="en-GB">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; script-src https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://firstlightdeer.goatcounter.com; frame-ancestors 'self';">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; script-src https://gc.zgo.at; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://firstlightdeer.goatcounter.com; frame-ancestors 'self';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <title>Terms of Use — First Light</title>
 <meta name="description" content="Terms of use for First Light, the UK deer stalking app and Cull Diary.">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<meta property="og:title" content="Terms of Use — First Light">
+<meta property="og:description" content="Terms of use for First Light — the UK deer stalking companion, Cull Diary, Deer School and ballistic calculator.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://firstlightdeer.co.uk/terms.html">
+<meta property="og:image" content="https://firstlightdeer.co.uk/icon-512.png">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+<meta property="og:image:alt" content="First Light — UK deer stalking app icon showing a stag silhouette at dawn">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Terms of Use — First Light">
+<meta name="twitter:description" content="Terms of use for First Light — the UK deer stalking companion, Cull Diary and ballistic calculator.">
+<meta name="twitter:image" content="https://firstlightdeer.co.uk/icon-512.png">
+<link rel="canonical" href="https://firstlightdeer.co.uk/terms.html">
+<meta name="theme-color" content="#1a2e1a">
+<link rel="stylesheet" href="fonts/fonts.css">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
@@ -23,18 +37,25 @@
     padding: 24px 20px 20px;
     border-bottom: 1px solid rgba(200,168,75,0.15);
   }
+  /* Home audit: this was a 125x16 target at the top of a page thousands of
+     pixels long. 44 tall now, with the negative margins cancelling the added
+     height so the label sits on exactly the pixel it always did. */
   .back-link {
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    min-height: 44px;
+    padding: 0 12px;
+    margin: -14px -12px 2px;
+    border-radius: 8px;
     font-size: 12px;
     color: rgba(200,168,75,0.7);
     text-decoration: none;
-    margin-bottom: 16px;
     font-weight: 600;
     letter-spacing: 0.3px;
+    -webkit-tap-highlight-color: transparent;
   }
-  .back-link:hover { color: #c8a84b; }
+  .back-link:hover { color: #c8a84b; background: rgba(200,168,75,0.07); }
   .header-title {
     display: flex;
     align-items: center;
@@ -148,17 +169,33 @@
     font-size: 12px;
   }
   .footer a:hover { color: #c8a84b; }
+  /* The end-of-page route home. Only this link is enlarged, not every anchor
+     in the footer, so links sitting inside a sentence keep their text flow. */
+  .footer-home {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    margin: -12px 0;
+    padding: 0 14px;
+    border-radius: 9px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .footer-home:hover { background: rgba(200,168,75,0.08); }
   .updated {
     font-size: 11px;
     color: rgba(255,255,255,0.2);
     text-align: right;
     margin-bottom: 20px;
   }
+
+/* iPhone standalone: keep content below the status bar; no-op elsewhere. */
+body { padding-top: env(safe-area-inset-top, 0px); }
 </style>
 </head>
 <body>
 
-<div class="header">
+<header class="header">
   <a href="./" class="back-link">← Back to First Light</a>
   <div class="header-title">
     <div class="app-icon">
@@ -169,11 +206,11 @@
       Terms of Use
     </h1>
   </div>
-</div>
+</header>
 
-<div class="content">
+<main class="content" id="pg-main">
 
-  <div class="updated">Last updated: 6 July 2026</div>
+  <div class="updated">Last updated: 25 July 2026</div>
 
   <div class="summary-box">
     <p><strong>The short version:</strong> First Light is free software made for UK deer stalkers. Features may change or be withdrawn at any time, and you are responsible for the accuracy and legality of the records you keep in it. You may use it for your own stalking activity — including any lawful commercial side such as selling venison to game dealers or issuing trained-hunter declarations — but you may not resell access to the app itself or redistribute any part of it. Please read the full terms below.</p>
@@ -182,14 +219,15 @@
   <div class="section">
     <h2>1. About these terms</h2>
     <hr class="divider">
-    <p>These terms of use ("<strong>Terms</strong>") govern your use of the First Light app, including the Cull Diary and Deer School, at <a href="https://firstlightdeer.co.uk" style="color:rgba(200,168,75,0.7);">firstlightdeer.co.uk</a> and any associated pages ("<strong>First Light</strong>" or the "<strong>app</strong>"). By using the app, or by creating a Cull Diary account, you agree to these Terms. If you do not agree, please do not use the app.</p>
+    <p>These terms of use ("<strong>Terms</strong>") govern your use of the First Light app, including the Ballistics Calculator, Deer School and the Cull Diary, at <a href="https://firstlightdeer.co.uk" style="color:rgba(200,168,75,0.7);">firstlightdeer.co.uk</a> and any associated pages ("<strong>First Light</strong>" or the "<strong>app</strong>"). By using the app, or by creating a Cull Diary account, you agree to these Terms. If you do not agree, please do not use the app.</p>
     <p>First Light is an independent project operated by <strong>Sohaib Mengal</strong> from the United Kingdom ("<strong>we</strong>", "<strong>us</strong>"). For any question about these Terms, contact <a href="mailto:firstlightdeer@gmail.com" style="color:rgba(200,168,75,0.7);">firstlightdeer@gmail.com</a>.</p>
   </div>
 
   <div class="section">
     <h2>2. What First Light is (and isn't)</h2>
     <hr class="divider">
-    <p>First Light is a set of digital tools for UK deer stalkers — legal shooting-time calculators, species information, seasonal calendars, a learning dashboard (Deer School), and the optional <strong>Cull Diary</strong> for recording your own cull activity. It is intended as a practical aid, not as legal, veterinary, or food-hygiene advice.</p>
+    <p>First Light is a set of digital tools for UK deer stalkers — legal shooting-time calculators, species information, seasonal calendars, a learning dashboard (Deer School), a <strong>Ballistics Calculator</strong>, and the optional <strong>Cull Diary</strong> for recording your own cull activity. It is intended as a practical aid, not as legal, veterinary, food-hygiene, firearms or ballistic advice.</p>
+    <p><strong>The Ballistics Calculator is a planning aid, and nothing more.</strong> It models a trajectory from figures <strong>you</strong> supply, or from published manufacturer data measured in a test barrel that is not your barrel. Everything it produces — come-ups, wind holds, retained velocity and energy, the statutory-minimum pass or fail indication, and the "ethical maximum range" — is calculated guidance. None of it substitutes for chronographing your own load, zeroing your own rifle, and confirming the fall of shot on a range. Statutory calibre, bullet-weight and muzzle-energy minimums differ between England and Wales, Scotland and Northern Ireland, and they change; the compliance indication is our reading of those rules, not legal advice and not a defence. Every decision to take or to decline a shot is yours alone, and you remain responsible for your backstop, your range estimate, your competence at that range, and the outcome. If the numbers and the animal in front of you disagree, do not shoot.</p>
     <p>The app generates documents such as Trained Hunter Declarations, Game Dealer Consignment Declarations, and Larder Books from the information <strong>you</strong> enter. These documents record declarations you are making; they are not issued, certified, or endorsed by us. You are responsible for the accuracy of every entry and declaration, and for meeting any regulatory obligations that apply to you (including but not limited to assimilated Regulation (EC) No 853/2004 and the UK Game Regulations).</p>
   </div>
 
@@ -236,7 +274,7 @@
   <div class="section">
     <h2>6. Your content</h2>
     <hr class="divider">
-    <p>You retain ownership of the cull records, notes, photographs, and syndicate chat messages you enter into the Cull Diary ("<strong>Your Content</strong>"). We do not claim any rights in Your Content and we do not use it to train models, sell to third parties, or advertise. We store and process it only to provide the service to you, as described in the <a href="privacy.html" style="color:rgba(200,168,75,0.7);">Privacy Policy</a>.</p>
+    <p>You retain ownership of the cull records, live-deer sightings, saved stands, notes, photographs, and syndicate chat messages you enter into the Cull Diary ("<strong>Your Content</strong>"). We do not claim any rights in Your Content and we do not use it to train models, sell to third parties, or advertise. We store and process it only to provide the service to you, as described in the <a href="privacy.html" style="color:rgba(200,168,75,0.7);">Privacy Policy</a>.</p>
     <p>If you choose to share entries with a <strong>syndicate</strong> you are a member of, Your Content in those entries may be visible to other members of that syndicate, as explained in the diary interface. You are responsible for what you choose to share.</p>
     <p>You are solely responsible for Your Content, including its accuracy and its lawfulness. We may remove Your Content or suspend your account if we reasonably believe it violates these Terms or the law.</p>
   </div>
@@ -286,6 +324,7 @@
     <ul>
       <li>The app will always be available or free of errors or bugs.</li>
       <li>The information it displays (legal shooting times, weather, map tiles, species information, quiz answers, calculated statistics) is accurate, complete, or up to date.</li>
+      <li>Any ballistic solution it computes — drop, wind drift, retained velocity or energy, dead-hold zone, ethical maximum range — matches what your rifle and your load actually do, or that the statutory-minimum indication reflects the law in force where you are shooting.</li>
       <li>Any document generated by the app satisfies any specific regulatory or contractual requirement that applies to you.</li>
       <li>The app will be compatible with your device or browser.</li>
     </ul>
@@ -331,10 +370,10 @@
   <div class="footer">
     <p>© 2025–2026 Sohaib Mengal · First Light · All rights reserved</p>
     <p style="margin-top:4px;">These Terms should be read alongside the <a href="privacy.html">Privacy Policy</a>.</p>
-    <p style="margin-top:8px;"><a href="./">← Return to app</a></p>
+    <p style="margin-top:8px;"><a href="./" class="footer-home">← Return to app</a></p>
   </div>
 
-</div>
+</main>
 
 <script data-goatcounter="https://firstlightdeer.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </body>

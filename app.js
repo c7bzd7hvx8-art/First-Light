@@ -160,6 +160,8 @@ function applyFieldMode(on) {
   } catch (e) { /* ignore */ }
   var btn = document.getElementById('field-mode-btn');
   if (btn) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  var slimFm = document.getElementById('fl-slim-fieldmode');
+  if (slimFm) slimFm.setAttribute('aria-pressed', on ? 'true' : 'false');
   var meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', on ? '#0a0f0a' : '#1a2e1a');
 }
@@ -185,18 +187,10 @@ ui.updateOfflineBanner = function() {
 };
 
 ui.ensurePwaStatusChip = function() {
-  var chip = document.getElementById('pwa-status-chip');
-  if (!chip) {
-    var header = document.querySelector('.app-header');
-    if (!header) return;
-    chip = document.createElement('div');
-    chip.id = 'pwa-status-chip';
-    chip.className = 'pwa-status-chip';
-    chip.setAttribute('aria-live', 'polite');
-    header.appendChild(chip);
-  }
-  if (document.getElementById('pwa-status-text')) return;
-  chip.innerHTML = '<span id="pwa-status-dot"></span><span id="pwa-status-text">Online</span>';
+  // The header PWA status chip was removed from the homepage — a live online/
+  // offline readout belongs inside the Cull Diary (where offline queueing
+  // matters), not on the marketing header. No-op keeps updatePwaStatus() safe.
+  return;
 };
 
 ui.updatePwaStatus = function() {
@@ -251,6 +245,112 @@ function enhanceKeyboardClickables(root) {
   });
 }
 
+// ── Native PWA install (beforeinstallprompt) ──────────────────
+// Chromium (Android Chrome/Edge, desktop Chrome/Edge) fires this when the app
+// is installable; we stash the event so the Install button can open the real
+// OS install dialog in one tap. iOS Safari never fires it — those users fall
+// back to the manual "Add to Home Screen" card (see scroll-to-install below).
+var flDeferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', function(e) {
+  e.preventDefault();             // suppress Chrome's own mini-infobar; we drive it
+  flDeferredInstallPrompt = e;    // reused on the Install tap (needs a user gesture)
+});
+window.addEventListener('appinstalled', function() {
+  flDeferredInstallPrompt = null;
+  var ib = document.getElementById('install-btn');
+  if (ib) ib.style.display = 'none';   // installed — nothing left to prompt
+});
+// Fires the stored native prompt. Returns false when there's nothing to fire
+// (iOS / already installed / unsupported) so the caller can fall back.
+function flTriggerInstall() {
+  var dp = flDeferredInstallPrompt;
+  if (!dp) return false;
+  flDeferredInstallPrompt = null;  // a captured prompt can only be used once
+  try {
+    dp.prompt();                   // synchronous within the click gesture
+    if (dp.userChoice && typeof dp.userChoice.then === 'function') {
+      dp.userChoice.catch(function() {});   // swallow — outcome not needed
+    }
+  } catch (err) { /* already consumed / not allowed — ignore */ }
+  return true;
+}
+
+// ── Returning/installed home: hoist the "legal now" banner to the top ─────────
+// Cold visitors keep the full marketing header (it explains what First Light is).
+// Once someone installs the app or sets a location, they open First Light to answer
+// one question at 04:30 — "can I shoot right now?" — so the tall header collapses to
+// a slim bar and the legal banner leads. The original .app-header is hidden (not
+// removed), so its existing wiring stays intact.
+function flCloseHeaderMenu() {
+  var menu = document.getElementById('fl-hdr-menu');
+  var btn = document.getElementById('fl-hdr-menu-btn');
+  if (menu) menu.classList.remove('open');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+function flToggleHeaderMenu() {
+  var menu = document.getElementById('fl-hdr-menu');
+  var btn = document.getElementById('fl-hdr-menu-btn');
+  if (!menu || !btn) return;
+  var open = !menu.classList.contains('open');
+  menu.classList.toggle('open', open);
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function flHoistHeader() {
+  // Gate: installed PWA, or a returning user who already set a location.
+  var installed = document.documentElement.classList.contains('fl-standalone');
+  var returning = typeof ui !== 'undefined' && ui.loadState && ui.loadState() != null;
+  if (!installed && !returning) return;
+
+  var legal = document.getElementById('legal-banner');
+  if (!legal || !legal.parentNode) return;
+  if (document.querySelector('.fl-slim-hdr')) return;   // already hoisted
+
+  var moon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" fill="rgba(240,204,116,0.10)"/></svg>';
+  var diary = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="2" width="13" height="20" rx="2" stroke="currentColor" stroke-width="1.8" fill="none"/><line x1="4" y1="2" x2="4" y2="22" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/><line x1="8" y1="7" x2="14" y2="7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.7"/><line x1="8" y1="10" x2="14" y2="10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.7"/><line x1="8" y1="13" x2="11" y2="13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.7"/></svg>';
+  var calc = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.8"/><line x1="12" y1="2" x2="12" y2="5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="12" y1="18.5" x2="12" y2="22" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="2" y1="12" x2="5.5" y2="12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="18.5" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>';
+  var dots = '<svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="10" r="1.7" fill="currentColor"/><circle cx="10" cy="10" r="1.7" fill="currentColor"/><circle cx="16" cy="10" r="1.7" fill="currentColor"/></svg>';
+
+  var bar = document.createElement('div');
+  bar.className = 'fl-slim-hdr';
+  bar.setAttribute('role', 'banner');
+  bar.innerHTML =
+    '<div class="fl-slim-brand">' +
+      '<img src="icon-180.png" width="30" height="30" alt="">' +
+      '<span>First Light</span>' +
+    '</div>' +
+    '<div class="fl-slim-tools">' +
+      '<button type="button" id="fl-slim-fieldmode" class="fl-slim-ic" data-fl-action="toggle-field-mode" aria-pressed="false" aria-label="Field mode — dim UI for low light" title="Field mode">' + moon + '</button>' +
+      '<a class="fl-slim-ic" href="diary.html" aria-label="Cull Diary">' + diary + '</a>' +
+      '<a class="fl-slim-ic" href="ballistics.html" aria-label="Ballistic Calculator">' + calc + '</a>' +
+      '<span class="fl-hdr-menu-wrap">' +
+        '<button type="button" id="fl-hdr-menu-btn" class="fl-slim-ic" data-fl-action="toggle-header-menu" aria-haspopup="true" aria-expanded="false" aria-controls="fl-hdr-menu" aria-label="More options">' + dots + '</button>' +
+        '<div id="fl-hdr-menu" class="fl-hdr-menu" role="menu" aria-label="More options">' +
+          '<a class="fl-hdr-menu-item" role="menuitem" href="deerschool.html"><span class="fl-mi-ic" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M12 6.5C9.7 5.4 6.8 5.4 4.5 6.4V18.2C6.8 17.2 9.7 17.2 12 18.3V6.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 6.5C14.3 5.4 17.2 5.4 19.5 6.4V18.2C17.2 17.2 14.3 17.2 12 18.3V6.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></span>Deer School</a>' +
+          '<button type="button" class="fl-hdr-menu-item" role="menuitem" data-fl-action="open-changelog"><span class="fl-mi-star" aria-hidden="true">✦</span>What’s new</button>' +
+          '<a class="fl-hdr-menu-item" role="menuitem" href="mailto:firstlightdeer@gmail.com?subject=First%20Light%20feedback"><span class="fl-mi-ic" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="3" y="5.5" width="18" height="13" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M4 7.5l8 5.5 8-5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Send feedback</a>' +
+          '<button type="button" class="fl-hdr-menu-item fl-mi-install" role="menuitem" data-fl-action="scroll-to-install"><span class="fl-ic fl-install" aria-hidden="true"></span>Install app</button>' +
+        '</div>' +
+      '</span>' +
+    '</div>';
+
+  legal.parentNode.insertBefore(bar, legal);
+  document.documentElement.classList.add('fl-hoist');
+
+  var slimBtn = document.getElementById('fl-slim-fieldmode');
+  if (slimBtn) slimBtn.setAttribute('aria-pressed', isFieldModeOn() ? 'true' : 'false');
+
+  // Close the ⋯ menu on outside-click and Escape (the toggle button handles itself).
+  document.addEventListener('click', function(e) {
+    var menu = document.getElementById('fl-hdr-menu');
+    if (!menu || !menu.classList.contains('open')) return;
+    if (e.target.closest('[data-fl-action="toggle-header-menu"]')) return;
+    flCloseHeaderMenu();
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') flCloseHeaderMenu();
+  });
+}
+
 function initIndexFlActions() {
   document.body.addEventListener('click', function(e) {
     var el = e.target.closest('[data-fl-action]');
@@ -262,6 +362,9 @@ function initIndexFlActions() {
         if (cm) cm.style.display = 'flex';
         break;
       case 'scroll-to-install': {
+        // Chromium (Android/desktop): open the native one-tap install dialog.
+        // iOS Safari / unsupported browsers: fall through to the A2HS card.
+        if (flTriggerInstall()) break;
         // Card lives under Field Guide (`#tab-shots`); that panel is display:none until active,
         // so scrollIntoView does nothing in Chrome/Edge until we switch tabs first.
         if (typeof switchMainTab === 'function') {
@@ -286,6 +389,10 @@ function initIndexFlActions() {
         var cmClose = document.getElementById('changelog-modal');
         if (cmClose) cmClose.style.display = 'none';
         break;
+      case 'open-species-picker': openSpeciesPicker(); break;
+      case 'close-species-picker': closeSpeciesPicker(); break;
+      case 'save-species-picker': saveSpeciesPicker(); break;
+      case 'dismiss-species-nudge': flDismissSpeciesNudge(); break;
       case 'banner-status-open-location':
         if (typeof bannerState !== 'undefined' && bannerState.lat === null) ui.openLocationPicker();
         break;
@@ -304,6 +411,12 @@ function initIndexFlActions() {
       case 'lightbox-next':
         lightboxNav(1);
         break;
+      case 'toggle-field-mode':
+        applyFieldMode(!isFieldModeOn());
+        break;
+      case 'toggle-header-menu':
+        flToggleHeaderMenu();
+        break;
       default:
         return;
     }
@@ -318,23 +431,155 @@ function initIndexFlActions() {
     e.preventDefault();
     el.click();
   });
+
+  flRenderSpeciesChip(); // reflect the saved species on the chip at load
 }
 
 // Clock (top-right)
-
-// Season helper
-function inSeason(month, day, startMonth, startDay, endMonth, endDay) {
-  var cur   = month * 100 + day;
-  var start = startMonth * 100 + startDay;
-  var end   = endMonth   * 100 + endDay;
-  return start <= end ? (cur >= start && cur <= end) : (cur >= start || cur <= end);
-}
 
 function setStatus(elId, open) {
   var el = document.getElementById(elId);
   if (!el) return;
   el.textContent = '';
   el.className   = 'season-status ' + (open ? 'status-open' : 'status-closed');
+}
+
+// -- Statutory season source ------------------------------------------------
+// lib/fl-deer-seasons.js holds every UK close season once. This page used to
+// hold the same dates in three places - a day-exact literal per status row, a
+// month list per species card, and an England-only pair per card badge - and
+// they disagreed. On 5 October the Scottish hind card read OPEN because
+// October is in its month list while the status row three inches above it read
+// Closed because the season does not start until the 21st. Everything below
+// now derives from the module, so there is one answer per animal per day.
+//
+// The module is ESM and this file is a classic script, so index.html bridges
+// it onto the global before app.js boots.
+var FL_REGION_JURISDICTION = { ew: 'england-wales', sc: 'scotland', ni: 'northern-ireland' };
+
+function flSeasons() {
+  var S = window.FL_DEER_SEASONS;
+  return (S && typeof S.isOpenOn === 'function') ? S : null;
+}
+
+/** Date each statutory data set was last read at primary source, stamped at the
+ *  foot of the tab that states it. Every law-reference publisher this app sits
+ *  beside dates its pages; an app that encodes the same statutes and shows no
+ *  date is asking to be trusted further than it has earned. Injected from the
+ *  modules rather than typed into the markup, so a shown date cannot drift from
+ *  the data it describes. Idempotent — boot and fl-deer-seasons-ready both call
+ *  it, and the second call rewrites the same node instead of adding another. */
+function flStampDataCurrency() {
+  var L = window.FL_DEER_LAW, S = window.FL_DEER_SEASONS;
+  var fmt = (L && typeof L.verifiedOnLabel === 'function') ? L.verifiedOnLabel : null;
+  if (!fmt) return;   // bridge absent: no date is better than a wrong one
+  var rows = [
+    ['tab-times', 'fl-currency-times', fmt(L.LAW_VERIFIED_ON),
+     'Firearms minima and legal-hours rules on this tab were last read at primary source on '],
+    ['tab-calendar', 'fl-currency-calendar', S ? fmt(S.SEASONS_VERIFIED_ON) : '',
+     'Every season date on this tab was last read at primary source on ']
+  ];
+  for (var i = 0; i < rows.length; i++) {
+    var panel = document.getElementById(rows[i][0]);
+    if (!panel || !rows[i][2]) continue;
+    var el = document.getElementById(rows[i][1]);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = rows[i][1];
+      el.style.cssText = 'font-size:var(--fs-micro);color:rgba(255,255,255,0.45);'
+        + 'text-align:center;line-height:1.55;margin-top:18px;padding-top:12px;'
+        + 'border-top:1px solid rgba(255,255,255,0.08);';
+      panel.appendChild(el);
+    }
+    el.textContent = rows[i][3] + rows[i][2]
+      + '. Statute changes; check the current text before relying on a borderline call.';
+  }
+}
+
+/** Twelve-cell strip: which months contain at least one open day. */
+/**
+ * B9: the human-readable window under a calendar card's name — "1 Aug –
+ * 30 Apr", "No close season" — derived from lib/fl-deer-seasons.js rather
+ * than read off the markup.
+ *
+ * The two agree today; I checked all 26 cards across the three jurisdictions
+ * before changing this and found no drift. That is the point. The open-month
+ * BARS have been derived since flOpenMonthsForCard landed, so a correction to
+ * the statutory data already repaints the bars — and would have left the
+ * sentence beneath them saying the old dates, in a hand-typed attribute
+ * nobody would think to grep. A card whose bars and words disagree is worse
+ * than one that is merely out of date, because it looks authoritative twice.
+ *
+ * data-dates stays in the markup as the fallback, for the same reason
+ * data-open does: if the module fails to load the card degrades to the last
+ * known-good text instead of going blank.
+ */
+function flSeasonLabelForCard(card, jurisdiction) {
+  var S = flSeasons();
+  var key = card.dataset.venisonKey;
+  if (S && typeof S.seasonLabel === 'function' && jurisdiction && key && S.isSeasonKey(key)) {
+    var derived = S.seasonLabel(jurisdiction, key);
+    if (derived && derived !== 'Unknown') return derived;
+  }
+  return card.dataset.dates || '';
+}
+
+function flOpenMonthsForCard(card, jurisdiction) {
+  var S = flSeasons();
+  var key = card.dataset.venisonKey;
+  if (S && jurisdiction && key && S.isSeasonKey(key)) {
+    var derived = S.openMonthsFor(jurisdiction, key);
+    if (derived.length) return derived;
+  }
+  // The markup still carries data-open, so a module that failed to load
+  // degrades to the old month-granular reading rather than a blank calendar.
+  return (card.dataset.open || '').split(',').map(Number)
+    .filter(function(n) { return n >= 1 && n <= 12; });
+}
+
+/**
+ * The soonest season start among a region's cards, and who it belongs to.
+ * Returns null when the module is absent or the region has no dated windows —
+ * Scotland's males have no start date to give, and NI lists no muntjac at all.
+ */
+function flNextOpening(selector, jurisdiction, curMonth, curDay) {
+  var S = flSeasons();
+  if (!S || !jurisdiction) return null;
+  var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var best = null, names = [], label = '';
+  document.querySelectorAll(selector).forEach(function(card) {
+    var key = card.dataset.venisonKey;
+    if (!key || !S.isSeasonKey(key)) return;
+    var rec = S.seasonFor(jurisdiction, key);
+    if (!rec || rec.status !== 'window') return;
+    // Month-major ordinal: months are 31 apart and days never span that, so
+    // this orders any two (month, day) pairs correctly without a Date.
+    var delta = (rec.startMonth - curMonth) * 31 + (rec.startDay - curDay);
+    if (delta <= 0) delta += 372;   // already begun this year, so next year's
+    if (best === null || delta < best) {
+      best = delta;
+      names = [];
+      label = rec.startDay + ' ' + MON[rec.startMonth - 1];
+    }
+    if (delta === best) {
+      var sexLabel = {stag:'Stag',hind:'Hind',buck:'Buck',doe:'Doe'}[card.dataset.sex] || '';
+      var nm = card.dataset.name;
+      if (sexLabel && !nm.endsWith(sexLabel)) nm += ' ' + sexLabel;
+      if (names.indexOf(nm) === -1) names.push(nm);
+    }
+  });
+  return names.length ? { names: names, label: label } : null;
+}
+
+/** The OPEN/CLOSED verdict on the card, day-exact where the module can say. */
+function flCardOpenNow(card, jurisdiction, curMonth, curDay, openMonths) {
+  var S = flSeasons();
+  var key = card.dataset.venisonKey;
+  if (S && jurisdiction && key && S.isSeasonKey(key)) {
+    var exact = S.isOpenOn(jurisdiction, key, curMonth, curDay);
+    if (exact !== null) return exact;
+  }
+  return openMonths.indexOf(curMonth) !== -1;
 }
 
 // ── Solar calculation ─────────────────────────────────────────
@@ -382,13 +627,22 @@ function inWindow(cur, start, end) {
   return cur >= start || cur <= end;           // crosses midnight
 }
 
+// Cached Intl formatters (2026-07-17 perf round — SPEC pair with
+// lib/fl-forecast.mjs): construction is ~70× the cost of formatToParts on a
+// cached instance, and these helpers sit under every solar/legal-time call.
+var _ukYmdFmt = null;
+var _ukHmFmt = null;
+
 // Always extract hours/minutes in Europe/London time, regardless of device timezone
 // This ensures all sunrise/sunset/legal times display correctly for users outside the UK
 function ukHourMin(dateObj) {
-  var parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Europe/London',
-    hour: '2-digit', minute: '2-digit', hour12: false
-  }).formatToParts(dateObj);
+  if (!_ukHmFmt) {
+    _ukHmFmt = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/London',
+      hour: '2-digit', minute: '2-digit', hour12: false
+    });
+  }
+  var parts = _ukHmFmt.formatToParts(dateObj);
   return {
     h: parseInt(parts.find(function(p) { return p.type === 'hour';   }).value, 10),
     m: parseInt(parts.find(function(p) { return p.type === 'minute'; }).value, 10)
@@ -402,10 +656,13 @@ function toMinutes(dateObj) {
 
 /** Calendar Y/M/D (month 1–12) for an instant in Europe/London — single source for “which day” solar + legal calcs use. */
 function ukCalendarYmdLondon(date) {
-  var parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Europe/London',
-    year: 'numeric', month: '2-digit', day: '2-digit'
-  }).formatToParts(date);
+  if (!_ukYmdFmt) {
+    _ukYmdFmt = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/London',
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    });
+  }
+  var parts = _ukYmdFmt.formatToParts(date);
   var y, m, d;
   for (var i = 0; i < parts.length; i++) {
     if (parts[i].type === 'year') y = parseInt(parts[i].value, 10);
@@ -763,10 +1020,14 @@ function computeBannerState(lat, lng, locationName) {
   var tomorrowAnchor = londonWallClockToDate(tmr.y, tmr.m, tmr.d, 12, 0);
   var srTom = calcSunTime(tomorrowAnchor, lat, lng, true);
   var nextLegalStartMin = srTom ? toMinutes(addMins(srTom, -60)) : lsMin;
+  var legalStartTom = srTom ? addMins(srTom, -60) : null; // absolute instant of tomorrow's legal start
   // Express tomorrow's minutes as >1440 for countdown arithmetic when needed
   var nextLsAbsolute = (inWindow(curMin, lsMin, leMin) || curMin < lsMin)
     ? lsMin
     : nextLegalStartMin + 1440;  // next calendar day
+  // Absolute Date of the next legal start — used for a DST-correct countdown
+  // (wall-clock "+1440" arithmetic gains/loses an hour across the two DST nights).
+  var nextLegalStartDate = (inWindow(curMin, lsMin, leMin) || curMin < lsMin) ? legalStart : legalStartTom;
 
   // Store
   bannerState.sunriseMin      = srMin;
@@ -776,6 +1037,7 @@ function computeBannerState(lat, lng, locationName) {
   bannerState.isLegal         = isLegal;
   bannerState.isTwilight      = isTwilight;
   bannerState.nextLegalStartMin = nextLsAbsolute;
+  bannerState._nextLegalStartDate = nextLegalStartDate;
   bannerState.lat             = lat;
   bannerState.lng             = lng;
   bannerState.locationName    = locationName;
@@ -919,6 +1181,15 @@ function renderBanner() {
     banner.className = 'legal-banner legal-banner--glass ' + (isLegal ? (isTwilight ? 'twilight' : 'legal') : 'illegal');
     banner.classList.remove('legal-banner--no-solar');
   }
+  // Legal window "opens" once, on first render — the timeline fill scales in.
+  if (!_flLegalOpened) {
+    var _lf = document.getElementById('timeline-legal-fill');
+    if (_lf) {
+      _flLegalOpened = true;
+      var _rm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (!_rm) { void _lf.offsetWidth; _lf.classList.add('fl-window-open'); }
+    }
+  }
 
   var lbl = document.getElementById('banner-label');
   if (lbl) {
@@ -944,7 +1215,7 @@ function renderBanner() {
 
   var locEl = document.getElementById('banner-location-text');
   if (locEl && bs.locationName) {
-    locEl.textContent = '📍 ' + bs.locationName;
+    locEl.textContent = ''; var _lpin = document.createElement('span'); _lpin.className = 'fl-ic fl-pin'; locEl.appendChild(_lpin); locEl.appendChild(document.createTextNode(' ' + bs.locationName));
     locEl.title = bs.locationTooltip || bs.locationName || '';
   }
 
@@ -1021,7 +1292,18 @@ function updateBannerClock() {
   if (isLegal) {
     var legalEndTotalSec = bs.legalEndMin * 60;
     totalSec = legalEndTotalSec - nowSec;
-    if (totalSec < 0) totalSec += 86400;
+    // A large negative means the window ends after midnight (add a day). A small
+    // negative is just the final legal minute ticking past the boundary — clamp
+    // to 0 rather than wrapping the countdown to ~23:59.
+    if (totalSec < -60) totalSec += 86400;
+    if (totalSec < 0) totalSec = 0;
+    diffMin = Math.floor(totalSec / 60);
+  } else if (bs._nextLegalStartDate) {
+    // DST-correct: diff the actual next-legal-start instant against now, so the
+    // overnight "Until legal" countdown doesn't gain/lose an hour on the two
+    // DST-change nights (the old wall-clock "+1440" assumed every day is 24 h).
+    totalSec = Math.round((bs._nextLegalStartDate.getTime() - flNow().getTime()) / 1000);
+    if (totalSec < 0) totalSec = 0;
     diffMin = Math.floor(totalSec / 60);
   } else {
     var rawTarget = bs.nextLegalStartMin;
@@ -1067,7 +1349,7 @@ function updateBannerClock() {
 
 // ── Moon ─────────────────────────────────────────────────────
 function getMoonPhase(date) {
-  var known = new Date(2000, 0, 6, 18, 14, 0);
+  var known = new Date(Date.UTC(2000, 0, 6, 18, 14, 0));
   var synodicMonth = 29.530588853;
   var diff = (date - known) / 86400000;
   var age  = ((diff % synodicMonth) + synodicMonth) % synodicMonth;
@@ -1081,24 +1363,24 @@ function getMoonPhase(date) {
            : age < 23.99  ? 'Last Quarter'
            : age < 29.53  ? 'Waning Crescent'
            :                'New Moon';
-  var icon = age < 1.85   ? '🌑'
-           : age < 7.38   ? '🌒'
-           : age < 9.22   ? '🌓'
-           : age < 14.77  ? '🌔'
-           : age < 16.61  ? '🌕'
-           : age < 22.15  ? '🌖'
-           : age < 23.99  ? '🌗'
-           : age < 29.53  ? '🌘'
-           :                '🌑';
+  var icon = age < 1.85   ? '<span class="fl-ic fl-moon-new"></span>'
+           : age < 7.38   ? '<span class="fl-ic fl-moon-waxcres"></span>'
+           : age < 9.22   ? '<span class="fl-ic fl-moon-firstq"></span>'
+           : age < 14.77  ? '<span class="fl-ic fl-moon-waxgibb"></span>'
+           : age < 16.61  ? '<span class="fl-ic fl-moon-full"></span>'
+           : age < 22.15  ? '<span class="fl-ic fl-moon-wangibb"></span>'
+           : age < 23.99  ? '<span class="fl-ic fl-moon-lastq"></span>'
+           : age < 29.53  ? '<span class="fl-ic fl-moon-wancres"></span>'
+           :                '<span class="fl-ic fl-moon-new"></span>';
   return { age: age, pct: pct, name: name, icon: icon, illumination: Math.round((1 - Math.cos(age / synodicMonth * 2 * Math.PI)) / 2 * 100) };
 }
 
-function drawMoonSVG(age) {
-  var svg = document.getElementById('moon-svg');
-  if (!svg) return;
+// Builds the inner SVG markup (dark disc + lit terminator + rim) for a moon at
+// the given age, sized to a circle of radius r about (cx,cy). Shared by the
+// banner moon SVG and the outlook card's inline crescent so they always match.
+function moonSVGInner(age, r, cx, cy) {
   var cycle = 29.530588853;
   var phase = age / cycle;          // 0 = new, 0.5 = full, 1 = new
-  var r = 11, cx = 13, cy = 13;
   var dark = '#1a1a2e', lit = '#fffacd';
 
   // Always start with the dark disc
@@ -1112,7 +1394,7 @@ function drawMoonSVG(age) {
     var top = cx + ',' + (cy - r);
     var bot = cx + ',' + (cy + r);
 
-    var litPath, darkPath;
+    var litPath;
     if (phase < 0.5) {
       // Waxing: right side lit
       if (phase < 0.25) {
@@ -1137,7 +1419,126 @@ function drawMoonSVG(age) {
 
   // Rim
   html += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="rgba(255,255,200,0.2)" stroke-width="0.8"/>';
-  svg.innerHTML = html;
+  return html;
+}
+
+function drawMoonSVG(age) {
+  var svg = document.getElementById('moon-svg');
+  if (!svg) return;
+  svg.innerHTML = moonSVGInner(age, 11, 13, 13);
+}
+
+// A small standalone crescent for inline use (e.g. the outlook card's moon pill).
+// Returns a full <svg> element string drawn at the given phase.
+function moonCrescentSVG(age, size) {
+  var s = size || 14, r = (s / 2) - 1, c = s / 2;
+  return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 ' + s + ' ' + s + '" aria-hidden="true" style="display:block;flex-shrink:0;">' +
+         moonSVGInner(age, r, c, c) + '</svg>';
+}
+
+// ── Tonight's outlook card ────────────────────────────────────
+// Surfaces the deer-activity forecast on the home screen (previously only the
+// small badge + a link). All data comes from getDeerActivityScore() and the
+// banner's solar times — no new model, just exposure.
+function tonightVerdict(score) {
+  return score >= 65 ? { word: 'High', color: '#7ad77a' }
+       : score >= 45 ? { word: 'Moderate', color: '#e0954a' }
+       : score >= 20 ? { word: 'Low', color: '#c9a05a' }
+       :               { word: 'Minimal', color: '#8a8f98' };
+}
+
+var TONIGHT_PILL_STYLE = {
+  moon: 'background:rgba(255,255,200,0.10);color:rgba(255,255,200,0.85);border-color:rgba(255,255,200,0.18);',
+  temp: 'background:rgba(255,140,60,0.10);color:rgba(255,180,100,0.90);border-color:rgba(255,140,60,0.18);',
+  wind: 'background:rgba(90,220,90,0.10);color:rgba(122,223,122,0.90);border-color:rgba(90,220,90,0.18);'
+};
+
+// Count-up for the deer-activity ring number (once, on first reveal). The ring
+// arc itself eases via a CSS transition on stroke-dashoffset. Reduced-motion safe.
+var _flToAnimated = false, _flToRAF = null, _flLegalOpened = false;
+function flSetTonightScore(el, score) {
+  var pct = '<span style="font-size:14px;color:rgba(245,240,232,0.55);">%</span>';
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce || _flToAnimated) { el.innerHTML = score + pct; _flToAnimated = true; return; }
+  _flToAnimated = true;
+  var to = score, dur = 900, t0 = null;
+  if (_flToRAF) cancelAnimationFrame(_flToRAF);
+  function step(ts) {
+    if (t0 === null) t0 = ts;
+    var t = Math.min(1, (ts - t0) / dur), e = 1 - Math.pow(1 - t, 3);
+    el.innerHTML = Math.round(to * e) + pct;
+    if (t < 1) _flToRAF = requestAnimationFrame(step);
+  }
+  _flToRAF = requestAnimationFrame(step);
+}
+
+function updateTonightOutlook() {
+  var card = document.getElementById('tonight-card');
+  if (!card) return;
+  var cachedWx = (_weatherCache && _weatherCache.data && _weatherCache.lat === bannerState.lat) ? _weatherCache.data : null;
+  var r;
+  try { r = getDeerActivityScore(cachedWx); } catch (e) { return; }
+  if (!r) return;
+
+  var score = Math.max(0, Math.min(100, Math.round(r.score)));
+  var v = tonightVerdict(score);
+
+  var arc = document.getElementById('to-ring-arc');
+  if (arc) {
+    var C = 251.3; // 2πr, r=40
+    arc.setAttribute('stroke', v.color);
+    arc.setAttribute('stroke-dashoffset', String(Math.round(C * (1 - score / 100))));
+  }
+  var numEl = document.getElementById('to-score');
+  if (numEl) flSetTonightScore(numEl, score);
+  var verdEl = document.getElementById('to-verdict');
+  if (verdEl) { verdEl.textContent = v.word; verdEl.style.color = v.color; }
+
+  // Best window tonight — the next dawn/dusk peak from the solar times.
+  var cur = r.curMin, srM = r.srMin, ssM = r.ssMin;
+  var winLabel, peakMin;
+  if (cur < srM + 120) { winLabel = 'Dawn'; peakMin = srM; }
+  else if (cur <= ssM + 45) { winLabel = 'Dusk'; peakMin = ssM; }
+  else { winLabel = 'Dawn tomorrow'; peakMin = srM; }
+  var winEl = document.getElementById('to-window');
+  if (winEl) winEl.innerHTML = winLabel + ' · peak <b style="color:#d8b054;">~' + fmtMinutes(peakMin) + '</b>';
+
+  // Why — the top one or two positive drivers (falls back to whatever exists).
+  var good = (r.factors || []).filter(function(f) { return f.good === true; });
+  var pick = good.length ? good : (r.factors || []);
+  var whyEl = document.getElementById('to-why');
+  if (whyEl) whyEl.textContent = pick.slice(0, 2).map(function(f) { return f.text; }).join(' · ') || 'Conditions updating…';
+
+  // Pills — moon always; temp + wind once weather has loaded.
+  var pills = document.getElementById('to-pills');
+  if (pills) {
+    pills.innerHTML = '';
+    var pd = [];
+    if (r.moon && r.moon.name) pd.push({ t: r.moon.name + ' · ' + Math.round(r.moon.illumination) + '%', c: 'moon', moonAge: r.moon.age });
+    if (cachedWx) {
+      if (typeof cachedWx.temp === 'number') pd.push({ t: Math.round(cachedWx.temp) + '°C', c: 'temp', ic: 'fl-temp' });
+      if (typeof cachedWx.windSpeed === 'number') pd.push({ t: Math.round(cachedWx.windSpeed * 0.621) + ' mph', c: 'wind', ic: 'fl-wind' });
+    }
+    pd.forEach(function(p) {
+      var el = document.createElement('span');
+      el.style.cssText = 'font-size:10px;font-weight:600;padding:4px 10px;border-radius:20px;border:1px solid;' + (TONIGHT_PILL_STYLE[p.c] || '');
+      if (p.c === 'moon' && typeof p.moonAge === 'number') {
+        // Draw the real crescent for the phase instead of the flat 🌙 glyph.
+        el.style.cssText += 'display:inline-flex;align-items:center;gap:5px;';
+        el.innerHTML = moonCrescentSVG(p.moonAge, 13);
+        var lbl = document.createElement('span');
+        lbl.textContent = p.t;
+        el.appendChild(lbl);
+      } else if (p.ic) {
+        el.style.cssText += 'display:inline-flex;align-items:center;gap:5px;';
+        var _pi2 = document.createElement('span'); _pi2.className = 'fl-ic ' + p.ic; el.appendChild(_pi2);
+        var _pl2 = document.createElement('span'); _pl2.textContent = p.t; el.appendChild(_pl2);
+      } else {
+        el.textContent = p.t;
+      }
+      pills.appendChild(el);
+    });
+  }
 }
 
 function updateMoon() {
@@ -1153,14 +1554,15 @@ function updateMoon() {
   if (badge && bannerState.lat !== null) {
     var cachedWx = (_weatherCache && _weatherCache.data && _weatherCache.lat === bannerState.lat) ? _weatherCache.data : null;
     var quick = getDeerActivityScore(cachedWx);
-    badge.textContent = '🦌 ' + quick.score + '%';
+    badge.innerHTML = '<span class="fl-ic fl-deer"></span> ' + quick.score + '%';
     badge.style.display = 'block';
   }
+  try { updateTonightOutlook(); } catch (_) {}
 }
 
 // ── Calendar highlight ────────────────────────────────────────
 function highlightTodayMonth() {
-  var m = flNow().getMonth() + 1;
+  var m = ukCalendarYmdLondon(flNow()).m;
   document.querySelectorAll('.month-cell[data-month="' + m + '"]').forEach(function(el) {
     el.classList.add('month-today');
   });
@@ -1200,23 +1602,30 @@ var VENISON_PEAK_MONTHS = {
 };
 
 // ── Calendar tab rendering ────────────────────────────────────
-function buildCalendarCards(selector, isScotland) {
+function buildCalendarCards(selector, region) {
+  // region: 'ew' | 'sc' | 'ni'. Legacy boolean accepted (true = Scotland,
+  // false = England & Wales) so any older call sites keep working.
+  if (region === true) region = 'sc';
+  else if (!region || region === false) region = 'ew';
   var months = ['J','F','M','A','M','J','J','A','S','O','N','D'];
   var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  var now = flNow();
-  var curMonth = now.getMonth() + 1;
+  // Europe/London civil date, not the device's, so the strip and the verdict
+  // agree with the status rows on the same page for a phone set to another zone.
+  var _cal = ukCalendarYmdLondon(flNow());
+  var curMonth = _cal.m, curDay = _cal.d;
+  var jurisdiction = FL_REGION_JURISDICTION[region] || null;
 
-  var badgeSpan = document.getElementById(isScotland ? 'cal-month-label-sc' : 'cal-month-label-ew');
-  if (badgeSpan) badgeSpan.textContent = monthNames[curMonth-1] + ' ' + now.getFullYear() + ' — highlighted gold';
+  var badgeSpan = document.getElementById('cal-month-label-' + region);
+  if (badgeSpan) badgeSpan.textContent = monthNames[curMonth-1] + ' ' + _cal.y + ' — highlighted gold';
 
   document.querySelectorAll(selector).forEach(function(card) {
-    var openMonths = card.dataset.open.split(',').map(Number);
     var vkEarly = card.dataset.venisonKey;
+    var openMonths = flOpenMonthsForCard(card, jurisdiction);
     var peakMonths = (vkEarly && VENISON_PEAK_MONTHS[vkEarly]) ? VENISON_PEAK_MONTHS[vkEarly] : [];
     var sex = card.dataset.sex;
     var name = card.dataset.name;
-    var dates = card.dataset.dates;
-    var isOpen = openMonths.indexOf(curMonth) !== -1;
+    var dates = flSeasonLabelForCard(card, jurisdiction);
+    var isOpen = flCardOpenNow(card, jurisdiction, curMonth, curDay, openMonths);
     var sexBadge = {
       stag: {bg:'rgba(139,90,43,0.25)',color:'#d4a870',label:'&#9794; Stag'},
       hind: {bg:'rgba(180,100,140,0.25)',color:'#e4a0c0',label:'&#9792; Hind'},
@@ -1276,16 +1685,29 @@ function buildCalendarCards(selector, isScotland) {
     card.innerHTML = html;
   });
 
-  var chipsEl = document.getElementById(isScotland ? 'cal-chips-sc' : 'cal-chips-ew');
+  var chipsEl = document.getElementById('cal-chips-' + region);
   if (chipsEl) {
     chipsEl.textContent = '';
+    var regionLabel = { ew: 'England & Wales', sc: 'Scotland', ni: 'Northern Ireland' }[region] || '';
+    // The heading is the element immediately above the chip row in the markup.
+    var headingEl = chipsEl.previousElementSibling;
+    // Per-region chip theme: EW green, Scotland blue, NI orange (matches the
+    // chip-ni accent used on the species cards).
+    var chipTheme = {
+      ew: { bg: 'rgba(90,220,90,0.18)',  bdr: 'rgba(90,220,90,0.35)',  txt: '#7aff7a' },
+      sc: { bg: 'rgba(90,130,220,0.18)', bdr: 'rgba(90,130,220,0.35)', txt: '#9ab8ef' },
+      ni: { bg: 'rgba(240,160,60,0.18)', bdr: 'rgba(240,160,60,0.35)', txt: '#f0b060' }
+    }[region];
     document.querySelectorAll(selector).forEach(function(card) {
-      var openMonths = card.dataset.open.split(',').map(Number);
-      if (openMonths.indexOf(flNow().getMonth() + 1) !== -1) {
+      // Month-granular on purpose: the heading above this row says "Open this
+      // month", so an animal whose season opens on the 21st still belongs here
+      // on the 5th. The card below gives the day-exact verdict and the dates.
+      var openMonths = flOpenMonthsForCard(card, jurisdiction);
+      if (openMonths.indexOf(curMonth) !== -1) {
         var chip = document.createElement('div');
-        var bgC = isScotland ? 'rgba(90,130,220,0.18)' : 'rgba(90,220,90,0.18)';
-        var bdrC = isScotland ? 'rgba(90,130,220,0.35)' : 'rgba(90,220,90,0.35)';
-        var txtC = isScotland ? '#9ab8ef' : '#7aff7a';
+        var bgC = chipTheme.bg;
+        var bdrC = chipTheme.bdr;
+        var txtC = chipTheme.txt;
         chip.style.cssText = 'background:' + bgC + ';border:1px solid ' + bdrC + ';border-radius:20px;padding:4px 10px;font-size:11px;font-weight:700;color:' + txtC + ';';
         var sexLabel = {stag:'Stag',hind:'Hind',buck:'Buck',doe:'Doe'}[card.dataset.sex] || '';
         var chipName = card.dataset.name;
@@ -1295,6 +1717,26 @@ function buildCalendarCards(selector, isScotland) {
         chipsEl.appendChild(chip);
       }
     });
+
+    if (!chipsEl.childElementCount) {
+      // Nothing is open. An empty band under a heading reading "Open this
+      // month" looks like the page failed to draw, so say it in words — and
+      // where the dates allow, say what opens next and when. Northern Ireland
+      // in July is the case that exposed this: every season there is shut.
+      var msg = 'Nothing is open in ' + (regionLabel.replace(' & ', ' and ') || 'this region') + ' this month.';
+      var nxt = flNextOpening(selector, jurisdiction, curMonth, curDay);
+      if (nxt) msg += ' Next to open: ' + nxt.names.join(', ') + ', from ' + nxt.label + '.';
+      var note = document.createElement('div');
+      note.style.cssText = 'font-size:11px;line-height:1.5;color:rgba(255,255,255,0.62);';
+      note.textContent = msg;
+      chipsEl.appendChild(note);
+      // A green tick over the words "nothing is open" is a contradiction, so
+      // the heading follows the state. '✕ Closed' is the same vocabulary the
+      // species badges use.
+      if (headingEl) headingEl.textContent = '✕ Closed this month — ' + regionLabel;
+    } else if (headingEl) {
+      headingEl.textContent = '✅ Open this month — ' + regionLabel;
+    }
   }
 }
 
@@ -1335,8 +1777,9 @@ function buildCalendarMatrix(containerId, cardSelector) {
 }
 
 function initCalendar() {
-  buildCalendarCards('.cal-species-card', false);
-  buildCalendarCards('.cal-species-card-sc', true);
+  buildCalendarCards('.cal-species-card', 'ew');
+  buildCalendarCards('.cal-species-card-sc', 'sc');
+  buildCalendarCards('.cal-species-card-ni', 'ni');
 }
 
 // ── Public updateBanner (called by location picker, presets, GPS) ─
@@ -1390,49 +1833,66 @@ function updateForecastIfVisible() {
   if (tbl) buildForecast();
 }
 
-// ── Season statuses ───────────────────────────────────────────
+// ── Season statuses ─────────────────────────────────────────────
 function updateSeasonStatuses() {
-  var now = flNow(), m = now.getMonth() + 1, d = now.getDate();
-  var checks = [
-    ['red-stag-en',    inSeason(m,d,8,1,4,30)],
-    ['red-hind-en',    inSeason(m,d,11,1,3,31)],
-    ['red-hind-sc',    inSeason(m,d,10,21,2,15)],
-    ['fallow-buck-en', inSeason(m,d,8,1,4,30)],
-    ['fallow-doe-en',  inSeason(m,d,11,1,3,31)],
-    ['fallow-doe-sc',  inSeason(m,d,10,21,2,15)],
-    ['roe-buck-en',    inSeason(m,d,4,1,10,31)],
-    ['roe-doe-en',     inSeason(m,d,11,1,3,31)],
-    ['roe-doe-sc',     inSeason(m,d,10,21,3,31)],
-    ['sika-stag-en',   inSeason(m,d,8,1,4,30)],
-    ['sika-hind-en',   inSeason(m,d,11,1,3,31)],
-    ['sika-hind-sc',   inSeason(m,d,10,21,2,15)],
-    ['cwd-buck-en',    inSeason(m,d,11,1,3,31)],
-    ['cwd-doe-en',     inSeason(m,d,11,1,3,31)],
-  ];
-  checks.forEach(function(c) { setStatus(c[0], c[1]); });
+  var S = flSeasons();
+  if (!S) return;   // index.html bridges lib/fl-deer-seasons.js onto the global
+                    // before this runs; with no statutory source there is
+                    // nothing honest to draw, so the rows are left alone.
 
-  // Season badges on species cards
-  var now2 = flNow();
-  var m2 = now2.getMonth()+1, d2 = now2.getDate();
-  // [badgeId, maleOpen, femaleOpen]
-  var badgeData = [
-    ['red-badge',     inSeason(m2,d2,8,1,4,30),  inSeason(m2,d2,11,1,3,31)],
-    ['fallow-badge',  inSeason(m2,d2,8,1,4,30),  inSeason(m2,d2,11,1,3,31)],
-    ['roe-badge',     inSeason(m2,d2,4,1,10,31),  inSeason(m2,d2,11,1,3,31)],
-    ['sika-badge',    inSeason(m2,d2,8,1,4,30),  inSeason(m2,d2,11,1,3,31)],
-    ['muntjac-badge', true,                        true],
-    ['cwd-badge',     inSeason(m2,d2,11,1,3,31),  inSeason(m2,d2,11,1,3,31)],
+  // Europe/London calendar, not device-local, so the open/close season shown is
+  // correct across the midnight boundary on a device set to a non-UK timezone.
+  var _ymd = ukCalendarYmdLondon(flNow()), m = _ymd.m, d = _ymd.d;
+
+  // Every status row on the species cards is id="<key>-<suffix>", so walking
+  // the module's own key list covers exactly the rows that exist: setStatus()
+  // no-ops on an id that is not in the DOM. A null verdict means the schedule
+  // does not list that animal in that jurisdiction — there is no roe season in
+  // Northern Ireland — and those rows are absent by design, so nothing is
+  // written rather than a misleading "Closed".
+  S.SEASON_JURISDICTIONS.forEach(function(j) {
+    S.SEASON_KEYS.forEach(function(key) {
+      var open = S.isOpenOn(j.code, key, m, d);
+      if (open === null) return;
+      setStatus(key + '-' + j.domSuffix, open);
+    });
+  });
+
+  // Season badges on species cards. The badge sits at the head of a card whose
+  // body lists England & Wales, Scotland and Northern Ireland side by side, so
+  // it rolls all three up. It used to read England only, which told a Scottish
+  // stalker in June that his stags were shut when Scotland has had no close
+  // season for males since October 2023. The per-jurisdiction breakdown goes in
+  // the title and aria-label so the roll-up is never the whole story.
+  var BADGES = [
+    ['red-badge',     'red-stag',     'red-hind',    'Red deer'],
+    ['fallow-badge',  'fallow-buck',  'fallow-doe',  'Fallow deer'],
+    ['roe-badge',     'roe-buck',     'roe-doe',     'Roe deer'],
+    ['sika-badge',    'sika-stag',    'sika-hind',   'Sika deer'],
+    ['muntjac-badge', 'muntjac-buck', 'muntjac-doe', 'Muntjac'],
+    ['cwd-badge',     'cwd-buck',     'cwd-doe',     'Chinese water deer'],
   ];
-  badgeData.forEach(function(b) {
+  BADGES.forEach(function(b) {
     var el = document.getElementById(b[0]);
     if (!el) return;
-    var mOpen = b[1], fOpen = b[2];
-    var both = mOpen && fOpen;
-    var none = !mOpen && !fOpen;
-    var partial = (mOpen || fOpen) && !both;
-    if (both)    { el.textContent = '✓ Open';    el.className = 'season-badge badge-open'; }
-    else if (none)   { el.textContent = '✕ Closed';  el.className = 'season-badge badge-closed'; }
-    else         { el.textContent = '~ In Part'; el.className = 'season-badge badge-partial'; }
+    var anyOpen = false, anyClosed = false, lines = [];
+    S.SEASON_JURISDICTIONS.forEach(function(j) {
+      var parts = [];
+      [b[1], b[2]].forEach(function(key) {
+        var open = S.isOpenOn(j.code, key, m, d);
+        if (open === null) return;
+        if (open) anyOpen = true; else anyClosed = true;
+        var sex = key.slice(key.lastIndexOf('-') + 1);
+        parts.push(sex.charAt(0).toUpperCase() + sex.slice(1) + ' ' + (open ? 'open' : 'closed'));
+      });
+      lines.push(j.short + ': ' + (parts.length ? parts.join(', ') : 'not listed'));
+    });
+    var mixed = anyOpen && anyClosed;
+    el.textContent = mixed ? '~ In Part' : anyOpen ? '✓ Open' : '✕ Closed';
+    el.className = 'season-badge ' + (mixed ? 'badge-partial' : anyOpen ? 'badge-open' : 'badge-closed');
+    var title = b[3] + ' today — ' + lines.join('; ');
+    el.title = title;
+    el.setAttribute('aria-label', title);
   });
 }
 
@@ -1528,7 +1988,7 @@ function clearBannerStateLocation() {
 
 function showOutsideUKMessage() {
   clearBannerStateLocation();
-  ui.showLocationPrompt('🇬🇧 First Light covers UK locations only');
+  ui.showLocationPrompt('First Light covers UK locations only');
   // Show a brief toast
   var toast = document.createElement('div');
   toast.textContent = 'First Light is designed for UK deer stalking only. Please select a UK location.';
@@ -1567,7 +2027,7 @@ function initBanner() {
   ui.showLocationPrompt('Locating…');
 
   if (!navigator.geolocation) {
-    ui.showLocationPrompt('📍 Set location to see legal times');
+    ui.showLocationPrompt('Set location to see legal times');
     return;
   }
 
@@ -1707,13 +2167,35 @@ function initFieldGuideSearch() {
 }
 
 // ── Tab switching ─────────────────────────────────────────────
+/**
+ * Keep both tab strips' ARIA state and roving tabindex in step with the
+ * active panel.
+ *
+ * The `active` class was the only thing switchMainTab() updated, so
+ * aria-selected stayed frozen at whatever index.html shipped — a screen
+ * reader announced "Species, selected" whichever panel was open — and the
+ * roving tabindex never rove, so Tab always landed on Species. The bottom
+ * bar was worse: role="tab" with no tabindex at all, which meant it could
+ * not be focused and its Enter/Space handler could never fire.
+ * (Audit 2026-07-25 — WCAG 2.1.1 Level A, 4.1.2 Level A.)
+ */
+function syncTabState(tab) {
+  ['.nav-tab[data-tab]', '.tab-item[data-maintab]'].forEach(function(sel) {
+    document.querySelectorAll(sel).forEach(function(t) {
+      var on = (t.dataset.tab || t.dataset.maintab) === tab;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.setAttribute('tabindex', on ? '0' : '-1');
+    });
+  });
+}
+
 function switchTab(tab, el) {
   document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
   if (el) el.classList.add('active');
-  switchMainTab(tab);
+  switchMainTab(tab, { scroll: true });
 }
 
-function switchMainTab(tab) {
+function switchMainTab(tab, opts) {
   document.querySelectorAll('.species-section, .info-section').forEach(function(s) { s.classList.remove('active'); });
   document.querySelectorAll('.tab-item').forEach(function(t) { t.classList.remove('active'); });
   document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
@@ -1728,6 +2210,8 @@ function switchMainTab(tab) {
   var tabMap  = { species: 0, times: 1, calendar: 2, shots: 3 };
   if (navTabs[tabMap[tab]]) navTabs[tabMap[tab]].classList.add('active');
 
+  syncTabState(tab);
+
   window._activeTab = tab;
   ui.saveState();
 
@@ -1738,6 +2222,19 @@ function switchMainTab(tab) {
       buildForecast();
     }
     refreshLegalDatePicker();
+  }
+
+  // On a user tap, bring the reference tabs to the top so the newly-activated
+  // panel is actually on screen. Without this the panel swaps in below the fold
+  // — especially from the fixed bottom nav, or now that the tools band sits above
+  // the pills — and the tap looks like it did nothing. The load-time tab restore
+  // passes no opts, so the page doesn't jump on open.
+  if (opts && opts.scroll) {
+    var navEl = document.querySelector('.nav-tabs');
+    if (navEl && navEl.scrollIntoView) {
+      var reduceM = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      navEl.scrollIntoView({ behavior: reduceM ? 'auto' : 'smooth', block: 'start' });
+    }
   }
 }
 
@@ -1809,7 +2306,7 @@ function buildForecast() {
   var heroLabel = document.getElementById('forecast-hero-label');
   if (heroLabel) {
     var dayName = days[today.getDay()];
-    heroLabel.textContent = '📅 Today — ' + dayName + ' ' + today.getDate() + ' ' + months[today.getMonth()];
+    heroLabel.textContent = ''; var _cal = document.createElement('span'); _cal.className = 'fl-ic fl-calendar'; heroLabel.appendChild(_cal); heroLabel.appendChild(document.createTextNode(' Today — ' + dayName + ' ' + today.getDate() + ' ' + months[today.getMonth()]));
   }
 
   var hSR  = document.getElementById('hero-sunrise-label');
@@ -1846,7 +2343,7 @@ function buildForecast() {
   }
   function skyCellHtml(code, precip) {
     var emoji = wxCodeToEmoji(code, precip);
-    if (emoji === '🌫') return '<div style="font-size:9px;font-weight:600;text-align:center;color:rgba(255,255,255,0.5);">Fog</div>';
+    if (emoji.indexOf('fl-wx-fog') !== -1) return '<div style="font-size:9px;font-weight:600;text-align:center;color:rgba(255,255,255,0.5);">Fog</div>';
     return '<div style="font-size:13px;text-align:center;">' + emoji + '</div>';
   }
   function buildLegalHourlyPanel(dayIdx, date, wxData, lsMin, leMin, srMin, ssMin) {
@@ -1958,7 +2455,7 @@ function buildForecast() {
       var emoji0 = code0 !== null ? wxCodeToEmoji(code0, 0) : '';
       var temp0  = (t0max !== null && t0min !== null) ? Math.round((t0max + t0min) / 2) + '\u00b0C' : '';
       var wind0  = w0 !== null ? w0 + ' mph' : '';
-      heroWx.textContent = [emoji0, temp0, wind0 ? '\u00b7 ' + wind0 : ''].filter(Boolean).join(' ');
+      heroWx.innerHTML = [emoji0, temp0, wind0 ? '\u00b7 ' + wind0 : ''].filter(Boolean).join(' ');
     }
 
     for (var i = 0; i < 7; i++) {
@@ -2026,7 +2523,7 @@ function buildForecast() {
       var row = document.createElement('div');
       row.style.cssText = 'border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;';
 
-      var bstBadge = clockChange ? '<span style="font-size:8px;font-weight:700;color:#f0c040;background:rgba(240,192,64,0.12);border-radius:4px;padding:1px 5px;margin:0 2px;">BST</span>' : '';
+      var bstBadge = clockChange ? '<span style="font-size:8px;font-weight:700;color:#f0c040;background:rgba(240,192,64,0.12);border-radius:4px;padding:1px 5px;margin:0 2px;">' + (isBST ? 'BST' : 'GMT') + '</span>' : '';
 
       row.innerHTML =
         '<div style="display:flex;align-items:center;gap:10px;padding:11px 16px 8px;">'
@@ -2128,9 +2625,9 @@ function scoreDay(date, wxDay) {
          : moon.illumination < 60 ? 4
          : moon.illumination < 85 ? 2 : 1;
 
-  // Rut
+  // Rut — masked to the user's ground species (empty = all species)
   var rutMonths = RUT_CALENDAR[month] || [0,0,0,0,0];
-  var maxRut = Math.max.apply(null, rutMonths);
+  var maxRut = maxRutMasked(rutMonths, rutMaskForSpecies(flMySpecies()));
   var rutScore = maxRut >= 25 ? 15 : maxRut >= 10 ? 8 : maxRut > 0 ? 3 : 0;
 
   // Seasonal
@@ -2201,25 +2698,25 @@ function conditionLabel(code, precip) {
 }
 
 function wxCodeToEmoji(code, precip) {
-  if (code === null || code === undefined) return '☁️';
-  if (code === 0)  return '☀️';
-  if (code <= 2)   return '⛅';
-  if (code === 3)  return '☁️';
-  if (code <= 49)  return '🌫';
-  if (code <= 57)  return '🌦';
-  if (code <= 65)  return precip > 4 ? '🌧' : '🌦';
-  if (code <= 77)  return '❄️';
-  if (code <= 82)  return precip > 4 ? '🌧' : '🌦';
-  if (code <= 86)  return '❄️';
-  if (code <= 99)  return '⛈';
-  return '☁️';
+  if (code === null || code === undefined) return '<span class="fl-ic fl-wx-cloud"></span>';
+  if (code === 0)  return '<span class="fl-ic fl-wx-sun"></span>';
+  if (code <= 2)   return '<span class="fl-ic fl-wx-partcloud"></span>';
+  if (code === 3)  return '<span class="fl-ic fl-wx-cloud"></span>';
+  if (code <= 49)  return '<span class="fl-ic fl-wx-fog"></span>';
+  if (code <= 57)  return '<span class="fl-ic fl-wx-lightrain"></span>';
+  if (code <= 65)  return precip > 4 ? '<span class="fl-ic fl-wx-rain"></span>' : '<span class="fl-ic fl-wx-lightrain"></span>';
+  if (code <= 77)  return '<span class="fl-ic fl-wx-snow"></span>';
+  if (code <= 82)  return precip > 4 ? '<span class="fl-ic fl-wx-rain"></span>' : '<span class="fl-ic fl-wx-lightrain"></span>';
+  if (code <= 86)  return '<span class="fl-ic fl-wx-snow"></span>';
+  if (code <= 99)  return '<span class="fl-ic fl-wx-storm"></span>';
+  return '<span class="fl-ic fl-wx-cloud"></span>';
 }
 
 function precipEmoji(mm) {
-  if (mm <= 0)   return '🌤';
-  if (mm < 2)    return '🌦';
-  if (mm < 5)    return '🌧';
-  return '🌧';
+  if (mm <= 0)   return '<span class="fl-ic fl-wx-partcloud"></span>';
+  if (mm < 2)    return '<span class="fl-ic fl-wx-lightrain"></span>';
+  if (mm < 5)    return '<span class="fl-ic fl-wx-rain"></span>';
+  return '<span class="fl-ic fl-wx-rain"></span>';
 }
 
 function windDirArrow(deg) {
@@ -2260,9 +2757,9 @@ function hourlyActivityScore(hour, date, wxHour) {
   var isNight = !(hour >= dawnStart/60 && hour <= duskEnd/60);
   score += isNight ? Math.round(mb * 0.3) : mb;
 
-  // Rut
+  // Rut — masked to the user's ground species (empty = all species)
   var rutM = RUT_CALENDAR[month] || [0,0,0,0,0];
-  var maxRut = Math.max.apply(null, rutM);
+  var maxRut = maxRutMasked(rutM, rutMaskForSpecies(flMySpecies()));
   score += maxRut >= 25 ? 15 : maxRut >= 10 ? 8 : maxRut > 0 ? 3 : 0;
 
   // Season
@@ -2436,6 +2933,7 @@ function buildWeekForecast(wxData) {
   var heroLabel = document.getElementById('wf-hero-label');
   var heroPills = document.getElementById('wf-hero-pills');
   if (!panel || !rowsEl) return;
+  if (wxData) flLast7dayWx = wxData; // cache for species-change re-render
 
   var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -2504,19 +3002,27 @@ function buildWeekForecast(wxData) {
       var avgT = Math.round((best.s.wxDay.tempMax + best.s.wxDay.tempMin) / 2);
       var tMaxH = Math.round(best.s.wxDay.tempMax);
       var tMinH = Math.round(best.s.wxDay.tempMin);
-      pillData.push({ label: '🌡 ' + tMinH + '–' + tMaxH + '°C', bg: avgT <= 10 ? 'rgba(90,180,255,0.12)' : 'rgba(255,140,60,0.1)', color: avgT <= 10 ? 'rgba(150,210,255,0.85)' : 'rgba(255,180,100,0.85)', border: 'rgba(90,180,255,0.15)' });
+      pillData.push({ ic: 'fl-temp', label: tMinH + '–' + tMaxH + '°C', bg: avgT <= 10 ? 'rgba(90,180,255,0.12)' : 'rgba(255,140,60,0.1)', color: avgT <= 10 ? 'rgba(150,210,255,0.85)' : 'rgba(255,180,100,0.85)', border: 'rgba(90,180,255,0.15)' });
       var windMph = Math.round(best.s.wxDay.windMax * 0.621);
-      pillData.push({ label: '🍃 ' + windMph + ' mph', bg: windMph < 10 ? 'rgba(90,220,90,0.1)' : 'rgba(255,200,60,0.1)', color: windMph < 10 ? 'rgba(122,223,122,0.85)' : 'rgba(255,220,100,0.85)', border: 'rgba(90,220,90,0.15)' });
+      pillData.push({ ic: 'fl-wind', label: windMph + ' mph', bg: windMph < 10 ? 'rgba(90,220,90,0.1)' : 'rgba(255,200,60,0.1)', color: windMph < 10 ? 'rgba(122,223,122,0.85)' : 'rgba(255,220,100,0.85)', border: 'rgba(90,220,90,0.15)' });
     }
     var rutM = RUT_CALENDAR[best.date.getMonth()+1] || [0,0,0,0,0];
-    if (Math.max.apply(null,rutM) >= 10) {
-      var rutNames = RUT_SPECIES.filter(function(_,i){ return rutM[i]>=10; });
-      pillData.push({ label: '🦌 ' + rutNames[0] + ' rut', bg: 'rgba(200,100,50,0.1)', color: 'rgba(240,160,100,0.9)', border: 'rgba(200,100,50,0.2)' });
+    var _heroMask = rutMaskForSpecies(flMySpecies());
+    if (maxRutMasked(rutM, _heroMask) >= 10) {
+      var rutNames = RUT_SPECIES.filter(function(_,i){ return rutM[i]>=10 && _heroMask[i]; });
+      if (rutNames.length) pillData.push({ ic: 'fl-deer', label: rutNames[0] + ' rut', bg: 'rgba(200,100,50,0.1)', color: 'rgba(240,160,100,0.9)', border: 'rgba(200,100,50,0.2)' });
     }
     pillData.forEach(function(p) {
       var pill = document.createElement('div');
       pill.style.cssText = 'font-size:10px;font-weight:600;padding:4px 10px;border-radius:20px;background:' + p.bg + ';color:' + p.color + ';border:1px solid ' + p.border + ';';
-      pill.textContent = p.label;
+      if (p.ic) {
+        var _pi = document.createElement('span');
+        _pi.className = 'fl-ic ' + p.ic;
+        pill.appendChild(_pi);
+        pill.appendChild(document.createTextNode(' ' + p.label));
+      } else {
+        pill.textContent = p.label;
+      }
       heroPills.appendChild(pill);
     });
   }
@@ -2551,8 +3057,8 @@ function buildWeekForecast(wxData) {
       var pEmoji   = precipEmoji(precip2);
       var pLabel   = precip2 <= 0 ? '0.0 mm' : precip2.toFixed(1) + ' mm';
       wxSummary = '<div style="display:flex;gap:10px;padding:0 16px 10px 56px;flex-wrap:wrap;">'
-        + '<span style="display:flex;align-items:center;gap:3px;font-size:10px;color:rgba(255,255,255,0.45);"><span>🌡</span><span style="font-weight:600;color:rgba(255,255,255,0.7);">' + tMin + '–' + tMax + '°C</span></span>'
-        + '<span style="display:flex;align-items:center;gap:3px;font-size:10px;color:rgba(255,255,255,0.45);"><span>🍃</span><span style="font-weight:600;color:rgba(255,255,255,0.7);">' + wMph + ' mph max</span></span>'
+        + '<span style="display:flex;align-items:center;gap:3px;font-size:10px;color:rgba(255,255,255,0.45);"><span><span class="fl-ic fl-temp"></span></span><span style="font-weight:600;color:rgba(255,255,255,0.7);">' + tMin + '–' + tMax + '°C</span></span>'
+        + '<span style="display:flex;align-items:center;gap:3px;font-size:10px;color:rgba(255,255,255,0.45);"><span><span class="fl-ic fl-wind"></span></span><span style="font-weight:600;color:rgba(255,255,255,0.7);">' + wMph + ' mph max</span></span>'
         + '<span style="display:flex;align-items:center;gap:3px;font-size:10px;color:rgba(255,255,255,0.45);"><span>' + skyEmoji + '</span><span style="font-weight:600;color:rgba(255,255,255,0.7);">' + conditionLabel(r.s.wxDay.wcode, precip2) + '</span></span>'
         + '<span style="display:flex;align-items:center;gap:3px;font-size:10px;color:rgba(255,255,255,0.45);"><span>' + pEmoji + '</span><span style="font-weight:600;color:rgba(255,255,255,0.7);">' + pLabel + ' total</span></span>'
         + '</div>';
@@ -2634,14 +3140,30 @@ var _tickCount = 0;
 function tick() {
   _tickCount++;
   updateBannerClock();
+  // Recompute solar/legal state every tick. maybeRecalcSolar() early-returns
+  // unless the Europe/London minute actually changed, so this is cheap — but it
+  // now fires exactly at the minute boundary instead of an arbitrary ~60s phase
+  // (M10: "Legal to shoot" no longer lingers up to ~60s past close, and the
+  // post-midnight "until legal" countdown no longer briefly reads ~30h).
+  maybeRecalcSolar();
   if (_tickCount % 60 === 0) {   // every 60 seconds
-    maybeRecalcSolar();
     updateMoon();
     // Refresh activity panel if open
     var ap = document.getElementById('activity-panel');
     if (ap && ap.style.display !== 'none') updateActivityPanel();
   }
 }
+
+// A module script is deferred, so lib/fl-deer-seasons.js is on the global
+// before DOMContentLoaded fires and the boot below already sees it. This
+// listener costs nothing and covers the case where it is not: the season rows,
+// the card badges and the calendar all redraw the moment the source arrives.
+document.addEventListener('fl-deer-seasons-ready', function() {
+  if (document.readyState === 'loading') return;   // boot will do it in a moment
+  updateSeasonStatuses();
+  initCalendar();
+  flStampDataCurrency();
+});
 
 // ── Boot ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
@@ -2656,6 +3178,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   initBanner();
   initCalendar();
+  flStampDataCurrency();
   setInterval(tick, 1000);
 
   var ldp = document.getElementById('legal-date-picker');
@@ -2736,6 +3259,35 @@ var RUT_CALENDAR = {
   11: [15, 20, 15, 0,  20],
   12: [0,  5,  15, 0,  30],
 };
+
+// Species-aware rut masking (SPEC pair with lib/fl-forecast.mjs — keep bodies identical).
+// RUT_CALENDAR column order is [Red, Fallow, Sika, Roe, CWD]. Muntjac breeds year-round
+// (no rut) so it is deliberately absent — a Muntjac-only ground gets no rut boost.
+var RUT_INDEX_BY_SPECIES = { 'Red Deer': 0, 'Fallow': 1, 'Sika': 2, 'Roe Deer': 3, 'CWD': 4 };
+function rutMaskForSpecies(present) {
+  if (!present || !present.length) return [true, true, true, true, true];
+  var m = [false, false, false, false, false];
+  for (var i = 0; i < present.length; i++) {
+    var idx = RUT_INDEX_BY_SPECIES[present[i]];
+    if (idx != null) m[idx] = true;
+  }
+  return m;
+}
+function maxRutMasked(rutMonths, mask) {
+  var x = 0;
+  for (var i = 0; i < 5; i++) if (mask[i] && rutMonths[i] > x) x = rutMonths[i];
+  return x;
+}
+// Homepage reads the user's ground species from localStorage (shared origin with the
+// Diary, which owns the setting UI). Empty/absent = all species = current behaviour.
+function flMySpecies() {
+  try {
+    var raw = localStorage.getItem('fl-my-species-v1');
+    if (!raw) return [];
+    var arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) { return []; }
+}
 
 // Cached weather data
 var _weatherCache = { data: null, ts: 0, lat: null, lng: null };
@@ -2865,10 +3417,10 @@ function getDeerActivityScore(wx) {
     factors.push({ icon: SVG_DUSK, text: 'Dusk window — peak deer movement', good: true });
   } else if (inWindow(curMin, dawnEnd, duskStart)) {
     score += 8;
-    factors.push({ icon: '☀️', text: 'Midday — deer movement reduced', good: false });
+    factors.push({ icon: '<span class="fl-ic fl-wx-sun"></span>', text: 'Midday — deer movement reduced', good: false });
   } else {
     score += 8; // Night: new moon / rut / weather can still push score meaningfully
-    factors.push({ icon: '🌙', text: 'Night — deer resting, minimal movement', good: false });
+    factors.push({ icon: '<span class="fl-ic fl-moon-wancres"></span>', text: 'Night — deer resting, minimal movement', good: false });
   }
   var isNight = !inWindow(curMin, dawnStart, duskEnd);
 
@@ -2876,19 +3428,19 @@ function getDeerActivityScore(wx) {
   // Moon phase — reduced weights (peer-reviewed studies show modest daytime effect)
   var moonBoost, moonIcon, moonText, moonGood;
   if (moon.illumination < 15) {
-    moonBoost = 8; moonIcon = '🌑'; moonGood = true;
+    moonBoost = 8; moonIcon = '<span class="fl-ic fl-moon-new"></span>'; moonGood = true;
     moonText = 'New moon (' + moon.illumination + '% lit) — low overnight feeding, deer keener at dawn & dusk';
   } else if (moon.illumination < 40) {
-    moonBoost = 6; moonIcon = '🌒'; moonGood = true;
+    moonBoost = 6; moonIcon = '<span class="fl-ic fl-moon-waxcres"></span>'; moonGood = true;
     moonText = 'Crescent moon (' + moon.illumination + '% lit) — favourable conditions';
   } else if (moon.illumination < 60) {
-    moonBoost = 4; moonIcon = '🌓'; moonGood = null;
+    moonBoost = 4; moonIcon = '<span class="fl-ic fl-moon-firstq"></span>'; moonGood = null;
     moonText = 'Quarter moon (' + moon.illumination + '% lit) — average movement';
   } else if (moon.illumination < 85) {
-    moonBoost = 2; moonIcon = '🌔'; moonGood = null;
+    moonBoost = 2; moonIcon = '<span class="fl-ic fl-moon-waxgibb"></span>'; moonGood = null;
     moonText = 'Gibbous moon (' + moon.illumination + '% lit) — some nocturnal feeding likely';
   } else {
-    moonBoost = 1; moonIcon = '🌕'; moonGood = false;
+    moonBoost = 1; moonIcon = '<span class="fl-ic fl-moon-full"></span>'; moonGood = false;
     moonText = 'Full moon (' + moon.illumination + '% lit) — deer may have fed overnight, daytime movement reduced';
   }
   score += isNight ? Math.round(moonBoost * 0.3) : moonBoost;
@@ -2903,26 +3455,27 @@ function getDeerActivityScore(wx) {
   // Solunar — reduced (major +3, minor +1; gravitational effect on deer contested)
   if (inMajor) {
     score += 3;
-    factors.push({ icon: '🌕', text: 'Solunar peak — moon overhead or underfoot (some evidence of elevated movement)', good: null });
+    factors.push({ icon: '<span class="fl-ic fl-moon-full"></span>', text: 'Solunar peak — moon overhead or underfoot (some evidence of elevated movement)', good: null });
   } else if (inMinor) {
     score += 1;
-    factors.push({ icon: '🌗', text: 'Solunar minor period — moon at 90°, modest activity indicator', good: null });
+    factors.push({ icon: '<span class="fl-ic fl-moon-lastq"></span>', text: 'Solunar minor period — moon at 90°, modest activity indicator', good: null });
   }
 
-  // ── Rut calendar (max 15pts) ─────────────────────────────
+  // ── Rut calendar (max 15pts) — masked to the user's ground species ───
   var rutMonths = RUT_CALENDAR[month] || [0,0,0,0,0];
-  var maxRut = Math.max.apply(null, rutMonths);
+  var _rutMask = rutMaskForSpecies(flMySpecies());
+  var maxRut = maxRutMasked(rutMonths, _rutMask);
   if (maxRut >= 25) {
-    var peakNames = RUT_SPECIES.filter(function(_, i) { return rutMonths[i] >= 25; });
+    var peakNames = RUT_SPECIES.filter(function(_, i) { return rutMonths[i] >= 25 && _rutMask[i]; });
     score += 15;
-    factors.push({ icon: '🦌', text: peakNames.join(' & ') + ' rut — heightened daytime activity', good: true });
+    factors.push({ icon: '<span class="fl-ic fl-deer"></span>', text: peakNames.join(' & ') + ' rut — heightened daytime activity', good: true });
   } else if (maxRut >= 10) {
-    var activeNames = RUT_SPECIES.filter(function(_, i) { return rutMonths[i] >= 10; });
+    var activeNames = RUT_SPECIES.filter(function(_, i) { return rutMonths[i] >= 10 && _rutMask[i]; });
     score += 8;
-    factors.push({ icon: '🦌', text: activeNames.join(' & ') + ' rut building — elevated movement', good: true });
+    factors.push({ icon: '<span class="fl-ic fl-deer"></span>', text: activeNames.join(' & ') + ' rut building — elevated movement', good: true });
   } else if (maxRut > 0) {
     score += 3;
-    factors.push({ icon: '🦌', text: 'Pre/post rut — residual activity', good: null });
+    factors.push({ icon: '<span class="fl-ic fl-deer"></span>', text: 'Pre/post rut — residual activity', good: null });
   }
 
   // ── Seasonal body condition modifier (max 5pts) ──────────
@@ -2941,7 +3494,7 @@ function getDeerActivityScore(wx) {
   }
   score += seasonBoost;
   if (seasonBoost > 0 && month === 2) {
-    factors.push({ icon: '❄️', text: 'Late winter — deer feeding intensively to survive, movement elevated', good: true });
+    factors.push({ icon: '<span class="fl-ic fl-wx-snow"></span>', text: 'Late winter — deer feeding intensively to survive, movement elevated', good: true });
   } else if (seasonBoost > 0 && month === 3) {
     factors.push({ icon: '🌱', text: 'Early spring — residual winter stress, deer actively feeding', good: true });
   } else if (seasonBoost > 0 && month === 11) {
@@ -2949,7 +3502,7 @@ function getDeerActivityScore(wx) {
   } else if (seasonBoost > 0) {
     factors.push({ icon: '🍂', text: 'Pre-rut season — bucks building energy, increased movement', good: true });
   } else if (seasonBoost < 0) {
-    factors.push({ icon: '☀️', text: 'Summer heat — movement concentrated at dawn & dusk only', good: null });
+    factors.push({ icon: '<span class="fl-ic fl-wx-sun"></span>', text: 'Summer heat — movement concentrated at dawn & dusk only', good: null });
   }
 
   // ── Weather factors (max 22pts total) ───────────────────
@@ -2988,7 +3541,7 @@ function getDeerActivityScore(wx) {
     }
 
     score += tempScore;
-    wxFactors.push({ icon: '🌡️', text: tempText, good: tempGood,
+    wxFactors.push({ icon: '<span class="fl-ic fl-temp"></span>', text: tempText, good: tempGood,
       wxLabel: 'Temp', wxVal: t + '°C',
       wxSub: tempGood === true ? 'Favourable' : tempGood === false ? 'Suppressing' : 'Neutral',
       wxClass: tempGood === true ? 'good' : tempGood === false ? 'bad' : 'mid' });
@@ -3006,7 +3559,7 @@ function getDeerActivityScore(wx) {
       }
       if (dropScore > 0) {
         score += dropScore;
-        factors.push({ icon: '❄️', text: dropText, good: true });
+        factors.push({ icon: '<span class="fl-ic fl-wx-snow"></span>', text: dropText, good: true });
       }
     }
 
@@ -3031,7 +3584,7 @@ function getDeerActivityScore(wx) {
     }
     score += pressScore;
     var trendStr = pt < -0.5 ? '↓ ' : pt > 0.5 ? '↑ ' : '→ ';
-    wxFactors.push({ icon: '📉', text: pressText, good: pressGood,
+    wxFactors.push({ icon: '<span class="fl-ic fl-prs-down"></span>', text: pressText, good: pressGood,
       wxLabel: 'Pressure', wxVal: trendStr + wx.pressure.toFixed(0),
       wxSub: pressGood === true ? 'Falling ✓' : pressGood === false ? 'Rising ✗' : 'Stable',
       wxClass: pressGood === true ? 'good' : pressGood === false ? 'bad' : 'mid' });
@@ -3057,7 +3610,7 @@ function getDeerActivityScore(wx) {
     // Wind consistency: append gust info to wind label if available
     var gustMph = wx.windGust ? Math.round(wx.windGust * 0.621) : null;
     var windVal = windMph + ' mph' + (gustMph && gustMph > windMph ? ' (gusts ' + gustMph + ')' : '');
-    wxFactors.push({ icon: '🍃', text: windText, good: windGood,
+    wxFactors.push({ icon: '<span class="fl-ic fl-wind"></span>', text: windText, good: windGood,
       wxLabel: 'Wind', wxVal: windVal,
       wxSub: windGood === true ? 'Calm ✓' : windGood === false ? 'High ✗' : 'Moderate',
       wxClass: windGood === true ? 'good' : windGood === false ? 'bad' : 'mid' });
@@ -3081,7 +3634,7 @@ function getDeerActivityScore(wx) {
       }
       if (gustScore !== 0) {
         score += gustScore;
-        factors.push({ icon: '🌬️', text: gustText, good: gustScore > 0 ? true : false });
+        factors.push({ icon: '<span class="fl-ic fl-wind"></span>', text: gustText, good: gustScore > 0 ? true : false });
       }
     }
 
@@ -3110,7 +3663,7 @@ function getDeerActivityScore(wx) {
     }
     score += rainScore;
     var rainLabel = wx.postRain ? 'Post-rain ✓' : precip > 5 ? 'Heavy rain' : precip > 0.5 ? 'Light rain' : wx.cloudCover > 70 ? 'Overcast' : wx.cloudCover < 20 ? 'Clear' : 'Partly cloudy';
-    wxFactors.push({ icon: '☁️', text: rainText, good: rainGood,
+    wxFactors.push({ icon: '<span class="fl-ic fl-wx-cloud"></span>', text: rainText, good: rainGood,
       wxLabel: 'Sky', wxVal: rainLabel,
       wxSub: rainGood === true ? 'Good ✓' : rainGood === false ? 'Poor ✗' : 'Neutral',
       wxClass: rainGood === true ? 'good' : rainGood === false ? 'bad' : 'mid' });
@@ -3164,7 +3717,7 @@ function updateActivityPanel(wx) {
   // Update badge on moon widget
   var badge = document.getElementById('activity-score-badge');
   if (badge) {
-    badge.textContent = '🦌 ' + result.score + '%';
+    badge.innerHTML = '<span class="fl-ic fl-deer"></span> ' + result.score + '%';
     badge.style.display = 'block';
   }
   var isNightNow = result.curMin !== undefined &&
@@ -3173,17 +3726,17 @@ function updateActivityPanel(wx) {
   var label;
   if (isNightNow) {
     // Night: max possible ~35% so use different scale
-    label = result.score >= 28 ? '🟢 Excellent dawn forecast'
-          : result.score >= 20 ? '🟡 Good dawn forecast'
-          : result.score >= 12 ? '🟠 Average dawn forecast'
-          :                      '⚫ Poor dawn forecast';
+    label = result.score >= 28 ? '<span class="fl-dot fl-dot-green"></span> Excellent dawn forecast'
+          : result.score >= 20 ? '<span class="fl-dot fl-dot-amber"></span> Good dawn forecast'
+          : result.score >= 12 ? '<span class="fl-dot fl-dot-orange"></span> Average dawn forecast'
+          :                      '<span class="fl-dot fl-dot-dark"></span> Poor dawn forecast';
   } else {
-    label = result.score >= 65 ? '🟢 High Activity Expected'
-          : result.score >= 45 ? '🟡 Moderate Activity'
-          : result.score >= 20 ? '🟠 Low Activity'
-          :                      '⚫ Minimal Activity';
+    label = result.score >= 65 ? '<span class="fl-dot fl-dot-green"></span> High Activity Expected'
+          : result.score >= 45 ? '<span class="fl-dot fl-dot-amber"></span> Moderate Activity'
+          : result.score >= 20 ? '<span class="fl-dot fl-dot-orange"></span> Low Activity'
+          :                      '<span class="fl-dot fl-dot-dark"></span> Minimal Activity';
   }
-  labelEl.textContent = label;
+  labelEl.innerHTML = label;
 
   // ── Weather strip ──────────────────────────────────────────
   var wxStripEl = document.getElementById('activity-wx-strip');
@@ -3307,10 +3860,17 @@ function toggleActivityPanel() {
   panel.style.display = isHidden ? 'block' : 'none';
   if (wfPanel) wfPanel.style.display = isHidden ? 'block' : 'none';
   if (isHidden) {
-    // Show loading state in wx strip
+    flRenderSpeciesChip();
+    flMaybeShowSpeciesNudge();
+    // Populate immediately from cached weather (or non-weather factors) so the
+    // panel — now docked under the Deer activity card — is never blank while the
+    // live fetch is in flight (that blank stretch was the reported bug).
+    var _cwx = (_weatherCache && _weatherCache.data && _weatherCache.lat === bannerState.lat) ? _weatherCache.data : null;
+    try { updateActivityPanel(_cwx); } catch (_) {}
+    // Show a loading state in the weather strip only when there's no cache yet.
     var wxStrip = document.getElementById('activity-wx-strip');
     var wxLabel = document.getElementById('activity-wx-label');
-    if (wxStrip && bannerState.lat !== null) {
+    if (!_cwx && wxStrip && bannerState.lat !== null) {
       if (wxLabel) { wxLabel.style.display = 'block'; wxLabel.textContent = 'Live weather · Loading…'; }
       wxStrip.style.display = 'grid';
       wxStrip.innerHTML = '<div style="grid-column:1/-1;font-size:11px;color:rgba(255,255,255,0.3);padding:6px 0;">Fetching weather data…</div>';
@@ -3324,7 +3884,7 @@ function toggleActivityPanel() {
           // Sync badge with weather-enhanced score
           var badge = document.getElementById('activity-score-badge');
           var result = getDeerActivityScore(wx);
-          if (badge) badge.textContent = '🦌 ' + result.score + '%';
+          if (badge) badge.innerHTML = '<span class="fl-ic fl-deer"></span> ' + result.score + '%';
         } else {
           if (wxLabel) { wxLabel.style.display = 'block'; wxLabel.textContent = 'Weather unavailable · score based on moon, rut & season'; }
           if (wxStrip) wxStrip.style.display = 'none';
@@ -3339,6 +3899,93 @@ function toggleActivityPanel() {
       });
     }
   }
+}
+
+// ── Homepage "Deer on my ground" picker (species-aware rut, login-free) ──────
+// Writes the SAME localStorage key the Diary reads ('fl-my-species-v1'), so the
+// deer score reflects the visitor's deer on both surfaces. Empty = all species
+// (default, unchanged forecast). No account required — this is the homepage's
+// own way to set the species the Diary sets behind its login.
+var FL_SPECIES_ORDER = ['Red Deer', 'Roe Deer', 'Fallow', 'Sika', 'Muntjac', 'CWD'];
+var FL_SPECIES_SHORT = { 'Red Deer': 'Red', 'Roe Deer': 'Roe', 'Fallow': 'Fallow', 'Sika': 'Sika', 'Muntjac': 'Muntjac', 'CWD': 'CWD' };
+var FL_SPECIES_ONBOARD_KEY = 'fl-species-onboarded-v1';
+var flLast7dayWx = null; // last 7-day payload, cached so a species change can re-score
+
+function flSetMySpecies(arr) {
+  try { localStorage.setItem('fl-my-species-v1', JSON.stringify(arr)); } catch (e) {}
+}
+function flSpeciesChipText() {
+  var mine = flMySpecies();
+  if (!mine.length) return 'All deer';
+  return mine.map(function (s) { return FL_SPECIES_SHORT[s] || s; }).join(', ');
+}
+function flRenderSpeciesChip() {
+  var el = document.getElementById('species-chip-label');
+  if (el) el.textContent = flSpeciesChipText();
+}
+function flSpeciesOnboarded() {
+  try { return localStorage.getItem(FL_SPECIES_ONBOARD_KEY) === '1'; } catch (e) { return true; }
+}
+function flMarkSpeciesOnboarded() {
+  try { localStorage.setItem(FL_SPECIES_ONBOARD_KEY, '1'); } catch (e) {}
+}
+function flDismissSpeciesNudge() {
+  var n = document.getElementById('species-nudge');
+  if (n) n.style.display = 'none';
+  flMarkSpeciesOnboarded();
+}
+function flMaybeShowSpeciesNudge() {
+  var n = document.getElementById('species-nudge');
+  if (n && !flSpeciesOnboarded()) n.style.display = 'flex';
+}
+function openSpeciesPicker() {
+  var modal = document.getElementById('species-picker-modal');
+  var list = document.getElementById('species-picker-list');
+  if (!modal || !list) return;
+  // Nothing saved yet ⇒ default to all six ticked (matches "all species" scoring).
+  var mine = flMySpecies();
+  var preset = mine.length ? mine : FL_SPECIES_ORDER.slice();
+  var boxes = list.querySelectorAll('input[type="checkbox"]');
+  for (var i = 0; i < boxes.length; i++) boxes[i].checked = preset.indexOf(boxes[i].value) !== -1;
+  var err = document.getElementById('species-picker-err');
+  if (err) err.style.display = 'none';
+  modal.style.display = 'flex';
+}
+function closeSpeciesPicker() {
+  var modal = document.getElementById('species-picker-modal');
+  if (modal) modal.style.display = 'none';
+}
+function saveSpeciesPicker() {
+  var list = document.getElementById('species-picker-list');
+  if (!list) return;
+  var boxes = list.querySelectorAll('input[type="checkbox"]'), chosen = [];
+  for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) chosen.push(boxes[i].value);
+  if (!chosen.length) {
+    var err = document.getElementById('species-picker-err');
+    if (err) err.style.display = 'block';
+    return;
+  }
+  // Canonical order; all six ⇒ store [] so the common case stays a true no-op.
+  var ordered = FL_SPECIES_ORDER.filter(function (s) { return chosen.indexOf(s) !== -1; });
+  flSetMySpecies(ordered.length === FL_SPECIES_ORDER.length ? [] : ordered);
+  flMarkSpeciesOnboarded();
+  flRenderSpeciesChip();
+  flDismissSpeciesNudge();
+  closeSpeciesPicker();
+  flRefreshForecastForSpecies();
+}
+// Re-score whatever is on screen after a species change (badge always; the live
+// panel + week outlook only if open). Reuses cached weather — no refetch.
+function flRefreshForecastForSpecies() {
+  var cachedWx = (_weatherCache && _weatherCache.data && _weatherCache.lat === bannerState.lat) ? _weatherCache.data : null;
+  var badge = document.getElementById('activity-score-badge');
+  if (badge && badge.style.display !== 'none') {
+    badge.innerHTML = '<span class="fl-ic fl-deer"></span> ' + getDeerActivityScore(cachedWx).score + '%';
+  }
+  var panel = document.getElementById('activity-panel');
+  if (panel && panel.style.display !== 'none') updateActivityPanel(cachedWx);
+  var wf = document.getElementById('week-forecast-panel');
+  if (wf && wf.style.display !== 'none' && flLast7dayWx) buildWeekForecast(flLast7dayWx);
 }
 
 
@@ -3574,6 +4221,38 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // ── block ──
+// Dialog hygiene (Wave T): Escape closes whichever overlay is open — the
+// lightbox first (it sits above everything), then the pickers, then the
+// static info dialogs. Arrow keys page the lightbox. Escape on the species
+// picker cancels (same as its Close control) — it never saves.
+document.addEventListener('keydown', function (e) {
+  var lb = document.getElementById('gallery-lightbox');
+  var lbOpen = !!(lb && lb.classList.contains('open'));
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    if (lbOpen) { lightboxNav(e.key === 'ArrowLeft' ? -1 : 1); e.preventDefault(); }
+    return;
+  }
+  if (e.key !== 'Escape') return;
+  if (lbOpen) { closeLightbox(); e.preventDefault(); return; }
+  var sp = document.getElementById('species-picker-modal');
+  if (sp && sp.style.display === 'flex') { closeSpeciesPicker(); e.preventDefault(); return; }
+  var lm = document.getElementById('location-modal');
+  if (lm && lm.style.display === 'flex') { ui.closeLocationPicker(); e.preventDefault(); return; }
+  var cm = document.getElementById('changelog-modal');
+  if (cm && cm.style.display === 'flex') { cm.style.display = 'none'; e.preventDefault(); return; }
+  var hd = document.getElementById('hours-disclaimer-modal');
+  if (hd && hd.style.display === 'flex') { closeHoursDisclaimer(); e.preventDefault(); return; }
+});
+// Backdrop tap closes the changelog and species picker too, matching the
+// hours and location dialogs which already did.
+document.addEventListener('DOMContentLoaded', function () {
+  var cm = document.getElementById('changelog-modal');
+  if (cm) cm.addEventListener('click', function (e) { if (e.target === this) this.style.display = 'none'; });
+  var sp = document.getElementById('species-picker-modal');
+  if (sp) sp.addEventListener('click', function (e) { if (e.target === this) closeSpeciesPicker(); });
+});
+
+// ── block ──
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('./sw.js').then(function(reg) {
@@ -3705,27 +4384,25 @@ if ('serviceWorker' in navigator) {
 
     var calBtnEW = document.getElementById('cal-btn-ew');
     var calBtnSC = document.getElementById('cal-btn-sc');
+    var calBtnNI = document.getElementById('cal-btn-ni');
     var calViewEW = document.getElementById('cal-view-ew');
     var calViewSC = document.getElementById('cal-view-sc');
-    var ewActiveStyle = 'flex:1;padding:10px 0;border-radius:20px;border:1px solid rgba(200,168,75,0.3);cursor:pointer;font-family:\'DM Sans\',sans-serif;font-size:13px;font-weight:600;background:linear-gradient(135deg,#2a5a18,#1a3a0e);color:#f5e6c8;';
-    var scActiveStyle = 'flex:1;padding:10px 0;border-radius:20px;border:1px solid rgba(120,160,240,0.3);cursor:pointer;font-family:\'DM Sans\',sans-serif;font-size:13px;font-weight:600;background:linear-gradient(135deg,#1a2a5a,#0e1a3a);color:#c8d8f8;';
-    var inactiveStyle = 'flex:1;padding:10px 0;border-radius:20px;border:1px solid rgba(255,255,255,0.1);cursor:pointer;font-family:\'DM Sans\',sans-serif;font-size:13px;font-weight:600;background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.45);';
-    if (calBtnEW) {
-      calBtnEW.addEventListener('click', function() {
-        calBtnEW.style.cssText = ewActiveStyle;
-        calBtnSC.style.cssText = inactiveStyle;
-        calViewEW.style.display = 'block';
-        calViewSC.style.display = 'none';
-      });
+    var calViewNI = document.getElementById('cal-view-ni');
+    var ewActiveStyle = 'flex:1;padding:10px 0;border-radius:20px;border:1px solid rgba(200,168,75,0.3);cursor:pointer;font-family:\'DM Sans\',sans-serif;font-size:11px;font-weight:600;background:linear-gradient(135deg,#2a5a18,#1a3a0e);color:#f5e6c8;';
+    var scActiveStyle = 'flex:1;padding:10px 0;border-radius:20px;border:1px solid rgba(120,160,240,0.3);cursor:pointer;font-family:\'DM Sans\',sans-serif;font-size:11px;font-weight:600;background:linear-gradient(135deg,#1a2a5a,#0e1a3a);color:#c8d8f8;';
+    var niActiveStyle = 'flex:1;padding:10px 0;border-radius:20px;border:1px solid rgba(240,160,60,0.35);cursor:pointer;font-family:\'DM Sans\',sans-serif;font-size:11px;font-weight:600;background:linear-gradient(135deg,#5a3a10,#3a240a);color:#f5d8b0;';
+    var inactiveStyle = 'flex:1;padding:10px 0;border-radius:20px;border:1px solid rgba(255,255,255,0.1);cursor:pointer;font-family:\'DM Sans\',sans-serif;font-size:11px;font-weight:600;background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.45);';
+    function calShowRegion(region) {
+      if (calBtnEW) calBtnEW.style.cssText = region === 'ew' ? ewActiveStyle : inactiveStyle;
+      if (calBtnSC) calBtnSC.style.cssText = region === 'sc' ? scActiveStyle : inactiveStyle;
+      if (calBtnNI) calBtnNI.style.cssText = region === 'ni' ? niActiveStyle : inactiveStyle;
+      if (calViewEW) calViewEW.style.display = region === 'ew' ? 'block' : 'none';
+      if (calViewSC) calViewSC.style.display = region === 'sc' ? 'block' : 'none';
+      if (calViewNI) calViewNI.style.display = region === 'ni' ? 'block' : 'none';
     }
-    if (calBtnSC) {
-      calBtnSC.addEventListener('click', function() {
-        calBtnSC.style.cssText = scActiveStyle;
-        calBtnEW.style.cssText = inactiveStyle;
-        calViewSC.style.display = 'block';
-        calViewEW.style.display = 'none';
-      });
-    }
+    if (calBtnEW) calBtnEW.addEventListener('click', function() { calShowRegion('ew'); });
+    if (calBtnSC) calBtnSC.addEventListener('click', function() { calShowRegion('sc'); });
+    if (calBtnNI) calBtnNI.addEventListener('click', function() { calShowRegion('ni'); });
 
 
     var skipLink = document.getElementById('skip-link');
@@ -3741,6 +4418,7 @@ if ('serviceWorker' in navigator) {
     }
 
     initFieldMode();
+    flHoistHeader();
 
     // ── Edit location button ───────────────────────────────
     var editBtn = document.getElementById('edit-location-btn');
@@ -3759,21 +4437,64 @@ if ('serviceWorker' in navigator) {
       });
     }
 
-    // ── Nav tabs (top) ─────────────────────────────────────
-    document.querySelectorAll('.nav-tab[data-tab]').forEach(function(tab) {
-      tab.addEventListener('click', function() { switchTab(this.dataset.tab, this); });
-      tab.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTab(this.dataset.tab, this); }
-      });
-    });
+    // Dock the full-forecast panels directly under the Deer activity card, so
+    // the card's CTA (and the moon row) open them there — not up in the old
+    // status card. Toggle logic is unaffected (it finds them by id).
+    (function () {
+      var _dock = document.getElementById('forecast-dock');
+      var _ap = document.getElementById('activity-panel');
+      var _wf = document.getElementById('week-forecast-panel');
+      if (_dock && _ap) _dock.appendChild(_ap);
+      if (_dock && _wf) _dock.appendChild(_wf);
+    })();
 
-    // ── Bottom tab bar ─────────────────────────────────────
-    document.querySelectorAll('.tab-item[data-maintab]').forEach(function(item) {
-      item.addEventListener('click', function() { switchMainTab(this.dataset.maintab); });
-      item.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchMainTab(this.dataset.maintab); }
+    // ── Tonight's outlook card → opens the full forecast panel ──
+    var tonightCard = document.getElementById('tonight-card');
+    if (tonightCard) {
+      var openForecastFromCard = function() {
+        toggleActivityPanel();
+        var p = document.getElementById('activity-panel');
+        if (p && p.style.display !== 'none' && p.scrollIntoView) {
+          p.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      };
+      tonightCard.addEventListener('click', openForecastFromCard);
+      tonightCard.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openForecastFromCard(); }
       });
-    });
+    }
+
+    // ── Tab strips: top pills and bottom bar ───────────────
+    // One roving-tabindex handler for both, per the ARIA "Tabs" pattern:
+    // Left/Right move and activate, Home/End jump to the ends, Enter/Space
+    // activate the focused tab. Focus follows selection because switching is
+    // instant here — no fetch, no lazy panel build — so arrow-scrubbing the
+    // strip does not feel laggy. Up/Down are deliberately left alone: both
+    // strips are horizontal, and the bottom bar is fixed, so swallowing
+    // ArrowDown there would break scrolling the page underneath it.
+    // Focus is moved BEFORE activation so the smooth scrollIntoView inside
+    // switchMainTab is the last scroll to run and wins.
+    function wireTabStrip(sel, activate) {
+      var tabs = Array.prototype.slice.call(document.querySelectorAll(sel));
+      if (!tabs.length) return;
+      tabs.forEach(function(tab, i) {
+        tab.addEventListener('click', function() { activate(tab); });
+        tab.addEventListener('keydown', function(e) {
+          var next = null;
+          if (e.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
+          else if (e.key === 'ArrowLeft') next = tabs[(i - 1 + tabs.length) % tabs.length];
+          else if (e.key === 'Home') next = tabs[0];
+          else if (e.key === 'End') next = tabs[tabs.length - 1];
+          else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(tab); return; }
+          else return;
+          e.preventDefault();
+          next.focus();
+          activate(next);
+        });
+      });
+    }
+    wireTabStrip('.nav-tab[data-tab]', function(t) { switchTab(t.dataset.tab, t); });
+    wireTabStrip('.tab-item[data-maintab]', function(t) { switchMainTab(t.dataset.maintab, { scroll: true }); });
 
     // ── Deer cards (header only — body clicks e.g. gallery must not toggle) ──
     document.querySelectorAll('.deer-card').forEach(function(card) {
@@ -3855,13 +4576,35 @@ if ('serviceWorker' in navigator) {
   var DIARY_URL = 'https://sjaasuqeknvvmdpydfsz.supabase.co';
   var DIARY_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqYWFzdXFla252dm1kcHlkZnN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2NjMzMzIsImV4cCI6MjA5MDIzOTMzMn0.aiJaKoLCI3jUkOgifqMLuhp8NnAFK0T24Va6r2CLzgw';
 
-  function getSeasonDates() {
+  // Season-year feature (SEASON-YEAR-PLAN.md step 5): the homepage diary card
+  // follows the signed-in user's "season starts in" month from auth
+  // user_metadata.fl_season_start_month — the same setting the Diary uses.
+  // Signed out / unset / garbage ⇒ 8 (August), so unconfigured accounts get
+  // the historical Aug–Jul window byte-for-byte. Local clamp mirrors
+  // lib/fl-pure.mjs#normalizeSeasonStartMonth (app.js is a classic script and
+  // cannot import the ES module — keep the two in lock-step).
+  function clampSeasonStartMonth(v) {
+    var n = typeof v === 'number' ? v : parseInt(v, 10);
+    if (!Number.isFinite(n)) return 8;
+    n = Math.trunc(n);
+    return (n >= 1 && n <= 12) ? n : 8;
+  }
+
+  function getSeasonDates(startMonth) {
+    var sm = clampSeasonStartMonth(startMonth);
     var now = flNow();
     var m = now.getMonth() + 1; // 1-12
     var y = now.getFullYear();
-    var seasonStart = m >= 8 ? y + '-08-01' : (y-1) + '-08-01';
-    var seasonEnd   = m >= 8 ? (y+1) + '-07-31' : y + '-07-31';
-    return { start: seasonStart, end: seasonEnd };
+    var startYear = m >= sm ? y : y - 1;
+    var endMonth = sm === 1 ? 12 : sm - 1;
+    var endYear  = sm === 1 ? startYear : startYear + 1;
+    // Last day of the end month — day 0 of the following month (leap-safe).
+    var endDay = new Date(Date.UTC(endYear, endMonth, 0)).getUTCDate();
+    function p2(n) { return (n < 10 ? '0' : '') + n; }
+    return {
+      start: startYear + '-' + p2(sm) + '-01',
+      end: endYear + '-' + p2(endMonth) + '-' + p2(endDay)
+    };
   }
 
   function updateCard(total, kg, spp) {
@@ -3873,26 +4616,46 @@ if ('serviceWorker' in navigator) {
     if (s) s.textContent = spp;
   }
 
+  // Season totals for the homepage card, with the SAME semantics as the
+  // diary's own headline (diary.js: animals, not rows): blank days are
+  // outings without a shot so they count zero, and a pest bag logged as one
+  // row with quantity N counts N. Species ignores blanks and nulls.
+  function diaryCardStats(rows) {
+    var entries = (rows || []).filter(function(e){ return !e.is_blank; });
+    var total = entries.reduce(function(s,e){ var q = e.quantity|0; return s + (q > 0 ? q : 1); }, 0);
+    var kg = Math.round(entries.reduce(function(s,e){ return s + (parseFloat(e.weight_kg)||0); }, 0));
+    var spp = new Set(entries.map(function(e){ return e.species; }).filter(Boolean)).size;
+    return { total: total, kg: kg, spp: spp };
+  }
+
+  // Homepage Cull Diary card: signed-out visitors see the pitch (default in the
+  // HTML); a signed-in session swaps it for the live-stats grid.
+  function setDiaryCardMode(signedIn) {
+    var pitch = document.getElementById('diary-card-pitch');
+    var signedInBlock = document.getElementById('diary-card-signedin');
+    if (pitch) pitch.style.display = signedIn ? 'none' : '';
+    if (signedInBlock) signedInBlock.style.display = signedIn ? '' : 'none';
+  }
+
   async function syncDiaryCard() {
     try {
       var db = supabase.createClient(DIARY_URL, DIARY_KEY);
       var session = await db.auth.getSession();
-      if (!session.data.session) return; // not logged in — leave dashes
+      if (!session.data.session) { setDiaryCardMode(false); return; } // signed out — show the pitch
 
       var user = session.data.session.user;
-      var d = getSeasonDates();
+      setDiaryCardMode(true); // signed in — swap the pitch for live stats
+      var meta = user.user_metadata || {};
+      var d = getSeasonDates(meta.fl_season_start_month);
       var r = await db.from('cull_entries')
-        .select('weight_kg, species')
+        .select('weight_kg, species, quantity, is_blank')
         .eq('user_id', user.id)
         .gte('date', d.start)
         .lte('date', d.end);
 
       if (r.error || !r.data) return;
-      var entries = r.data;
-      var total = entries.length;
-      var kg = Math.round(entries.reduce(function(s,e){ return s + (parseFloat(e.weight_kg)||0); }, 0));
-      var spp = new Set(entries.map(function(e){ return e.species; })).size;
-      updateCard(total, kg || '–', spp || '–');
+      var stats = diaryCardStats(r.data);
+      updateCard(stats.total, stats.kg || '–', stats.spp || '–');
     } catch(e) {
       // Silently fail — dashes remain
     }

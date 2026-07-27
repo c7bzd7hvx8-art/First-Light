@@ -2,16 +2,32 @@
 <html lang="en-GB">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; script-src 'self' https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://firstlightdeer.goatcounter.com; frame-ancestors 'self';">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; script-src 'self' https://gc.zgo.at; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://firstlightdeer.goatcounter.com; frame-ancestors 'self';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <title>Deer School — First Light</title>
 <meta name="description" content="DSC1 study aid and mock exam. Test your deer stalking knowledge.">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<meta property="og:title" content="Deer School — First Light">
+<meta property="og:description" content="DSC1 study aid and mock exam — practise deer identification, seasons, legislation, rut timings and larder hygiene.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://firstlightdeer.co.uk/deerschool.html">
+<meta property="og:image" content="https://firstlightdeer.co.uk/icon-512.png">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+<meta property="og:image:alt" content="First Light — UK deer stalking app icon showing a stag silhouette at dawn">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Deer School — First Light">
+<meta name="twitter:description" content="DSC1 study aid and mock exam — deer identification, seasons, legislation and larder hygiene.">
+<meta name="twitter:image" content="https://firstlightdeer.co.uk/icon-512.png">
+<link rel="canonical" href="https://firstlightdeer.co.uk/deerschool.html">
+<meta name="theme-color" content="#1a2e1a">
+<link rel="stylesheet" href="fonts/fonts.css">
 <link rel="stylesheet" href="deerschool.css">
+<link rel="stylesheet" href="fl-icons.css">
 </head>
 <body>
 <div class="toast" id="toast"></div>
+<main id="ds-main">
 
 <!-- ══ DISCLAIMER ══ -->
 <div id="v-disclaimer" class="view active">
@@ -21,8 +37,8 @@
     <p>by First Light</p>
   </div>
   <div class="disc-card">
-    <div class="disc-badge">📋 Study Aid Disclaimer</div>
-    <div class="disc-title">First Light: DSC1 Study Aid</div>
+    <div class="disc-badge"><span class="fl-ic fl-notes"></span> Study Aid Disclaimer</div>
+    <h2 class="disc-title">First Light: DSC1 Study Aid</h2>
     <div class="disc-body">
       This training module is an <strong>independent study aid</strong> designed to test knowledge of the public UK Deer Management Qualifications (DMQ) syllabus.<br><br>
       It is <strong>not an official DMQ product</strong> and does not replace the British Deer Society (BDS) Training Manual. All users are strongly encouraged to study official materials in preparation for their assessment.<br><br>
@@ -30,33 +46,36 @@
     </div>
   </div>
   <button class="disc-btn" id="btn-accept-disclaimer">I understand — Enter Deer School →</button>
+  <!-- Home audit: the disclaimer is the first-run landing view and shipped
+       with no way out — accept or use the browser back button. -->
+  <a href="index.html" class="disc-home-link" title="First Light home — Field Guide, Ballistics &amp; Deer School">&larr; First Light</a>
 </div>
 
 <!-- ══ DASHBOARD ══ -->
 <div id="v-dashboard" class="view">
   <div class="dash-hdr">
     <!-- Subtle radial glow top-right -->
-    <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:radial-gradient(circle,rgba(200,168,75,0.12),transparent 70%);pointer-events:none;"></div>
+    <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:radial-gradient(circle,rgba(216,176,84,0.12),transparent 70%);pointer-events:none;"></div>
     <div class="dash-top">
       <a href="index.html" class="dash-back">
         <img src="icon-180.png" alt="First Light">
         <span>First Light</span>
       </a>
-      <div style="background:linear-gradient(135deg,#c9a84c,#d4b45a);color:#0f1a0f;font-size:9px;font-weight:800;padding:3px 9px;border-radius:7px;letter-spacing:0.5px;">DSC1 PREP</div>
+      <div style="background:linear-gradient(135deg,#d8b054,#f0cc74);color:#0f1a0f;font-size:9px;font-weight:800;padding:3px 9px;border-radius:7px;letter-spacing:0.5px;">DSC1 PREP</div>
     </div>
-    <div class="dash-title">Deer School</div>
+    <h1 class="dash-title">Deer School</h1>
     <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
       <div class="dash-sub">Study</div>
-      <div style="width:3px;height:3px;border-radius:50%;background:rgba(200,168,75,0.4);"></div>
+      <div style="width:3px;height:3px;border-radius:50%;background:rgba(216,176,84,0.4);"></div>
       <div class="dash-sub">Practise</div>
-      <div style="width:3px;height:3px;border-radius:50%;background:rgba(200,168,75,0.4);"></div>
+      <div style="width:3px;height:3px;border-radius:50%;background:rgba(216,176,84,0.4);"></div>
       <div class="dash-sub">Pass</div>
     </div>
   </div>
   <div class="dash-scroll">
     <!-- Exam readiness -->
     <div class="readiness-card">
-      <div class="readiness-lbl">Exam Readiness</div>
+      <h2 class="readiness-lbl">Exam Readiness</h2>
       <div class="readiness-row">
         <div class="readiness-pct" id="readiness-pct">–<span>%</span></div>
         <div class="readiness-info">
@@ -70,7 +89,7 @@
     </div>
 
     <!-- Section label -->
-    <div class="dash-kicker">Study Modes</div>
+    <h2 class="dash-kicker">Study Modes</h2>
     <!-- Mode buttons -->
     <div class="mode-grid">
       <button class="mode-btn primary" id="btn-start-quick">
@@ -106,7 +125,7 @@
       </button>
     </div>
     <!-- Tools section label -->
-    <div class="dash-kicker">Tools</div>
+    <h2 class="dash-kicker">Tools</h2>
     <!-- Secondary modes grid -->
     <div class="tool-grid">
 
@@ -167,14 +186,14 @@
     <!-- Category performance -->
     <div class="cat-card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-        <div class="cat-card-title" style="margin-bottom:0;">Performance by Category</div>
+        <h2 class="cat-card-title" style="margin-bottom:0;">Performance by Category</h2>
       </div>
       <div id="cat-stats"></div>
     </div>
 
-    <button class="reset-btn" id="btn-reset-progress">🗑 Reset all progress</button>
+    <button class="reset-btn" id="btn-reset-progress"><span class="fl-ic fl-delete"></span> Reset all progress</button>
     <a href="index.html" class="back-link-btn">← Back to First Light</a>
-    <button class="back-link-btn" id="btn-view-disclaimer" style="margin-top:6px;font-size:10px;">📋 View disclaimer</button>
+    <button class="back-link-btn" id="btn-view-disclaimer" style="margin-top:6px;font-size:10px;"><span class="fl-ic fl-notes"></span> View disclaimer</button>
     <div style="text-align:center;margin-top:8px;font-size:10px;color:var(--muted);opacity:0.6;">
       © 2025–2026 Sohaib Mengal · First Light · All rights reserved
     </div>
@@ -185,7 +204,7 @@
 <div id="v-quiz" class="view">
   <div class="quiz-hdr">
     <div class="quiz-meta-row">
-      <button class="quiz-back" id="btn-quit-quiz">←</button>
+      <button class="quiz-back" id="btn-quit-quiz" aria-label="Quit session and return to the dashboard"><span aria-hidden="true">←</span></button>
       <div class="quiz-cat-badge" id="quiz-cat-badge">Biology</div>
       <div class="quiz-timer" id="quiz-timer" style="display:none;">45:00</div>
     </div>
@@ -198,10 +217,10 @@
   <div class="quiz-scroll">
     <div class="q-card">
       <div class="q-num" id="q-num">Q1</div>
-      <div class="q-text" id="q-text">Loading…</div>
+      <h1 class="q-text" id="q-text">Loading…</h1>
     </div>
     <div class="options-wrap" id="options-wrap"></div>
-    <div class="explanation-card" id="explanation-card" style="display:none;">
+    <div class="explanation-card" id="explanation-card" style="display:none;" role="status" aria-live="polite">
       <div class="explanation-lbl">💡 Explanation</div>
       <div class="explanation-text" id="explanation-text"></div>
     </div>
@@ -216,7 +235,7 @@
 <div id="v-results" class="view">
   <div class="results-hdr">
     <div class="results-score" id="results-score">–<span>%</span></div>
-    <div class="results-verdict" id="results-verdict">–</div>
+    <h1 class="results-verdict" id="results-verdict">–</h1>
     <div class="results-sub" id="results-sub">–</div>
   </div>
   <div class="results-scroll">
@@ -226,11 +245,11 @@
       <div class="pass-banner-sub">You've hit the 80% pass mark</div>
     </div>
     <div class="results-card">
-      <div class="results-card-title">Breakdown by Category</div>
+      <h2 class="results-card-title">Breakdown by Category</h2>
       <div id="results-cat-breakdown"></div>
     </div>
     <div class="results-card results-next-card" id="results-next-card" style="display:none;">
-      <div class="results-card-title">What to revise next</div>
+      <h2 class="results-card-title">What to revise next</h2>
       <div id="results-next-list"></div>
       <div class="results-next-actions">
         <button class="r-btn secondary" id="btn-next-open-drill">Open Category Drill</button>
@@ -241,7 +260,7 @@
       <button class="r-btn primary" id="btn-try-again">Try Again</button>
       <button class="r-btn secondary" id="btn-results-dashboard">Dashboard</button>
     </div>
-    <button class="r-btn full" id="review-btn" style="display:none;">📖 Review wrong answers</button>
+    <button class="r-btn full" id="review-btn" style="display:none;"><span class="fl-ic fl-review"></span> Review wrong answers</button>
   </div>
 </div>
 
@@ -250,9 +269,9 @@
 <div id="v-drill" class="view">
   <div class="dash-hdr">
     <div class="dash-top">
-      <button id="btn-drill-dashboard" class="dash-round-back-btn">←</button>
+      <button id="btn-drill-dashboard" class="dash-round-back-btn" aria-label="Back to the Deer School dashboard"><span aria-hidden="true">←</span></button>
     </div>
-    <div class="dash-title">Category Drill</div>
+    <h1 class="dash-title">Category Drill</h1>
     <div class="dash-sub">Choose a subject to focus on</div>
   </div>
   <div class="dash-scroll">
@@ -266,26 +285,26 @@
 <div id="v-ref" class="view">
   <div class="dash-hdr">
     <div class="dash-top">
-      <button id="btn-ref-dashboard" class="dash-round-back-btn">←</button>
+      <button id="btn-ref-dashboard" class="dash-round-back-btn" aria-label="Back to the Deer School dashboard"><span aria-hidden="true">←</span></button>
     </div>
-    <div class="dash-title">Quick Reference</div>
+    <h1 class="dash-title">Quick Reference</h1>
     <div class="dash-sub">Field-ready cheat sheet · No internet needed</div>
   </div>
   <div class="dash-scroll" style="padding-bottom:32px;">
     <!-- SECTION TABS -->
-    <div style="display:flex;gap:6px;overflow-x:auto;padding:0 0 10px;scrollbar-width:none;-webkit-overflow-scrolling:touch;" id="ref-tabs">
-      <button class="ref-tab active" data-section="seasons">Seasons</button>
-      <button class="ref-tab" data-section="calibres">Calibres</button>
-      <button class="ref-tab" data-section="legal">Legal</button>
-      <button class="ref-tab" data-section="rut">Rut</button>
-      <button class="ref-tab" data-section="disease">Disease</button>
-      <button class="ref-tab" data-section="contacts">Contacts</button>
+    <div style="display:flex;gap:6px;overflow-x:auto;padding:0 0 10px;scrollbar-width:none;-webkit-overflow-scrolling:touch;" id="ref-tabs" role="tablist" aria-label="Quick reference sections">
+      <button class="ref-tab active" data-section="seasons" role="tab" id="ref-tab-seasons" aria-controls="ref-seasons" aria-selected="true" tabindex="0">Seasons</button>
+      <button class="ref-tab" data-section="calibres" role="tab" id="ref-tab-calibres" aria-controls="ref-calibres" aria-selected="false" tabindex="-1">Calibres</button>
+      <button class="ref-tab" data-section="legal" role="tab" id="ref-tab-legal" aria-controls="ref-legal" aria-selected="false" tabindex="-1">Legal</button>
+      <button class="ref-tab" data-section="rut" role="tab" id="ref-tab-rut" aria-controls="ref-rut" aria-selected="false" tabindex="-1">Rut</button>
+      <button class="ref-tab" data-section="disease" role="tab" id="ref-tab-disease" aria-controls="ref-disease" aria-selected="false" tabindex="-1">Disease</button>
+      <button class="ref-tab" data-section="contacts" role="tab" id="ref-tab-contacts" aria-controls="ref-contacts" aria-selected="false" tabindex="-1">Contacts</button>
     </div>
 
-    <div class="ref-section-block" id="ref-seasons">
+    <div class="ref-section-block" id="ref-seasons" role="tabpanel" aria-labelledby="ref-tab-seasons" tabindex="0">
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3C8 3 5 4 3 5V12C3 17 7 20.5 12 22C17 20.5 21 17 21 12V5C19 4 16 3 12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="1.2" opacity="0.4"/><line x1="12" y1="3" x2="12" y2="22" stroke="currentColor" stroke-width="1.2" opacity="0.4"/></svg> England &amp; Wales — Deer Act 1991</div>
+        <h2 class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3C8 3 5 4 3 5V12C3 17 7 20.5 12 22C17 20.5 21 17 21 12V5C19 4 16 3 12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="1.2" opacity="0.4"/><line x1="12" y1="3" x2="12" y2="22" stroke="currentColor" stroke-width="1.2" opacity="0.4"/></svg> England &amp; Wales — Deer Act 1991</h2>
         <table class="ref-table">
           <thead><tr><th>Species &amp; Sex</th><th>Open Season</th></tr></thead>
           <tbody>
@@ -304,7 +323,7 @@
       </div>
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3C8 3 5 4 3 5V12C3 17 7 20.5 12 22C17 20.5 21 17 21 12V5C19 4 16 3 12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="1.2" opacity="0.4"/></svg> Scotland — Deer (Scotland) Act 1996 (as amended 2023)</div>
+        <h2 class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3C8 3 5 4 3 5V12C3 17 7 20.5 12 22C17 20.5 21 17 21 12V5C19 4 16 3 12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="1.2" opacity="0.4"/></svg> Scotland — Deer (Scotland) Act 1996 (as amended 2023)</h2>
         <table class="ref-table">
           <thead><tr><th>Species &amp; Sex</th><th>Open Season</th></tr></thead>
           <tbody>
@@ -317,23 +336,40 @@
       </div>
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M12 7V12L15.5 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Legal Shooting Hours</div>
+        <h2 class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3C8 3 5 4 3 5V12C3 17 7 20.5 12 22C17 20.5 21 17 21 12V5C19 4 16 3 12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="1.2" opacity="0.4"/><line x1="7" y1="3.6" x2="7" y2="22" stroke="currentColor" stroke-width="1.2" opacity="0.4"/></svg> Northern Ireland &mdash; Wildlife (NI) Order 1985</h2>
+        <table class="ref-table">
+          <thead><tr><th>Species &amp; Sex</th><th>Open Season</th></tr></thead>
+          <tbody>
+            <tr><td>Red Stag</td><td>1 Aug &ndash; 30 Apr</td></tr>
+            <tr><td>Red Hind</td><td>1 Nov &ndash; 31 Mar</td></tr>
+            <tr><td>Fallow Buck</td><td>1 Aug &ndash; 30 Apr</td></tr>
+            <tr><td>Fallow Doe</td><td>1 Nov &ndash; 31 Mar</td></tr>
+            <tr><td>Sika Stag</td><td>1 Aug &ndash; 30 Apr</td></tr>
+            <tr><td>Sika Hind</td><td>1 Nov &ndash; 31 Mar</td></tr>
+            <tr class="ref-row-highlight"><td>Roe, Muntjac, CWD</td><td>Not present &mdash; no NI season</td></tr>
+          </tbody>
+        </table>
+        <div class="ref-note">Only red, fallow and sika (and their hybrids) occur wild in NI. There are no wild roe deer, and muntjac and Chinese water deer are not established &mdash; report any sighting to DAERA. DAERA, not Natural England or NatureScot, is the NI licensing authority.</div>
+      </div>
+
+      <div class="ref-card">
+        <h2 class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M12 7V12L15.5 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Legal Shooting Hours</h2>
         <table class="ref-table">
           <tbody>
             <tr class="ref-row-highlight"><td><strong>All regions</strong></td><td>1 hour before sunrise → 1 hour after sunset</td></tr>
-            <tr><td>Night shooting</td><td>Only with written NE / NatureScot authorisation, or emergency welfare dispatch</td></tr>
+            <tr><td>Night shooting</td><td>Only with written Natural England / NatureScot / DAERA authorisation, or emergency welfare dispatch</td></tr>
           </tbody>
         </table>
-        <div class="ref-note">Night vision does not grant authority to shoot outside legal hours.</div>
+        <div class="ref-note">The same one-hour window applies in all three jurisdictions &mdash; Deer Act 1991 s.3 in England and Wales, Deer (Scotland) Act 1996 s.18 in Scotland, and Wildlife (NI) Order 1985 Art. 19(2) in Northern Ireland. Night vision does not grant authority to shoot outside legal hours.</div>
       </div>
 
     </div>
 
     <!-- CALIBRES SECTION -->
-    <div class="ref-section-block" id="ref-calibres" style="display:none;">
+    <div class="ref-section-block" id="ref-calibres" style="display:none;" role="tabpanel" aria-labelledby="ref-tab-calibres" tabindex="0">
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3C8 3 5 4 3 5V12C3 17 7 20.5 12 22C17 20.5 21 17 21 12V5C19 4 16 3 12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="1.2" opacity="0.4"/><line x1="12" y1="3" x2="12" y2="22" stroke="currentColor" stroke-width="1.2" opacity="0.4"/></svg> England &amp; Wales — Deer Act 1991</div>
+        <h2 class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3C8 3 5 4 3 5V12C3 17 7 20.5 12 22C17 20.5 21 17 21 12V5C19 4 16 3 12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="1.2" opacity="0.4"/><line x1="12" y1="3" x2="12" y2="22" stroke="currentColor" stroke-width="1.2" opacity="0.4"/></svg> England &amp; Wales — Deer Act 1991</h2>
         <table class="ref-table">
           <thead><tr><th>Species</th><th>Min Calibre</th><th>Min Energy</th><th>Other</th></tr></thead>
           <tbody>
@@ -341,11 +377,11 @@
             <tr class="ref-row-highlight"><td>Muntjac &amp; CWD only</td><td>.220"</td><td>1,000 ft/lb</td><td>Min 50gr expanding</td></tr>
           </tbody>
         </table>
-        <div class="ref-note">.222/.223 legal for Muntjac &amp; CWD in E&amp;W only — NOT for Roe or larger species.</div>
+        <div class="ref-note">In England &amp; Wales .222/.223 may be used on Muntjac and CWD only — never Roe or any larger species. Scotland sets its calibre rules separately (next card) and permits these rounds for Roe.</div>
       </div>
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3C8 3 5 4 3 5V12C3 17 7 20.5 12 22C17 20.5 21 17 21 12V5C19 4 16 3 12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="1.2" opacity="0.4"/></svg> Scotland — Deer (Scotland) Act 1996</div>
+        <h2 class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3C8 3 5 4 3 5V12C3 17 7 20.5 12 22C17 20.5 21 17 21 12V5C19 4 16 3 12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="1.2" opacity="0.4"/></svg> Scotland — Deer (Firearms etc.) Order 1985 (as amended 2023)</h2>
         <table class="ref-table">
           <thead><tr><th>Species</th><th>Min Weight</th><th>Min Velocity</th><th>Min Energy</th></tr></thead>
           <tbody>
@@ -353,42 +389,56 @@
             <tr class="ref-row-highlight"><td>Roe only</td><td>50gr</td><td>2,450 fps</td><td>1,000 ft/lb</td></tr>
           </tbody>
         </table>
-        <div class="ref-note">All deer bullets must be expanding. FMJ is illegal throughout UK.</div>
+        <div class="ref-note"><strong>Scotland sets no statutory minimum calibre at all</strong> &mdash; the Order specifies bullet weight, muzzle velocity and muzzle energy only, so a correctly loaded .222 is lawful on roe there while it is not on roe in England and Wales. All deer bullets must be expanding; FMJ is illegal throughout the UK. Scotland’s 2023 amendment cut the minimum bullet weight to 80gr, which brings most non-lead (copper) loads inside the law.</div>
       </div>
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M8 12L11 15L16 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Common Legal Calibres (UK-wide)</div>
+        <h2 class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3C8 3 5 4 3 5V12C3 17 7 20.5 12 22C17 20.5 21 17 21 12V5C19 4 16 3 12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="1.2" opacity="0.4"/><line x1="7" y1="3.6" x2="7" y2="22" stroke="currentColor" stroke-width="1.2" opacity="0.4"/></svg> Northern Ireland &mdash; Wildlife (NI) Order 1985</h2>
+        <table class="ref-table">
+          <thead><tr><th>Species</th><th>Min Calibre</th><th>Min Weight</th><th>Min Energy</th></tr></thead>
+          <tbody>
+            <tr><td>Red, Fallow, Sika</td><td>.236&quot; (6mm)</td><td>100gr</td><td>1,700 ft/lb</td></tr>
+            <tr class="ref-row-highlight"><td>Muntjac &amp; CWD only</td><td>.220&quot;</td><td>50gr</td><td>1,000 ft/lb</td></tr>
+          </tbody>
+        </table>
+        <div class="ref-note">Larger-species figures are Schedule 11 paragraphs 2, 7 and 8; the muntjac/CWD exemption is Article 20(8A), inserted by the Wildlife and Natural Environment Act (NI) 2011. Expanding bullet required throughout. <strong>Rifles only &mdash; NI has no shotgun provision for deer of any kind</strong>, unlike England and Wales. Note the 100gr floor: a .243 loaded with an 80gr bullet is lawful in Great Britain but not in NI.</div>
+      </div>
+
+      <div class="ref-card">
+        <h2 class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M8 12L11 15L16 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Common Legal Calibres (UK-wide)</h2>
         <table class="ref-table">
           <tbody>
             <tr class="ref-row-highlight"><td>.243 Win</td><td>Legal all species, all regions. Most popular UK deer calibre.</td></tr>
             <tr><td>6.5 Creedmoor</td><td>Legal all species, all regions. Excellent ballistics.</td></tr>
             <tr><td>.308 Win</td><td>Legal all species, all regions. Classic stalking round.</td></tr>
             <tr><td>.270 Win</td><td>Legal all species, all regions. Flat-shooting.</td></tr>
-            <tr><td>.222 / .223</td><td>E&amp;W: Muntjac &amp; CWD only. Scotland: Roe only.</td></tr>
+            <tr><td>.222 / .223</td><td>E&amp;W: Muntjac &amp; CWD only. Scotland: Roe only. NI: Muntjac &amp; CWD only &mdash; neither is established there.</td></tr>
           </tbody>
         </table>
+        <div class="ref-note">&ldquo;All regions&rdquo; above is a statement about the calibre, not about the load. Northern Ireland additionally requires a 100gr bullet for red, fallow and sika, so a .243 in 80gr &mdash; perfectly lawful in England, Wales and Scotland &mdash; is not lawful in NI. Check the bullet weight, not just the headstamp, before you stalk across the water.</div>
       </div>
 
     </div>
 
     <!-- LEGAL DEFINITIONS SECTION -->
-    <div class="ref-section-block" id="ref-legal" style="display:none;">
+    <div class="ref-section-block" id="ref-legal" style="display:none;" role="tabpanel" aria-labelledby="ref-tab-legal" tabindex="0">
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><line x1="12" y1="3" x2="12" y2="21" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><line x1="4" y1="7" x2="20" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4 7L2 13C2 14.7 3.3 16 5 16C6.7 16 8 14.7 8 13L4 7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M20 7L18 13C18 14.7 19.3 16 21 16C22.7 16 24 14.7 24 13L20 7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg> Key Legislation</div>
+        <h2 class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><line x1="12" y1="3" x2="12" y2="21" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><line x1="4" y1="7" x2="20" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4 7L2 13C2 14.7 3.3 16 5 16C6.7 16 8 14.7 8 13L4 7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M20 7L18 13C18 14.7 19.3 16 21 16C22.7 16 24 14.7 24 13L20 7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg> Key Legislation</h2>
         <table class="ref-table">
           <tbody>
             <tr><td><strong>Deer Act 1991</strong></td><td>England &amp; Wales. Seasons, legal hours, vehicle/lamp offences, sale of venison.</td></tr>
             <tr><td><strong>Deer (Scotland) Act 1996</strong></td><td>Scotland. Similar provisions + NatureScot powers to order deer control.</td></tr>
-            <tr><td><strong>Wild Mammals (Protection) Act 1996</strong></td><td>UK-wide. Prohibition of intentional cruelty to wild mammals, including injured deer.</td></tr>
-            <tr><td><strong>Animal Welfare Act 2006</strong></td><td>England &amp; Wales. Duty to take reasonable steps to end unnecessary suffering.</td></tr>
+            <tr class="ref-row-highlight"><td><strong>Wildlife (NI) Order 1985</strong></td><td>Northern Ireland. Seasons, legal hours, firearms minima (Sch. 11), vehicle offences, DAERA licensing.</td></tr>
+            <tr><td><strong>Wild Mammals (Protection) Act 1996</strong></td><td>Great Britain only. Prohibition of intentional cruelty to wild mammals, including injured deer.</td></tr>
+            <tr><td><strong>Animal Welfare Act 2006</strong></td><td>England &amp; Wales. Duty to take reasonable steps to end unnecessary suffering. Scotland: Animal Health and Welfare (Scotland) Act 2006; NI: Welfare of Animals Act (NI) 2011.</td></tr>
             <tr><td><strong>Food Hygiene Regulations 2006</strong></td><td>Requires carcass chilling to ≤7°C. Applies to venison entering food chain.</td></tr>
           </tbody>
         </table>
       </div>
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><rect x="5" y="4" width="14" height="17" rx="2" stroke="currentColor" stroke-width="1.7"/><rect x="9" y="2" width="6" height="4" rx="1.5" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="10" x2="16" y2="10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.6"/><line x1="8" y1="14" x2="16" y2="14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.6"/><line x1="8" y1="18" x2="12" y2="18" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.6"/></svg> DSC1 — Exam Structure</div>
+        <h2 class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><rect x="5" y="4" width="14" height="17" rx="2" stroke="currentColor" stroke-width="1.7"/><rect x="9" y="2" width="6" height="4" rx="1.5" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="10" x2="16" y2="10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.6"/><line x1="8" y1="14" x2="16" y2="14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.6"/><line x1="8" y1="18" x2="12" y2="18" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.6"/></svg> DSC1 — Exam Structure</h2>
         <table class="ref-table">
           <tbody>
             <tr><td>Written paper</td><td>50 MCQ — 80% pass mark (40/50)</td></tr>
@@ -403,7 +453,7 @@
       </div>
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M6 20L18 5C18 5 20 3 21 4C22 5 20 7 20 7L8 22L6 20Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><line x1="6" y1="20" x2="4" y2="22" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg> Gralloch &amp; Carcass Obligations</div>
+        <h2 class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M6 20L18 5C18 5 20 3 21 4C22 5 20 7 20 7L8 22L6 20Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><line x1="6" y1="20" x2="4" y2="22" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg> Gralloch &amp; Carcass Obligations</h2>
         <table class="ref-table">
           <tbody>
             <tr><td>Chill temp</td><td>≤7°C (Food Hygiene Regs). Target ≤4°C.</td></tr>
@@ -418,10 +468,10 @@
     </div>
 
     <!-- RUT CALENDAR SECTION -->
-    <div class="ref-section-block" id="ref-rut" style="display:none;">
+    <div class="ref-section-block" id="ref-rut" style="display:none;" role="tabpanel" aria-labelledby="ref-tab-rut" tabindex="0">
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M8 2C8 2 6 5 6 7C6 8.5 7 9 8 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M16 2C16 2 18 5 18 7C18 8.5 17 9 16 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M6 4L4 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M18 4L20 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><ellipse cx="12" cy="13" rx="5" ry="6" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="11.5" r="0.8" fill="currentColor"/><circle cx="14" cy="11.5" r="0.8" fill="currentColor"/><line x1="9" y1="19" x2="9" y2="22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="15" y1="19" x2="15" y2="22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg> Rut Calendar</div>
+        <h2 class="ref-card-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M8 2C8 2 6 5 6 7C6 8.5 7 9 8 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M16 2C16 2 18 5 18 7C18 8.5 17 9 16 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M6 4L4 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M18 4L20 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><ellipse cx="12" cy="13" rx="5" ry="6" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="11.5" r="0.8" fill="currentColor"/><circle cx="14" cy="11.5" r="0.8" fill="currentColor"/><line x1="9" y1="19" x2="9" y2="22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="15" y1="19" x2="15" y2="22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg> Rut Calendar</h2>
         <table class="ref-table">
           <thead><tr><th>Species</th><th>Rut Period</th><th>Peak</th><th>Call</th></tr></thead>
           <tbody>
@@ -437,7 +487,7 @@
       </div>
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><rect x="3" y="4" width="18" height="17" rx="3" stroke="currentColor" stroke-width="1.8"/><line x1="3" y1="9" x2="21" y2="9" stroke="currentColor" stroke-width="1.6"/><line x1="8" y1="2" x2="8" y2="6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="16" y1="2" x2="16" y2="6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><rect x="7" y="13" width="3" height="3" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="14" y="13" width="3" height="3" rx="0.5" fill="currentColor" opacity="0.7"/></svg> Antler Cast Dates</div>
+        <h2 class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><rect x="3" y="4" width="18" height="17" rx="3" stroke="currentColor" stroke-width="1.8"/><line x1="3" y1="9" x2="21" y2="9" stroke="currentColor" stroke-width="1.6"/><line x1="8" y1="2" x2="8" y2="6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="16" y1="2" x2="16" y2="6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><rect x="7" y="13" width="3" height="3" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="14" y="13" width="3" height="3" rx="0.5" fill="currentColor" opacity="0.7"/></svg> Antler Cast Dates</h2>
         <table class="ref-table">
           <thead><tr><th>Species</th><th>Cast</th><th>In Velvet</th><th>Hard Antler</th></tr></thead>
           <tbody>
@@ -452,14 +502,14 @@
       </div>
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><rect x="2" y="8" width="20" height="8" rx="2" stroke="currentColor" stroke-width="1.7"/><line x1="6" y1="8" x2="6" y2="13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="10" y1="8" x2="10" y2="11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="14" y1="8" x2="14" y2="13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="18" y1="8" x2="18" y2="11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg> Size at a Glance</div>
+        <h2 class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><rect x="2" y="8" width="20" height="8" rx="2" stroke="currentColor" stroke-width="1.7"/><line x1="6" y1="8" x2="6" y2="13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="10" y1="8" x2="10" y2="11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="14" y1="8" x2="14" y2="13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="18" y1="8" x2="18" y2="11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg> Size at a Glance</h2>
         <table class="ref-table">
           <thead><tr><th>Species</th><th>Shoulder</th><th>Weight (male)</th><th>Key ID feature</th></tr></thead>
           <tbody>
             <tr><td>Red</td><td>Up to 140cm</td><td>90–190kg</td><td>Tawny rump, no white flash</td></tr>
             <tr><td>Fallow</td><td>85–100cm</td><td>46–94kg</td><td>Palmate antlers, spotted coat</td></tr>
-            <tr><td>Sika</td><td>70–95cm</td><td>40–125kg</td><td>White rump flares when alarmed</td></tr>
-            <tr><td>Roe</td><td>60–75cm</td><td>18–29kg</td><td>White kidney rump, no tail</td></tr>
+            <tr><td>Sika</td><td>70–95cm</td><td>40–70kg</td><td>White rump flares when alarmed</td></tr>
+            <tr><td>Roe</td><td>60–75cm</td><td>10–25kg</td><td>White kidney rump, no tail</td></tr>
             <tr><td>CWD</td><td>55–65cm</td><td>11–18kg</td><td>No antlers, large round ears, tusks</td></tr>
             <tr><td>Muntjac</td><td>45–52cm</td><td>10–18kg</td><td>Hunched, reddish, dark V-face</td></tr>
           </tbody>
@@ -469,10 +519,10 @@
     </div>
 
     <!-- DISEASE SECTION -->
-    <div class="ref-section-block" id="ref-disease" style="display:none;">
+    <div class="ref-section-block" id="ref-disease" style="display:none;" role="tabpanel" aria-labelledby="ref-tab-disease" tabindex="0">
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3L4 7V13C4 17.4 7.4 21.5 12 22C16.6 21.5 20 17.4 20 13V7L12 3Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><line x1="12" y1="9" x2="12" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.2" fill="currentColor"/></svg> Notifiable Diseases — Must Report to APHA</div>
+        <h2 class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3L4 7V13C4 17.4 7.4 21.5 12 22C16.6 21.5 20 17.4 20 13V7L12 3Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><line x1="12" y1="9" x2="12" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.2" fill="currentColor"/></svg> Notifiable Diseases — Must Report to APHA</h2>
         <table class="ref-table">
           <thead><tr><th>Disease</th><th>Signs</th></tr></thead>
           <tbody>
@@ -487,7 +537,7 @@
       </div>
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="1.7"/><line x1="12" y1="4" x2="12" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="12" y1="17" x2="12" y2="20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="4" y1="12" x2="7" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="17" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="6.3" y1="6.3" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="17.7" y1="6.3" x2="15.5" y2="8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg> Common Non-Notifiable Conditions</div>
+        <h2 class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="1.7"/><line x1="12" y1="4" x2="12" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="12" y1="17" x2="12" y2="20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="4" y1="12" x2="7" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="17" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="6.3" y1="6.3" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="17.7" y1="6.3" x2="15.5" y2="8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg> Common Non-Notifiable Conditions</h2>
         <table class="ref-table">
           <tbody>
             <tr><td>Liver fluke</td><td>Pale fluke tracks / damage in liver. Needs mud snail habitat.</td></tr>
@@ -501,7 +551,7 @@
       </div>
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M9 12L11 15L15 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="5" width="18" height="15" rx="3" stroke="currentColor" stroke-width="1.7"/><line x1="8" y1="5" x2="8" y2="20" stroke="currentColor" stroke-width="1.2" opacity="0.3"/></svg> Gralloch Inspection Checklist</div>
+        <h2 class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M9 12L11 15L15 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="5" width="18" height="15" rx="3" stroke="currentColor" stroke-width="1.7"/><line x1="8" y1="5" x2="8" y2="20" stroke="currentColor" stroke-width="1.2" opacity="0.3"/></svg> Gralloch Inspection Checklist</h2>
         <table class="ref-table">
           <tbody>
             <tr class="ref-row-highlight"><td>Lymph nodes</td><td>Should be small and pale. Enlarged / caseous = possible bTB</td></tr>
@@ -516,10 +566,10 @@
     </div>
 
     <!-- CONTACTS SECTION -->
-    <div class="ref-section-block" id="ref-contacts" style="display:none;">
+    <div class="ref-section-block" id="ref-contacts" style="display:none;" role="tabpanel" aria-labelledby="ref-tab-contacts" tabindex="0">
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M6.6 4C6.6 4 5 4 4 6C3 8 4 10 5 11.5C6.7 14 9.5 16.8 12.5 18.5C14 19.5 16.5 20.5 18 19.5C19.5 18.5 20 17 20 17L18 15C18 15 17 14 16 15L14.5 16.5C14.5 16.5 12 15 10.5 13.5C9 12 7.5 9.5 7.5 9.5L9 8C10 7 9 6 9 6L7 4C7 4 6.8 4 6.6 4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg> Key Contacts</div>
+        <h2 class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M6.6 4C6.6 4 5 4 4 6C3 8 4 10 5 11.5C6.7 14 9.5 16.8 12.5 18.5C14 19.5 16.5 20.5 18 19.5C19.5 18.5 20 17 20 17L18 15C18 15 17 14 16 15L14.5 16.5C14.5 16.5 12 15 10.5 13.5C9 12 7.5 9.5 7.5 9.5L9 8C10 7 9 6 9 6L7 4C7 4 6.8 4 6.6 4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg> Key Contacts</h2>
         <table class="ref-table">
           <tbody>
             <tr class="ref-row-highlight"><td>UKDTR</td><td>ukdtr.co.uk — free wounded deer trackers, 24/7</td></tr>
@@ -533,7 +583,7 @@
       </div>
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3L22 20H2L12 3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><line x1="12" y1="10" x2="12" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="18" r="1.2" fill="currentColor"/></svg> If You Wound a Deer</div>
+        <h2 class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><path d="M12 3L22 20H2L12 3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><line x1="12" y1="10" x2="12" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="18" r="1.2" fill="currentColor"/></svg> If You Wound a Deer</h2>
         <table class="ref-table">
           <tbody>
             <tr><td>1. Reload</td><td>Immediately — then wait 20–30 min (heart/lung) or longer (gut)</td></tr>
@@ -546,7 +596,7 @@
       </div>
 
       <div class="ref-card">
-        <div class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M12 8V13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16" r="1.2" fill="currentColor"/></svg> Zoonotic Risks — Protect Yourself</div>
+        <h2 class="ref-card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0;"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M12 8V13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16" r="1.2" fill="currentColor"/></svg> Zoonotic Risks — Protect Yourself</h2>
         <table class="ref-table">
           <tbody>
             <tr><td>Leptospirosis</td><td>Always wear gloves — contact with urine/kidneys</td></tr>
@@ -562,6 +612,8 @@
     <div style="font-size:10px;color:var(--muted);text-align:center;padding:8px 0 4px;line-height:1.5;">Study aid only — always verify against current legislation before acting.</div>
   </div>
 </div>
+
+</main>
 
 <script src="questions.js"></script>
 <script src="deerschool.js"></script>

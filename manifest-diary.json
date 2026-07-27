@@ -16,7 +16,22 @@
   "prefer_related_applications": false,
   "related_applications": [],
   "screenshots": [],
-  "shortcuts": [],
+  "shortcuts": [
+    {
+      "name": "Log a cull",
+      "short_name": "Quick log",
+      "description": "Open the quick-entry sheet",
+      "url": "./diary.html?quick=1",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "New entry",
+      "short_name": "New entry",
+      "description": "Open the full new-entry form",
+      "url": "./diary.html?new=1",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
   "privacy_policy": "https://firstlightdeer.co.uk/privacy.html",
   "icons": [
     { "src": "icon-152.png", "sizes": "152x152", "type": "image/png", "purpose": "any" },

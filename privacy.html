@@ -2,12 +2,26 @@
 <html lang="en-GB">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; script-src https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://firstlightdeer.goatcounter.com; frame-ancestors 'self';">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; script-src https://gc.zgo.at; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://firstlightdeer.goatcounter.com; frame-ancestors 'self';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <title>Privacy Policy — First Light</title>
 <meta name="description" content="Privacy policy for the First Light UK deer stalking app.">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<meta property="og:title" content="Privacy Policy — First Light">
+<meta property="og:description" content="How the First Light UK deer stalking app handles your cull records, location data and photographs.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://firstlightdeer.co.uk/privacy.html">
+<meta property="og:image" content="https://firstlightdeer.co.uk/icon-512.png">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+<meta property="og:image:alt" content="First Light — UK deer stalking app icon showing a stag silhouette at dawn">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Privacy Policy — First Light">
+<meta name="twitter:description" content="How the First Light UK deer stalking app handles your cull records, location data and photographs.">
+<meta name="twitter:image" content="https://firstlightdeer.co.uk/icon-512.png">
+<link rel="canonical" href="https://firstlightdeer.co.uk/privacy.html">
+<meta name="theme-color" content="#1a2e1a">
+<link rel="stylesheet" href="fonts/fonts.css">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
@@ -24,18 +38,25 @@
     padding: 24px 20px 20px;
     border-bottom: 1px solid rgba(200,168,75,0.15);
   }
+  /* Home audit: this was a 125x16 target at the top of a page thousands of
+     pixels long. 44 tall now, with the negative margins cancelling the added
+     height so the label sits on exactly the pixel it always did. */
   .back-link {
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    min-height: 44px;
+    padding: 0 12px;
+    margin: -14px -12px 2px;
+    border-radius: 8px;
     font-size: 12px;
     color: rgba(200,168,75,0.7);
     text-decoration: none;
-    margin-bottom: 16px;
     font-weight: 600;
     letter-spacing: 0.3px;
+    -webkit-tap-highlight-color: transparent;
   }
-  .back-link:hover { color: #c8a84b; }
+  .back-link:hover { color: #c8a84b; background: rgba(200,168,75,0.07); }
   .header-title {
     display: flex;
     align-items: center;
@@ -168,17 +189,33 @@
     font-size: 12px;
   }
   .footer a:hover { color: #c8a84b; }
+  /* The end-of-page route home. Only this link is enlarged, not every anchor
+     in the footer, so links sitting inside a sentence keep their text flow. */
+  .footer-home {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    margin: -12px 0;
+    padding: 0 14px;
+    border-radius: 9px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .footer-home:hover { background: rgba(200,168,75,0.08); }
   .updated {
     font-size: 11px;
     color: rgba(255,255,255,0.2);
     text-align: right;
     margin-bottom: 20px;
   }
+
+/* iPhone standalone: keep content below the status bar; no-op elsewhere. */
+body { padding-top: env(safe-area-inset-top, 0px); }
 </style>
 </head>
 <body>
 
-<div class="header">
+<header class="header">
   <a href="./" class="back-link">← Back to First Light</a>
   <div class="header-title">
     <div class="app-icon">
@@ -189,30 +226,34 @@
       Privacy Policy
     </h1>
   </div>
-</div>
+</header>
 
-<div class="content">
+<main class="content" id="pg-main">
 
-  <div class="updated">Last updated: 6 July 2026</div>
+  <div class="updated">Last updated: 25 July 2026</div>
 
   <div class="summary-box">
-    <p><strong>The short version:</strong> First Light's core features do not require or collect personal data. Your location is used only on your device to calculate legal shooting times. If you use the optional <strong>Cull Diary</strong>, your records are stored securely in Supabase under your account and protected by access controls. Only you can access your personal diary data, except entries you deliberately share with a syndicate. We use privacy-focused <strong>page-view statistics</strong> (GoatCounter) only to see aggregate traffic to the public site — not for advertising or profiling. We do not serve ads or sell data.</p>
+    <p><strong>The short version:</strong> First Light's core features do not require or collect personal data. Your location is used only on your device to calculate legal shooting times. If you use the optional <strong>Cull Diary</strong>, your records are stored securely in Supabase under your account and protected by access controls. Only you can access your personal diary data, except entries you deliberately share with a syndicate. We use privacy-focused <strong>page-view statistics</strong> (GoatCounter) only to see aggregate traffic across the First Light site and app — not for advertising or profiling. We do not serve ads or sell data.</p>
   </div>
 
   <div class="section">
     <h2>What we collect</h2>
     <hr class="divider">
-    <p><strong>Core app</strong> (Species, Legal Times, Calendar, Field Guide, Deer School) — no personal data collected:</p>
+    <p><strong>Core app</strong> (Species, Legal Times, Calendar, Field Guide, Deer School, Ballistics Calculator) — no personal data collected:</p>
     <ul>
       <li>No account required</li>
       <li>Anonymous page-view statistics via GoatCounter (aggregate traffic only) — see <em>Third-party services</em></li>
       <li>No cookies placed on your device by First Light</li>
       <li>No advertising identifiers collected</li>
+      <li>The <strong>Ballistics Calculator</strong> keeps the rifle and load profiles you build — calibre, bullet weight, ballistic coefficient, muzzle velocity, sight height, zero range — in your browser on this device only. They are never sent to us or to anyone else, and no account is needed to use it. If it fetches current weather for you, that is the same anonymous Open-Meteo call described below.</li>
     </ul>
     <p style="margin-top:14px;"><strong>Cull Diary</strong> (optional) — requires an account:</p>
     <ul>
       <li>Email address and password for authentication</li>
       <li>Cull records you enter (species, date, location, weights, photos, notes)</li>
+      <li>Live-deer <strong>sightings</strong> you log (species, approximate numbers seen, behaviour, and an optional location and photo) — private to your account, never shared to a syndicate</li>
+      <li>Saved <strong>stands</strong> / high seats you create for the wind forecast (a name, a map location, and wind notes) — private to your account</li>
+      <li>Basic <strong>error diagnostics</strong>: if something goes wrong, a technical report (the page address, your browser type, and the error message and stack trace) is sent to our Supabase database so we can fix bugs; while you are signed in it includes your account ID. It contains no diary content, and any sign-in tokens are stripped from the address before it is sent.</li>
       <li>Diary data is stored securely in Supabase and accessible by you; entries you intentionally share to a syndicate are also accessible to relevant syndicate members</li>
       <li>Syndicate chat messages you post (up to 500 characters), stored with your display name and role at the time of posting; messages are visible to that syndicate's members and managers</li>
       <li>Removing a chat message hides it from the thread (shown as "message removed") but the message record is retained in the database; messages you posted remain in the syndicate's thread, with the display name captured at time of posting, after you leave the syndicate or delete your account</li>
@@ -227,6 +268,8 @@
     <p>First Light does not operate its own server, so your coordinates are not sent to us. Two external calls may be made with location data: an anonymous request to <strong>OpenStreetMap Nominatim</strong> to reverse-geocode your nearest place name, and an anonymous request to <strong>Open-Meteo</strong> to fetch the weather for your area. Both are described below.</p>
     <p>You can also set your location manually using the search or preset locations, in which case no GPS data is used at all.</p>
     <p><strong>Cull Diary entries with a GPS pin:</strong> if you choose to attach a location to a cull entry (either by dropping a map pin or by granting GPS access inside the diary form), those coordinates are stored with the entry in Supabase under your account. Map tiles for that pin are loaded from the tile providers listed below. You can remove the pin from any entry, or delete the entry entirely.</p>
+    <p><strong>Location inside a photo (EXIF):</strong> GPS permission is not the only way a location can reach an entry. A photo taken on a phone often carries the coordinates and the time of capture embedded in the image file itself. When you attach a photo, First Light reads those two facts <em>on your device</em>, in your browser, and offers them to you on a small card under the photo. Nothing is applied until you tap to accept: if you do, the coordinate is stored with the entry and reverse-geocoded to a place name exactly as a dropped pin would be, and the capture time fills in the date and time fields. Tap dismiss and the reading is discarded. The original file is never uploaded.</p>
+    <p><strong>The photo we do upload carries no metadata at all.</strong> Before a photo leaves your device it is re-drawn onto a canvas and re-encoded as a fresh JPEG. That step discards every metadata block the original held — GPS coordinates, capture time, camera make, model and serial number. The image stored in Supabase therefore has no location embedded in it, whatever the original had, and this is deliberate rather than incidental. The only location ever attached to an entry is one you chose to attach.</p>
   </div>
 
   <div class="section">
@@ -237,13 +280,8 @@
     <p style="margin-top:14px;"><strong>Used by all features:</strong></p>
 
     <div class="third-party">
-      <div class="third-party-name">Google Fonts</div>
-      <div class="third-party-desc">The app loads DM Sans and Playfair Display typefaces from Google Fonts. Google may log the request IP address. <a href="https://policies.google.com/privacy" style="color:rgba(200,168,75,0.6);">policies.google.com/privacy</a></div>
-    </div>
-
-    <div class="third-party">
       <div class="third-party-name">GoatCounter</div>
-      <div class="third-party-desc">A small script from <code style="color:rgba(255,255,255,0.5);">gc.zgo.at</code> records which <strong>site pages</strong> are viewed and rough traffic levels so we can see how busy the public site is. It is not used for advertising. <a href="https://www.goatcounter.com/help/privacy" style="color:rgba(200,168,75,0.6);">goatcounter.com/help/privacy</a></div>
+      <div class="third-party-desc">A small script from <code style="color:rgba(255,255,255,0.5);">gc.zgo.at</code> records which <strong>site pages</strong> are viewed and rough traffic levels so we can see how busy the site and app are. It is not used for advertising. <a href="https://www.goatcounter.com/help/privacy" style="color:rgba(200,168,75,0.6);">goatcounter.com/help/privacy</a></div>
     </div>
 
     <div class="third-party">
@@ -251,7 +289,7 @@
       <div class="third-party-desc">Third-party JavaScript libraries (Supabase client, jsPDF, Leaflet clustering) are loaded from the jsDelivr and cdnjs content delivery networks. These CDNs see the request IP address but receive no app data. <a href="https://www.jsdelivr.com/privacy-policy-jsdelivr-net" style="color:rgba(200,168,75,0.6);">jsdelivr.com/privacy</a> · <a href="https://cdnjs.com/" style="color:rgba(200,168,75,0.6);">cdnjs.com</a></div>
     </div>
 
-    <p style="margin-top:18px;"><strong>Used by the core app (Species, Legal Times, Calendar, Field Guide):</strong></p>
+    <p style="margin-top:18px;"><strong>Used by the core app (Species, Legal Times, Calendar, Field Guide, Ballistics Calculator):</strong></p>
 
     <div class="third-party">
       <div class="third-party-name">Open-Meteo</div>
@@ -308,19 +346,53 @@
   <div class="section">
     <h2>Data storage</h2>
     <hr class="divider">
-    <p>First Light uses your browser's <strong>localStorage</strong> to remember your last-used location (coordinates and place name), active tab, and whether you have seen the legal disclaimer. This data never leaves your device and can be cleared at any time by clearing your browser's site data.</p>
-    <p>If you use the <strong>Cull Diary</strong> feature, your cull records and photos are stored in Supabase under your account. Supabase also stores your authentication token in localStorage to keep you signed in between sessions — this token never leaves your device except when communicating with Supabase. This data is associated with your email address and is protected by row-level security — only you can access your own entries. The Cull Diary also uses an on-device <strong>IndexedDB</strong> queue to hold entries you create while offline, so nothing is lost when signal is poor; once you reconnect, those entries are uploaded to Supabase and removed from the local queue.</p>
+    <p>First Light keeps a number of small values in your browser's <strong>localStorage</strong>. All of them stay on your device, are readable only by First Light pages, and can be wiped at any time by clearing your browser's site data for this site. None of them is sent to us — First Light has no server to send them to. This is the complete list.</p>
+
+    <p style="margin-top:14px;"><strong>Preferences and screen state</strong></p>
+    <ul>
+      <li><code>fl_state</code> — your last-used location (coordinates and place name) and which tab you were on</li>
+      <li><code>firstlight_disclaimer_seen</code>, <code>fl-ballistics-accepted-v1</code>, <code>fl-species-onboarded-v1</code> — whether you have already seen the legal disclaimer, the calculator's acceptance notice, and the species-picker introduction</li>
+      <li><code>fl_field_mode</code>, <code>fl-my-species-v1</code>, <code>fl-cull-layer</code>, <code>fl-stands-compact</code>, <code>fl-stands-cones-off</code>, <code>fl-stnd-names-v1</code>, <code>fl-stnd-mk-names-v1</code>, <code>fl-export-seats-v1</code>, <code>fl-plan-open</code>, <code>fl-syndicate-open</code>, <code>fl-last-ground-v1</code> — low-light mode, your species shortlist, map-versus-satellite choice, which map labels and overlays you have switched on, and which panels you last had open</li>
+      <li><code>fl_uk_clock_offset_ms</code>, <code>fl_uk_clock_synced_at_ms</code> — the measured difference between your device clock and UK time, so entries and legal shooting times are stamped correctly</li>
+      <li><code>fl_debug</code> — a diagnostic flag, off unless you deliberately turn it on</li>
+    </ul>
+
+    <p style="margin-top:14px;"><strong>Ballistics Calculator</strong> — no account, and nothing here leaves the device</p>
+    <ul>
+      <li><code>fl-ballistics-profiles-v1</code> — the rifle and load profiles you create: calibre, bullet weight, ballistic coefficient, muzzle velocity, sight height and zero range</li>
+      <li><code>fl-ballistics-settings-v1</code> — which profile is active, your units, jurisdiction and species filter, the anatomy-overlay and night-mode settings, and the range and atmospheric conditions you last dialled in, so the calculator survives your phone going to sleep</li>
+    </ul>
+
+    <p style="margin-top:14px;"><strong>Deer School</strong></p>
+    <ul>
+      <li><code>fl_groundschool</code> — your quiz progress and score history, kept on the device so the learning dashboard works without an account</li>
+    </ul>
+
+    <p style="margin-top:14px;"><strong>Cull Diary</strong> — on-device working copies of your own data</p>
+    <ul>
+      <li><code>fl-grounds-cache-v1</code>, <code>fl-stands-cache-v1</code> — your grounds and the high seats you have saved, cached so the map and the wind forecast open instantly and still work with no signal</li>
+      <li><code>fl-stands-forecast-v4</code> — recent weather forecasts for those locations, cached so the app does not refetch them every time</li>
+      <li><code>fl-score-log-v1</code> — a local log of what the wind forecast predicted against what you actually recorded, used only to show you how well the forecast has been doing</li>
+      <li><code>fl_offline_queue</code> with its <code>-corrupt</code> and <code>-deadletter</code> companions, and <code>fl_offline_synced_recent</code> — entries you created with no signal, waiting to upload, plus a short record of what has just synced so nothing uploads twice</li>
+      <li><code>fl_synd_msg_seen:…</code> — the timestamp of the last syndicate message you read, per syndicate, so the unread badge is right</li>
+      <li><code>fl_map_load_est_…</code> and its two warning flags — a running count of how many map tiles this browser has loaded this month, so we can tell whether the free map allowance is close to running out. It is a single number; it is not a record of where you looked.</li>
+      <li>The <strong>Supabase authentication token</strong>, a key beginning <code>sb-</code>, which keeps you signed in between sessions. It never leaves your device except when talking to Supabase.</li>
+    </ul>
+
+    <p style="margin-top:14px;">If you use the <strong>Cull Diary</strong>, your cull records and photos themselves are stored in Supabase under your account, associated with your email address and protected by row-level security — only you can read your own entries. The diary also uses an on-device <strong>IndexedDB</strong> store to hold photos attached to entries you created while offline, so nothing is lost when signal is poor; once you reconnect, those entries and photos are uploaded to Supabase and removed from the device.</p>
+
+    <p>Signing out, or deleting your account, clears the diary's on-device data from this browser: the grounds and stands caches, the cached forecasts, the forecast-accuracy log, your species shortlist and last-used ground, the offline queue, and the offline photos in IndexedDB. Your general preferences and your ballistics profiles are deliberately left alone, so signing out does not cost you your rifle setup.</p>
     <p>No data is stored on any First Light server at any point — First Light does not operate a server of its own.</p>
   </div>
 
   <div class="section">
     <h2>Data retention</h2>
     <hr class="divider">
-    <p><strong>Core app:</strong> nothing is retained anywhere except the localStorage values listed above, which live on your device until you clear them.</p>
+    <p><strong>Core app:</strong> nothing is retained on any server of ours, because there is no server of ours. The only thing that persists is the on-device localStorage set out in full under <em>Data storage</em> above, which stays on your device until you clear your browser's site data.</p>
     <p><strong>Cull Diary:</strong> your account and diary data are retained for as long as your account exists. You can:</p>
     <ul>
       <li>Delete an individual cull entry at any time — it is removed immediately from Supabase (including any attached photos).</li>
-      <li>Delete your entire account at any time, using the <em>Delete my account &amp; all data</em> button in the diary. This triggers a server-side procedure that immediately removes all of your cull entries, photos, syndicate memberships, and the Supabase auth account itself. No "soft-delete" or recovery window is kept.</li>
+      <li>Delete your entire account at any time, using the <em>Delete my account &amp; all data</em> button in the diary. This triggers a server-side procedure that immediately removes all of your cull entries, sightings, stands, their photos, syndicate memberships, and the Supabase auth account itself. No personal "soft-delete" or recovery copy of your identifiable data is kept. The one exception is <strong>syndicate tallies</strong>: culls you attributed to a syndicate are retained in <strong>anonymised</strong> form (species, sex and date only, with no link back to you) so the group's season totals stay accurate after you leave or delete your account.</li>
     </ul>
     <p>Backups held by Supabase as part of its normal database operations may retain deleted records for a short period before being overwritten; see Supabase's own retention terms.</p>
   </div>
@@ -371,10 +443,10 @@
   <div class="footer">
     <p>© 2025–2026 Sohaib Mengal · First Light · All rights reserved</p>
     <p style="margin-top:4px;">The First Light name, design, content and code are the intellectual property of Sohaib Mengal and may not be reproduced, copied or redistributed without written permission.</p>
-    <p style="margin-top:8px;"><a href="./">← Return to app</a></p>
+    <p style="margin-top:8px;"><a href="./" class="footer-home">← Return to app</a></p>
   </div>
 
-</div>
+</main>
 <script data-goatcounter="https://firstlightdeer.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </body>
 </html>

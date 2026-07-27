@@ -17,6 +17,9 @@
 //                                   a max longest side, re-encodes JPEG, and
 //                                   returns the compressed File plus an
 //                                   object-URL preview
+//   • readPhotoExif(file)          — reads GPS + capture time from the
+//                                   ORIGINAL file's EXIF (via lib/fl-exif),
+//                                   before compression strips it
 //
 // Explicitly out-of-scope for this commit (they touch app state and stay in
 // diary.js until the relevant layer graduates):
@@ -31,6 +34,8 @@
 // helpers run unchanged in Node 18+ and are unit-tested) or pure-browser
 // (compressPhotoFile needs Image/Canvas/FileReader — smoke-tested only).
 // =============================================================================
+
+import { parseExif } from '../lib/fl-exif.mjs';
 
 /**
  * Signed URL lifetime for private bucket reads (seconds). 86400 = 24h,
@@ -169,5 +174,36 @@ export function compressPhotoFile(file, opts) {
       img.src = ev.target.result;
     };
     reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Read the EXIF "where + when" from the ORIGINAL picked File. Must run
+ * before/alongside compressPhotoFile() on the same File — the canvas
+ * re-encode strips every byte of metadata (by design: the stored upload
+ * carries no embedded GPS).
+ *
+ * Reads only the head of the file (the EXIF APP1 segment sits before the
+ * image data) and resolves to parseExif()'s { lat, lng, date, time } or
+ * null. NEVER rejects — a photo must always attach cleanly even when its
+ * metadata is junk, so all failure paths resolve null.
+ *
+ * @param {File|Blob} file - the raw File from an <input type="file"> change event
+ * @returns {Promise<{lat:number|null,lng:number|null,date:string|null,time:string|null}|null>}
+ */
+export function readPhotoExif(file) {
+  return new Promise(function (resolve) {
+    try {
+      var head = file.slice(0, 512 * 1024); // APP1 lives up front; cap the read
+      var reader = new FileReader();
+      reader.onerror = function () { resolve(null); };
+      reader.onload = function (ev) {
+        try { resolve(parseExif(ev.target.result)); }
+        catch (e) { resolve(null); }
+      };
+      reader.readAsArrayBuffer(head);
+    } catch (e) {
+      resolve(null);
+    }
   });
 }

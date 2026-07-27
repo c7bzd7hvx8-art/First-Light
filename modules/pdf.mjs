@@ -34,14 +34,64 @@ import {
   seasonLabel,
   ABNORMALITY_LABEL_BY_CODE,
   isBlankDayEntry,
+  isPestSpecies,
   pdfSafeText
 } from '../lib/fl-pure.mjs';
+
+// The declaration is the document a game dealer, an FSA inspector or a police
+// wildlife officer reads. All three work in OS grid references, and until now
+// the only place a grid ref appeared was the on-screen entry card.
+import { latLngToOsGrid } from '../lib/fl-geo.mjs';
 
 // pdfSafeText's definition moved to lib/fl-pure.mjs (2026-07-06, audit A4) so
 // the pure csvField spec can sanitise identically to production. Re-exported
 // here so existing importers keep working unchanged (diary.js imports it from
 // this module as `flPdfSafeText`; tests/pdf.test.mjs pins its behaviour).
 export { pdfSafeText };
+
+// ── Share-or-download a finished PDF ────────────────────────────────────────
+// Every builder below hands its finished jsPDF `doc` to savePdf() instead of
+// calling doc.save() directly. On phones whose browser supports sharing FILES
+// (iOS Safari + Android Chrome, via Web Share API level 2) this opens the OS
+// share sheet, so a stalker can send the Larder Book / season summary / game
+// dealer PDF straight to WhatsApp, Mail, the game dealer or Files in one tap —
+// no digging through Downloads. Everywhere else (desktop, older browsers) it
+// falls back to the exact same download as before, so behaviour is never worse
+// than it was, and no existing flow changes on a machine that can't share.
+//
+// Design notes:
+//   • navigator.canShare({ files }) is the ONLY reliable gate. Some browsers
+//     expose navigator.share for text/URLs but reject files, so we build the
+//     File first and ask canShare about that specific file.
+//   • share() must run inside the tap's transient activation. Every builder is
+//     synchronous from the export tap, so activation is intact; if it were ever
+//     lost the promise rejects and we download instead (see the catch).
+//   • AbortError means the user tapped Cancel on the share sheet — they chose
+//     not to send it, so we do NOT also drop a copy in Downloads (that would be
+//     surprising). Any OTHER rejection → download, so they still get the PDF.
+//   • The whole probe sits in try/catch: any environment without File / Blob /
+//     navigator (e.g. the Node unit tests) simply downloads, unchanged.
+export function savePdf(doc, filename, opts) {
+  opts = opts || {};
+  try {
+    const nav = (typeof navigator !== 'undefined') ? navigator : null;
+    if (nav && typeof nav.share === 'function' && typeof nav.canShare === 'function'
+        && typeof File !== 'undefined') {
+      const file = new File([doc.output('blob')], filename, { type: 'application/pdf' });
+      if (nav.canShare({ files: [file] })) {
+        nav.share({ files: [file], title: opts.title || 'First Light — Cull Diary' })
+          .catch(function (err) {
+            if (err && err.name === 'AbortError') return; // user cancelled — do nothing
+            try { doc.save(filename); } catch (_) {}       // genuine failure → download
+          });
+        return;
+      }
+    }
+  } catch (_) {
+    // fall through to the plain download below
+  }
+  doc.save(filename);
+}
 
 // ── Private helpers (duplicated from diary.js deliberately) ─────────────────
 // These are ~3 lines each and moving them into fl-pure.mjs would touch every
@@ -50,18 +100,9 @@ export { pdfSafeText };
 
 const DOW_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-export function fmtEntryDateShort(d) {
-  if (!d) return '';
-  const p = parseEntryDateParts(d);
-  if (!p) return typeof d === 'string' ? d : String(d);
-  const dt = new Date(p.y, p.m - 1, p.day);
-  return DOW_SHORT[dt.getDay()] + ' ' + p.day + ' ' + MONTH_NAMES[p.m - 1];
-}
-
-// Long form with year — used in the simple diary PDF so multi-season exports
-// don't lose which year a "29 Jan" entry actually belongs to. Kept as a
-// separate helper (rather than adding an optional flag to fmtEntryDateShort)
-// so the short form's existing tests and call sites stay pinned.
+// Long form with year — every PDF date is a standalone record (YR1: any date
+// printed outside a container that states the year carries the year itself).
+// The year-less fmtEntryDateShort was retired with its last call site.
 export function fmtEntryDateLong(d) {
   if (!d) return '';
   const p = parseEntryDateParts(d);
@@ -267,6 +308,14 @@ export const PDF_PALETTE = {
     'Muntjac':  '#6a1b9a',
     'Sika':     '#1565c0',
     'CWD':      '#00695c',
+    // Pest Control (v3) — from stats SP_COLORS_D, so pest species-breakdown bars
+    // are distinguishable instead of all falling back to moss green.
+    'Fox':           '#b45f2a',
+    'Rabbit':        '#c9a05a',
+    'Grey Squirrel': '#8a8f98',
+    'Pigeon':        '#46688a',
+    'Corvid':        '#2f3237',
+    'Wild Boar':     '#5c4a38',
   },
 };
 
@@ -438,6 +487,12 @@ function getJsPDF() {
 // Returns { filename, count } on success (so the caller can toast); returns
 // null when there's nothing to export (empty-guard is still the caller's job,
 // but we double-check to keep the module self-defensive).
+// PQ2c: animals represented by a cull entry — pest bags carry `quantity`
+// (woodpigeon / corvid / rabbit / grey squirrel); deer / fox / boar / blank
+// are always 1. Mirrors entryQty() in diary.js and the stats-tab sum. ASCII
+// 'x' (not the '×' glyph) since jsPDF's default Helvetica is WinAnsi.
+function entryQty(e) { const q = e ? (e.quantity | 0) : 0; return q > 0 ? q : 1; }
+
 export function buildSimpleDiaryPDF({ entries, label, season, filenameSlug }) {
   if (!entries || !entries.length) return null;
 
@@ -482,8 +537,12 @@ export function buildSimpleDiaryPDF({ entries, label, season, filenameSlug }) {
         14, y
       );
     } else {
+      // PQ2c: pest bags show "x200"; drop the empty "()" for sex-less pests
+      // (sexLabel returns '' for them). Deer/fox/boar keep " (Stag)" exactly.
+      const _sxl = sexLabel(e.sex, e.species);
+      const _qty = entryQty(e);
       doc.text(
-        (i + 1) + '. ' + pdfSafeText(e.species) + ' (' + sexLabel(e.sex, e.species) + ') · ' + headerTail,
+        (i + 1) + '. ' + pdfSafeText(e.species) + (_qty > 1 ? ' x' + _qty : '') + (_sxl ? ' (' + _sxl + ')' : '') + ' · ' + headerTail,
         14, y
       );
     }
@@ -553,8 +612,118 @@ export function buildSimpleDiaryPDF({ entries, label, season, filenameSlug }) {
   const filename = filenameSlug
     ? 'cull-diary-' + filenameSlug
     : (label === 'All Seasons' ? 'cull-diary-all-seasons' : 'cull-diary-' + season);
-  doc.save(filename + '.pdf');
+  savePdf(doc, filename + '.pdf');
   return { filename: filename + '.pdf', count: entries.length };
+}
+
+// ── Sightings report PDF (live deer seen — SIGHTINGS-PLAN §2.3 / S5c) ────────
+// Own report, separate from cull exports. `rows` + `summary` are pre-shaped by
+// diary.js (this module stays sightings-agnostic): rows = [{ date, time,
+// species, composition, behaviour, ground, notes }]; summary = { sightings,
+// animals, males, females, malesLbl, femalesLbl,
+// bySpecies:[{species,sightings,animals,bd,mPl,fPl}],
+// byMonth:[{label,animals}] }. Returns { filename, count } or null when empty.
+export function buildSightingsReportPDF({ rows, summary, label, filenameSlug }) {
+  if (!rows || !rows.length) return null;
+  summary = summary || {};
+
+  const JsPDF = getJsPDF();
+  const doc = new JsPDF();
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const MM_SCALE = 25.4 / 72;
+  const generatedAt = (function() {
+    const d = new Date();
+    const pad = function(n) { return n < 10 ? '0' + n : String(n); };
+    return pad(d.getDate()) + ' ' + MONTH_NAMES[d.getMonth()] + ' ' + d.getFullYear()
+         + ' - ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  })();
+  const bandH = drawRichHeaderBand(doc, {
+    pageW,
+    eyebrow: 'FIRST LIGHT  -  SIGHTINGS',
+    title: 'Sightings  ·  ' + (label || 'All'),
+    subtitle: plural(rows.length, 'sighting', 'sightings'),
+    meta: { url: 'firstlightdeer.co.uk', generated: generatedAt },
+    scale: MM_SCALE,
+  });
+
+  let y = bandH + 8;
+  const need = function(minRoom) { if (y > pageH - (minRoom || 24)) { doc.addPage(); y = 20; } };
+
+  // ── Summary ──
+  setPdfText(doc, PDF_PALETTE.bark);
+  doc.setFont(undefined, 'bold'); doc.setFontSize(11);
+  doc.text('Summary', 14, y); y += 6;
+  doc.setFont(undefined, 'normal'); doc.setFontSize(9);
+  const bd = summary.females ? (summary.males + ' : ' + summary.females)
+    : (summary.males ? summary.males + ' : 0' : '-');
+  // Finding 3: the sex nouns arrive on `summary` (diary.js owns deer
+  // vocabulary; this module stays sightings-agnostic). Neutral fallback so an
+  // older cached diary.js against this module degrades to accurate-but-generic
+  // rather than to the wrong species' word.
+  const sxM = summary.malesLbl || 'males', sxF = summary.femalesLbl || 'females';
+  doc.text('Total: ' + (summary.sightings || 0) + ' sightings  ·  ' + (summary.animals || 0)
+    + ' animals seen  ·  ' + sxM + ':' + sxF + ' ' + bd, 14, y); y += 6;
+
+  if (summary.bySpecies && summary.bySpecies.length) {
+    need(); doc.setFont(undefined, 'bold'); doc.text('By species', 14, y); y += 5;
+    doc.setFont(undefined, 'normal');
+    summary.bySpecies.forEach(function(r) {
+      need();
+      var line = pdfSafeText(r.species) + ' - ' + r.sightings + ' log' + (r.sightings === 1 ? '' : 's')
+        + ', ' + r.animals + ' seen' + (r.bd != null ? ', ' + r.bd + ' ' + (r.mPl || 'males') + '/100 ' + (r.fPl || 'females') : '');
+      doc.text(line, 16, y); y += 5;
+    });
+    y += 1;
+  }
+
+  if (summary.byMonth && summary.byMonth.length) {
+    need(); doc.setFont(undefined, 'bold'); doc.text('By month (animals seen)', 14, y); y += 5;
+    doc.setFont(undefined, 'normal');
+    summary.byMonth.forEach(function(m) {
+      need();
+      doc.text(pdfSafeText(m.label) + ' - ' + m.animals, 16, y); y += 5;
+    });
+    y += 2;
+  }
+
+  // ── Sightings list ──
+  need(30);
+  setPdfStroke(doc, PDF_PALETTE.stone); doc.setLineWidth(0.3); doc.line(14, y, pageW - 14, y); y += 6;
+  setPdfText(doc, PDF_PALETTE.bark);
+  doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.text('Sightings', 14, y); y += 6;
+  doc.setFont(undefined, 'normal');
+
+  rows.forEach(function(r, i) {
+    need();
+    doc.setFontSize(11);
+    doc.text((i + 1) + '. ' + pdfSafeText(r.species || 'Deer') + '  ·  ' + (r.date || '-')
+      + (r.time ? '  ·  ' + r.time : ''), 14, y); y += 5;
+    doc.setFontSize(9);
+    var meta = [];
+    if (r.composition) meta.push(pdfSafeText(r.composition));
+    if (r.behaviour)   meta.push(pdfSafeText(r.behaviour));
+    if (r.ground)      meta.push('Ground: ' + pdfSafeText(r.ground));
+    if (meta.length) {
+      doc.splitTextToSize(meta.join('  ·  '), 180).forEach(function(line) { need(); doc.text(line, 14, y); y += 5; });
+    }
+    if (r.notes) {
+      doc.splitTextToSize('Notes: ' + pdfSafeText(r.notes), 180).forEach(function(line) { need(); doc.text(line, 14, y); y += 4; });
+      y += 1;
+    }
+    y += 3;
+    setPdfStroke(doc, PDF_PALETTE.stone); doc.setLineWidth(0.3); doc.line(14, y, pageW - 14, y); y += 5;
+  });
+
+  const totalPages = doc.getNumberOfPages ? doc.getNumberOfPages() : 1;
+  for (let p = 1; p <= totalPages; p++) {
+    if (doc.setPage) doc.setPage(p);
+    drawPdfFooter(doc, { pageW, pageH, pageNum: p, totalPages });
+  }
+
+  const filename = 'sightings-report' + (filenameSlug ? '-' + filenameSlug : '');
+  savePdf(doc, filename + '.pdf');
+  return { filename: filename + '.pdf', count: rows.length };
 }
 
 // ── Single entry one-pager PDF ──────────────────────────────────────────────
@@ -585,7 +754,7 @@ export function buildSingleEntryPDF({ entry }) {
   const bandH = drawRichHeaderBand(doc, {
     pageW,
     title: 'Cull Record',
-    subtitle: (entry.species || 'Entry') + '  ·  ' + (sexLabel(entry.sex, entry.species) || '—')
+    subtitle: (entry.species || 'Entry') + (entryQty(entry) > 1 ? ' x' + entryQty(entry) : '') + '  ·  ' + (sexLabel(entry.sex, entry.species) || '—')
             + (dateCell ? '  ·  ' + dateCell : ''),
     meta: { url: 'firstlightdeer.co.uk' },
     scale: MM_SCALE,
@@ -594,6 +763,7 @@ export function buildSingleEntryPDF({ entry }) {
   doc.setFontSize(10);
 
   const fields = [
+    ['Quantity', entryQty(entry) > 1 ? entryQty(entry) + ' shot' : ''],
     ['Date', dateCell],
     ['Time', timeCell],
     ['Outing start', fmtEntryTimeShort(entry.outing_start_time)],
@@ -636,7 +806,7 @@ export function buildSingleEntryPDF({ entry }) {
   const timeSlug = fmtEntryTimeShort(entry.time).replace(':', '');
   const filenameBase = 'cull-record-' + speciesSlug + '-' + datePart + (timeSlug ? '-' + timeSlug : '');
   const filename = filenameBase + '.pdf';
-  doc.save(filename);
+  savePdf(doc, filename);
   return { filename };
 }
 
@@ -651,11 +821,29 @@ export function buildSingleEntryPDF({ entry }) {
 // internally so tests can rely on a single deterministic output shape, and
 // so the caller's array isn't mutated (legacy code did an in-place sort of
 // `filteredEntries`, which was a subtle bug the UI never surfaced).
+// Larder "Abnormalities" cell — structured gralloch-inspection checklist codes
+// first, then the free-text "other". Shared by the solo Larder Book and the
+// Team Larder book so both report the recorded inspection findings, never the
+// unrelated free-text Notes field (which the solo book used to print, showing
+// "None observed" over real abnormalities — a falsified food-chain document).
+function abnormalityCellText(r) {
+  if (Array.isArray(r.abnormalities) && r.abnormalities.length) {
+    if (r.abnormalities.length === 1 && r.abnormalities[0] === 'none') return 'None observed';
+    const codes = r.abnormalities.filter(function(c) { return c !== 'none'; });
+    let shown = codes.slice(0, 2).map(function(c) { return ABNORMALITY_LABEL_BY_CODE[c] || c; }).join(', ');
+    if (codes.length > 2) shown += ' (+' + (codes.length - 2) + ')';
+    if (r.abnormalities_other) shown += '; other: ' + pdfSafeText(r.abnormalities_other);
+    return shown;
+  }
+  if (r.abnormalities_other) return pdfSafeText(r.abnormalities_other);
+  return 'Not recorded';
+}
+
 export function buildLarderBookPDF({ filteredEntries, user, season }) {
   if (!filteredEntries || !filteredEntries.length) return null;
 
   const entries = filteredEntries
-    .filter(function(e) { return !isBlankDayEntry(e) && (e.destination || '').toLowerCase() !== 'left on hill'; })
+    .filter(function(e) { return !isBlankDayEntry(e) && !isPestSpecies(e.species) && (e.destination || '').toLowerCase() !== 'left on hill'; })
     .slice()
     .sort(function(a, b) {
       return (a.date || '').localeCompare(b.date || '')
@@ -678,7 +866,7 @@ export function buildLarderBookPDF({ filteredEntries, user, season }) {
   let scopeLine;
   try {
     scopeLine = (season && season !== '__all__')
-      ? 'Season ' + seasonLabel(season)
+      ? seasonLabel(season)
       : 'All seasons · ' + entries[0].date + ' to ' + entries[entries.length - 1].date;
   } catch (_) {
     scopeLine = entries[0].date + ' to ' + entries[entries.length - 1].date;
@@ -714,7 +902,7 @@ export function buildLarderBookPDF({ filteredEntries, user, season }) {
       hasValue(e.weight_kg) ? String(e.weight_kg) : '—',
       (locText || '—').slice(0, 40),
       pdfSafeText(e.destination || '—').slice(0, 25),
-      pdfSafeText(e.notes || 'None observed').slice(0, 40)
+      abnormalityCellText(e).slice(0, 40)
     ];
     for (let c = 0; c < row.length; c++) doc.text(row[c], colX[c], y);
     y += 5.5;
@@ -749,8 +937,10 @@ export function buildLarderBookPDF({ filteredEntries, user, season }) {
     drawPdfFooter(doc, { pageW, pageH, pageNum: p, totalPages });
   }
 
-  const filename = 'larder-book-' + entries[0].date + '.pdf';
-  doc.save(filename);
+  const filename = 'larder-book-'
+    + ((season && season !== '__all__') ? season : entries[0].date + '-to-' + entries[entries.length - 1].date)
+    + '.pdf';
+  savePdf(doc, filename);
   return { filename, count: entries.length };
 }
 
@@ -763,7 +953,7 @@ export function buildSyndicateListPDF({ rows, syndicateName, seasonLabelStr, fil
   const JsPDF = getJsPDF();
   const doc = new JsPDF();
   doc.setFontSize(16);
-  doc.text('Syndicate culls — ' + syndicateName, 14, 18);
+  doc.text('Syndicate culls — ' + pdfSafeText(syndicateName), 14, 18);
   doc.setFontSize(10);
   doc.text(seasonLabelStr + ' · ' + rows.length + ' rows · firstlightdeer.co.uk', 14, 26);
 
@@ -771,19 +961,21 @@ export function buildSyndicateListPDF({ rows, syndicateName, seasonLabelStr, fil
   rows.forEach(function(r, i) {
     if (y > 275) { doc.addPage(); y = 20; }
     doc.setFontSize(10); doc.setFont(undefined, 'bold');
-    doc.text((i + 1) + '. ' + (r.species || '—'), 14, y);
+    doc.text((i + 1) + '. ' + pdfSafeText(r.species || '—') + (((r.quantity | 0) > 1) ? ' x' + (r.quantity | 0) : ''), 14, y);
     doc.setFont(undefined, 'normal');
     doc.text(sexLabel(r.sex, r.species), 100, y);
-    doc.text(fmtEntryDateShort(r.cull_date) || String(r.cull_date || '—'), 130, y);
+    // YR1: PDF rows are standalone records — a "10 Sep" from a past season
+    // must carry its year regardless of the header's season label.
+    doc.text(fmtEntryDateLong(r.cull_date) || String(r.cull_date || '—'), 130, y);
     y += 5;
     doc.setFontSize(9); doc.setTextColor(100, 100, 100);
-    doc.text('Culled by: ' + (r.culledBy || '—'), 14, y);
+    doc.text('Culled by: ' + pdfSafeText(r.culledBy || '—'), 14, y);
     doc.setTextColor(0, 0, 0);
     y += 8;
   });
 
   const filename = filenameBase + '.pdf';
-  doc.save(filename);
+  savePdf(doc, filename);
   return { filename, count: rows.length };
 }
 
@@ -814,7 +1006,7 @@ export function buildSyndicateLarderBookPDF({ syndicate, season, rows }) {
     shooterSet[k] = true;
   });
   const shooterCount = Object.keys(shooterSet).length;
-  const filterPart = gf ? 'Ground filter: "' + gf + '"' : 'Ground filter: none (all grounds)';
+  const filterPart = gf ? 'Ground filter: "' + pdfSafeText(gf) + '"' : 'Ground filter: none (all grounds)';
   const shooterPart = plural(shooterCount, 'contributing shooter');
 
   // --- Professional (compliance-style) header ----------------------------
@@ -825,7 +1017,7 @@ export function buildSyndicateLarderBookPDF({ syndicate, season, rows }) {
   let y = drawProfessionalHeader(doc, {
     pageW,
     title: 'Larder Book',
-    subtitle: synName + '  ·  Season ' + label + '  ·  ' + plural(rows.length, 'carcass', 'carcasses'),
+    subtitle: pdfSafeText(synName) + '  ·  ' + label + '  ·  ' + plural(rows.length, 'carcass', 'carcasses'),
     scope: filterPart + '   ·   ' + shooterPart,
   });
 
@@ -838,20 +1030,8 @@ export function buildSyndicateLarderBookPDF({ syndicate, season, rows }) {
   const colX    = [14,  22,   42,    58,   78,       120,      148,  165,      180,  196,           227,                  261];
   y = drawTableHeader(doc, { headers, colX, y, pageW });
 
-  function abnormCell(r) {
-    // Concise inline summary: structured codes first, then free-text "other".
-    // Truncated at the colX grid; full text stays readable in the diary UI.
-    if (Array.isArray(r.abnormalities) && r.abnormalities.length) {
-      if (r.abnormalities.length === 1 && r.abnormalities[0] === 'none') return 'None observed';
-      const codes = r.abnormalities.filter(function(c) { return c !== 'none'; });
-      let shown = codes.slice(0, 2).map(function(c) { return ABNORMALITY_LABEL_BY_CODE[c] || c; }).join(', ');
-      if (codes.length > 2) shown += ' (+' + (codes.length - 2) + ')';
-      if (r.abnormalities_other) shown += '; other: ' + pdfSafeText(r.abnormalities_other);
-      return shown;
-    }
-    if (r.abnormalities_other) return pdfSafeText(r.abnormalities_other);
-    return 'Not recorded';
-  }
+  // Shared with the solo Larder Book (module-level abnormalityCellText).
+  function abnormCell(r) { return abnormalityCellText(r); }
 
   doc.setFontSize(7.5);
   rows.forEach(function(r, idx) {
@@ -927,8 +1107,20 @@ export function buildSyndicateLarderBookPDF({ syndicate, season, rows }) {
   }
 
   const filename = 'team-larder-book-' + syndicateFileSlug(synName) + '-' + season + '.pdf';
-  doc.save(filename);
+  savePdf(doc, filename);
   return { filename, count: rows.length };
+}
+
+/** Eight-figure OS grid reference for the declaration table. A game dealer, an
+ *  FSA inspector and a police wildlife officer all work in grid references, and
+ *  until now the only place one ever appeared was the on-screen entry card.
+ *  Blank when the entry carries no pin, and blank outside the OS grid rather
+ *  than falling back to decimal degrees -- a number none of those three readers
+ *  can use is worse in that box than an empty one. */
+function declarationGridRef(entry) {
+  const lat = Number(entry && entry.lat), lng = Number(entry && entry.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return '';
+  return latLngToOsGrid(lat, lng, 8) || '';
 }
 
 // ── Per-carcass Trained Hunter Declaration (game dealer) ───────────────────
@@ -946,8 +1138,24 @@ export function buildSyndicateLarderBookPDF({ syndicate, season, rows }) {
 export function buildGameDealerDeclarationPDF({ entry, user }) {
   if (!entry) return null;
   if (isBlankDayEntry(entry)) return null;
+  if (isPestSpecies(entry.species)) return null; // larder/dealer docs are food-chain documents for deer, never pests
 
   const { hunterName, accountEmail } = resolveHunterIdentity(user);
+
+  // Who actually pulled the trigger. `shooter` defaults to the string 'Self'
+  // meaning the account holder, and the syndicate larder book already treats
+  // that value as the sentinel it is. Where a different name is recorded the
+  // app has no way of knowing who carried out the gralloch inspection, so the
+  // trained-hunter line is left blank to be completed and signed by hand
+  // rather than pre-filled with the account holder's name. This is a food
+  // chain document under assimilated Reg (EC) No 853/2004; a false attribution
+  // on it is worse than a blank line, so it fails towards the blank.
+  const rawShooter = (entry.shooter == null) ? '' : String(entry.shooter).trim();
+  const shooterIsAccountHolder = !rawShooter
+    || rawShooter.toLowerCase() === 'self'
+    || (!!hunterName && rawShooter.toLowerCase() === String(hunterName).trim().toLowerCase());
+  const shooterName = shooterIsAccountHolder ? (hunterName || '') : rawShooter;
+  const declaredHunter = shooterIsAccountHolder ? (hunterName || '') : '';
 
   const JsPDF = getJsPDF();
   const doc = new JsPDF();
@@ -980,9 +1188,11 @@ export function buildGameDealerDeclarationPDF({ entry, user }) {
     ['Date of kill', dateCell],
     ['Time', timeCell],
     ['Location', pdfSafeText(entry.location_name || '')],
+    ['Grid reference', declarationGridRef(entry)],
     ['Tag / carcass number', pdfSafeText(entry.tag_number || '')],
     ['Carcass weight (kg)', hasValue(entry.weight_kg) ? String(entry.weight_kg) : ''],
-    ['Shot placement', pdfSafeText(entry.shot_placement || '')]
+    ['Shot placement', pdfSafeText(entry.shot_placement || '')],
+    ['Shot by', pdfSafeText(shooterName || '')]
   ];
 
   let y = 50;
@@ -1056,8 +1266,19 @@ export function buildGameDealerDeclarationPDF({ entry, user }) {
   doc.text(declLines, 20, y);
   y += declLines.length * 6 + 10;
 
-  doc.text('Trained hunter name: ' + (hunterName || '________________________'), 20, y); y += 10;
-  if (accountEmail && !hunterName) {
+  doc.text('Trained hunter name: ' + (declaredHunter || '________________________'), 20, y); y += 10;
+  if (!shooterIsAccountHolder) {
+    // Say why the line above is blank, so a dealer does not read the gap as an
+    // omission and an inspector can see the app declined to guess.
+    doc.setFontSize(8); doc.setTextColor(120);
+    const whyBlank = doc.splitTextToSize(
+      'Left blank deliberately: this carcass is recorded as shot by ' + pdfSafeText(rawShooter)
+      + ', and the trained hunter who examined it must sign in their own name.', pageW - 40);
+    doc.text(whyBlank, 20, y);
+    doc.setFontSize(10); doc.setTextColor(0);
+    y += whyBlank.length * 5 + 4;
+  }
+  if (accountEmail && !declaredHunter) {
     doc.setFontSize(8); doc.setTextColor(120);
     doc.text('First Light account (reference): ' + accountEmail, 20, y);
     doc.setFontSize(10); doc.setTextColor(0);
@@ -1086,7 +1307,7 @@ export function buildGameDealerDeclarationPDF({ entry, user }) {
   const timeSlug = fmtEntryTimeShort(entry.time).replace(':', '');
   const filenameBase = 'declaration-' + speciesSlug + '-' + datePart + (timeSlug ? '-' + timeSlug : '');
   const filename = filenameBase + '.pdf';
-  doc.save(filename);
+  savePdf(doc, filename);
   return { filename };
 }
 
@@ -1118,9 +1339,14 @@ export function buildConsignmentDealerDeclarationPDF({ entries, user }) {
     return (e.destination || '').toLowerCase() === 'left on hill';
   }).length;
   const blankEx = entries.filter(isBlankDayEntry).length;
-  const excluded = hillEx + blankEx;
+  const pestEx = entries.filter(function(e) { return isPestSpecies(e.species); }).length;
+  const excluded = hillEx + blankEx + pestEx;
   const filtered = entries.filter(function(e) {
-    return !isBlankDayEntry(e) && (e.destination || '').toLowerCase() !== 'left on hill';
+    // Pests are excluded for the same reason the single-entry declaration
+    // refuses them: this is a trained-hunter DEER food-chain document
+    // (assimilated Reg. 853/2004) — a rabbit bag does not belong on it.
+    return !isBlankDayEntry(e) && !isPestSpecies(e.species)
+      && (e.destination || '').toLowerCase() !== 'left on hill';
   }).slice(); // clone before sorting (don't mutate caller's array)
 
   if (filtered.length === 0) return { status: 'all-excluded', excluded };
@@ -1309,7 +1535,7 @@ export function buildConsignmentDealerDeclarationPDF({ entries, user }) {
   const filename = 'consignment-declaration-' + (dateMin || 'na')
     + (dateMax && dateMax !== dateMin ? '-to-' + dateMax : '')
     + '.pdf';
-  doc.save(filename);
+  savePdf(doc, filename);
   return { filename, count: filtered.length, excluded };
 }
 
@@ -1342,6 +1568,11 @@ export function buildSeasonSummaryPDF({
   if (!entries || !entries.length) return null;
   const cullRows = entries.filter(function(e) { return !isBlankDayEntry(e); });
   const blankDayCount = entries.length - cullRows.length;
+  // PQ2c: "Total Cull" + species breakdown count ANIMALS (pest bags sum their
+  // quantity); the entries table below stays one row per record. The deer Cull
+  // Plan section is unaffected — it keys on sex and the quantity-pests are
+  // sex-less (skipped there).
+  const cullAnimals = cullRows.reduce(function(s, e) { return s + entryQty(e); }, 0);
 
   const JsPDF = getJsPDF();
   const doc = new JsPDF({ unit: 'pt', format: 'a4', orientation: 'landscape' });
@@ -1383,7 +1614,7 @@ export function buildSeasonSummaryPDF({
   const totalKg = weighedEntries.reduce(function(s, e) { return s + (parseFloat(e.weight_kg) || 0); }, 0);
   const avgKg   = weighedEntries.length ? Math.round(totalKg / weighedEntries.length) : 0;
   const spSet = {};
-  cullRows.forEach(function(e) { if (e.species) spSet[e.species] = (spSet[e.species] || 0) + 1; });
+  cullRows.forEach(function(e) { if (e.species) spSet[e.species] = (spSet[e.species] || 0) + entryQty(e); });
   const spCount = Object.keys(spSet).length;
 
   // ── Local date formatters ────────────────────────────────────────────
@@ -1435,7 +1666,7 @@ export function buildSeasonSummaryPDF({
   // ── KPI stats row ────────────────────────────────────────────────────
   const STAT_H = 46, cw = PW / 4;
   const statData = [
-    [String(cullRows.length), 'Total Cull'],
+    [String(cullAnimals), 'Total Cull'],
     [String(spCount),        'Species'],
     [String(Math.round(totalKg)), 'Total kg'],
     [avgKg ? String(avgKg) + 'kg' : '–',
@@ -1497,7 +1728,7 @@ export function buildSeasonSummaryPDF({
   if (spSorted.length) {
     y += 22;
     const spTotalBase = y;
-    const spGrandTotal = cullRows.length;
+    const spGrandTotal = cullAnimals;
     const spGrandKg = Math.round(
       spSorted.reduce(function(s, k) { return s + (totalWtBySpecies[k] || 0); }, 0)
     );
@@ -1641,8 +1872,16 @@ export function buildSeasonSummaryPDF({
       doc.text('—', COL.sex, y);
     } else {
       doc.text((e.species || '').slice(0, 16), COL.species, y);
-      setPdfText(doc, e.sex === 'm' ? '#8b4513' : '#8b1a4a'); doc.setFont(undefined, 'bold');
-      doc.text(sexLabel(e.sex, e.species), COL.sex, y);
+      // PQ2c: sex-less pest bags reuse the (otherwise blank) SEX cell to show
+      // "x200" — geometry-safe, no column overflow. Sexed rows are always qty 1.
+      const _rq = entryQty(e);
+      if (_rq > 1) {
+        setPdfText(doc, P.bark); doc.setFont(undefined, 'bold');
+        doc.text('x' + _rq, COL.sex, y);
+      } else {
+        setPdfText(doc, e.sex === 'm' ? '#8b4513' : '#8b1a4a'); doc.setFont(undefined, 'bold');
+        doc.text(sexLabel(e.sex, e.species), COL.sex, y);
+      }
     }
     setPdfText(doc, P.bark); doc.setFont(undefined, 'normal');
     doc.text((e.tag_number ? String(e.tag_number) : '–').slice(0, 10), COL.tag, y);
@@ -1687,7 +1926,7 @@ export function buildSeasonSummaryPDF({
     summaryFilename += '-' + String(groundOverride).replace(/[^a-z0-9]/gi, '-').toLowerCase();
   }
   const filename = summaryFilename + '.pdf';
-  doc.save(filename);
+  savePdf(doc, filename);
   return { filename, count: entries.length };
 }
 
@@ -1772,15 +2011,33 @@ export function buildSyndicateSeasonSummaryPDF({
 
   let y = HDR_H + 12;
 
-  const mCount = entries.filter(function(e) { return e.sex === 'm'; }).length;
-  const fCount = entries.filter(function(e) { return e.sex === 'f'; }).length;
+  // Group-mode syndicates record ANONYMOUS tallies: the attributed entries
+  // list is empty by design, but summaryRows (syndicate_season_summary — the
+  // exact source the in-app tally bars trust) still carries the true
+  // actuals. Build the headline and species breakdown from those whenever
+  // they exist, so an anonymous syndicate's summary is never a false
+  // "no culls"; fall back to the entries list only when the RPC gave
+  // nothing. actual_total is animals, not rows (the RPC SUMs quantity).
+  const srAct = (summaryRows || []).map(function(r) {
+    return r ? { species: r.species, sex: r.sex, n: parseInt(r.actual_total, 10) || 0 } : null;
+  }).filter(function(r) { return r && r.n > 0; });
+  const srTotal = srAct.reduce(function(a, r) { return a + r.n; }, 0);
+  const useSr = srTotal > 0;
+  const totalCulls = useSr ? srTotal : entries.length;
+  const mCount = useSr
+    ? srAct.filter(function(r) { return r.sex === 'm'; }).reduce(function(a, r) { return a + r.n; }, 0)
+    : entries.filter(function(e) { return e.sex === 'm'; }).length;
+  const fCount = useSr
+    ? srAct.filter(function(r) { return r.sex === 'f'; }).reduce(function(a, r) { return a + r.n; }, 0)
+    : entries.filter(function(e) { return e.sex === 'f'; }).length;
   const spSet = {};
-  entries.forEach(function(e) { spSet[e.species] = (spSet[e.species] || 0) + 1; });
+  if (useSr) srAct.forEach(function(r) { spSet[r.species] = (spSet[r.species] || 0) + r.n; });
+  else entries.forEach(function(e) { spSet[e.species] = (spSet[e.species] || 0) + 1; });
   const spCount = Object.keys(spSet).length;
 
   const STAT_H = 46, cw = PW / 4;
   const statData = [
-    [String(entries.length), 'Total culls'],
+    [String(totalCulls), 'Total culls'],
     [String(spCount), 'Species'],
     [String(mCount), 'Male'],
     [String(fCount), 'Female']
@@ -1882,6 +2139,12 @@ export function buildSyndicateSeasonSummaryPDF({
   y += 10;
   y = newPageIfNeeded(y, 40);
   y = secHdr(y, 'All entries — ' + entries.length + ' records');
+  if (!entries.length && totalCulls > 0) {
+    y += 14;
+    setPdfText(doc, P.muted); doc.setFontSize(9); doc.setFont(undefined, 'normal');
+    doc.text('Individual culls are anonymous in this syndicate — the totals above come from the group tally.', ML, y);
+    y += 8;
+  }
 
   const W_DATE = 78, W_SP = 100, W_SEX = 52, W_BY = PW - ML - MR - W_DATE - W_SP - W_SEX;
   const COL = {
@@ -1906,7 +2169,7 @@ export function buildSyndicateSeasonSummaryPDF({
     setPdfFill(doc, i % 2 === 0 ? P.white : '#fdfcfa'); doc.rect(0, y - 12, PW, 18, 'F');
     doc.setFontSize(7); setPdfText(doc, P.bark); doc.setFont(undefined, 'normal');
     doc.text(fmtEntryDatePdf(e.cull_date), COL.date, y);
-    doc.text(String(e.species || '').slice(0, 22), COL.species, y);
+    doc.text((String(e.species || '').slice(0, 22)) + (((e.quantity | 0) > 1) ? ' x' + (e.quantity | 0) : ''), COL.species, y);
     setPdfText(doc, e.sex === 'm' ? '#8b4513' : '#8b1a4a'); doc.setFont(undefined, 'bold');
     doc.text(sexLabel(e.sex, e.species), COL.sex, y);
     setPdfText(doc, P.bark); doc.setFont(undefined, 'normal');
@@ -1927,6 +2190,6 @@ export function buildSyndicateSeasonSummaryPDF({
 
   const filename = 'syndicate-' + syndicateFileSlug((syndicate && syndicate.name) || 'syndicate')
     + '-summary-' + season + '.pdf';
-  doc.save(filename);
+  savePdf(doc, filename);
   return { filename, count: entries.length };
 }

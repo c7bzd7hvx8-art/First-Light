@@ -5,7 +5,7 @@
 // the cache strings (`v7.34`) because they were three separate literals.
 // Bumping triggers the `activate` step to sweep old caches and reload clients
 // via the `controllerchange` path in diary.js.
-const SW_VERSION = '9.50';
+const SW_VERSION = '12.45';
 const STATIC_CACHE  = 'first-light-static-v'  + SW_VERSION;
 const RUNTIME_CACHE = 'first-light-runtime-v' + SW_VERSION;
 
@@ -18,6 +18,27 @@ const PRECACHE_URLS = [
   './',
   './index.html',
   './styles.css',
+  './fl-icons.css',
+  // Self-hosted brand fonts (SIL OFL) — precached so the brand renders on the
+  // first offline launch on a fresh device (were Google Fonts, runtime-cached
+  // only, so a cold offline first-launch fell back to system fonts).
+  './fonts/fonts.css',
+  './fonts/playfair-400.woff2',
+  './fonts/playfair-600.woff2',
+  './fonts/playfair-700.woff2',
+  './fonts/playfair-400i.woff2',
+  './fonts/playfair-700i.woff2',
+  './fonts/dmsans-300.woff2',
+  './fonts/dmsans-400.woff2',
+  './fonts/dmsans-500.woff2',
+  './fonts/dmsans-600.woff2',
+  './fonts/dmsans-700.woff2',
+  './fonts/dmmono-400.woff2',
+  './fonts/dmmono-500.woff2',
+  './fonts/outfit-400.woff2',
+  './fonts/outfit-500.woff2',
+  './fonts/outfit-600.woff2',
+  './fonts/outfit-700.woff2',
   './standalone-boot.js',
   './app.js',
   './diary.html',
@@ -34,14 +55,27 @@ const PRECACHE_URLS = [
   './modules/error-logger.mjs',
   './modules/profile.mjs',
   './modules/weather.mjs',
+  './modules/stands.mjs',
+  './modules/sightings.mjs',
   './modules/photos.mjs',
   './modules/stats.mjs',
   './modules/pdf.mjs',
+  // Grounds boundaries (GROUNDS-PLAN.md G2) — statically imported by diary.js,
+  // so the import-abort rule applies: a miss here bricks first offline launch.
+  './modules/grounds.mjs',
   // Pure lib statically imported by diary.js (isBlankDayEntry, blankDaySummaryText,
   // formatRelativeTime). A failed ES-module import aborts the whole diary module
   // graph, so this MUST be precached alongside the diary modules above — a miss
   // here 404s the import on a fresh device's first offline launch.
   './lib/fl-pure.mjs',
+  './lib/fl-forecast.mjs',
+  './lib/fl-sightings.mjs',
+  // Grounds boundary geometry (GROUNDS-PLAN.md G1) — precached ahead of the
+  // G2 client that imports it, exactly like fl-forecast was at Stands S2.
+  './lib/fl-geo.mjs',
+  // Photo EXIF reader — statically imported by modules/photos.mjs, which is
+  // in diary.js's module graph, so the same import-abort rule applies.
+  './lib/fl-exif.mjs',
   './privacy.html',
   './terms.html',
   './manifest.json',
@@ -75,6 +109,8 @@ const PRECACHE_URLS = [
   './lib/fl-ballistics.js',
   './lib/fl-ammo.js',
   './lib/fl-deer-law.js',
+  './lib/fl-deer-seasons.js',
+  './lib/fl-deer-seasons-bridge.js',
   './lib/fl-anatomy.js',
   './lib/fl-lead-free-matcher.js',
   './data/ammo-loads.json',
@@ -113,14 +149,12 @@ const CDN_URLS = [
 
 // Domains the fetch handler is allowed to cache opportunistically
 // (stale-while-revalidate). Must be a superset of the hosts in CDN_URLS
-// plus the Google fonts pair — otherwise those requests get passed through
+// otherwise those requests get passed through
 // to the network unchanged, breaking offline.
 const CACHEABLE_ORIGINS = [
   'cdnjs.cloudflare.com',
   'cdn.jsdelivr.net',
-  'unpkg.com',
-  'fonts.googleapis.com',
-  'fonts.gstatic.com'
+  'unpkg.com'
 ];
 
 function isNavigationRequest(request) {
@@ -231,23 +265,90 @@ async function networkFirst(request, cacheName) {
   }
 }
 
+// ── Precache integrity ─────────────────────────────────────────────────────
+//
+// The install below used to be one line — every URL added in parallel with a
+// per-URL `.catch(warn)` — and nothing checked the result. So a first install
+// on rural signal could drop half the app shell and still report success. The
+// browser then marks the worker installed and activated, and because the cache
+// is version-named nothing ever looks at it again: online the holes are
+// invisible (networkFirst and stale-while-revalidate simply fetch the file),
+// offline they are a plain-text 503 for a file diary.js statically imports —
+// and a failed ES-module import aborts the entire module graph, so one missing
+// .mjs is a blank app, not a degraded one. The hole then lasts until the next
+// version bump, which is to say for as long as the owner leaves the app alone.
+//
+// So same-origin entries are REQUIRED and the install refuses to finish
+// without them, while remote entries — the six firstlightdeer.co.uk photos and
+// the three CDN libraries — stay best-effort, because a third party having a
+// bad afternoon must not cost the user their offline app shell.
+//
+// Refusing is the right failure here. A rejected install leaves the previous
+// worker serving, or on a first visit leaves no worker at all, and the browser
+// retries on the next navigation. A page with no service worker still works
+// perfectly online and installs properly later; a page with a holed one is
+// broken in the field, which is the one place this app has to work, and it
+// never heals itself.
+const REQUIRED_PRECACHE_URLS = PRECACHE_URLS.filter(u => u.indexOf('./') === 0);
+
+/** Add every URL to the cache; resolves to the list that did not make it. */
+async function cacheAddAll(cache, urls) {
+  const failed = [];
+  await Promise.all(urls.map(async url => {
+    try {
+      await cache.add(url);
+    } catch (e) {
+      failed.push(url);
+      console.warn('[SW] Failed to cache:', url, e);
+    }
+  }));
+  return failed;
+}
+
+/** Which of `urls` cannot be read back out of `cache`. Verified by lookup
+ *  rather than by trusting that cache.add() resolved: what matters at 6am on a
+ *  hill with no signal is whether the file comes back, not whether a promise
+ *  settled an hour ago. */
+async function missingFromCache(cache, urls) {
+  const out = [];
+  await Promise.all(urls.map(async url => {
+    let hit = null;
+    try { hit = await cache.match(url); } catch (e) { hit = null; }
+    if (!hit) out.push(url);
+  }));
+  return out;
+}
+
 // Install: precache app shell + CDN libraries
 self.addEventListener('install', async event => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(STATIC_CACHE);
-      const allUrls = PRECACHE_URLS.concat(CDN_URLS);
-      await Promise.all(
-        allUrls.map(url =>
-          cache.add(url).catch(e => console.warn('[SW] Failed to cache:', url, e))
-        )
-      );
+      await cacheAddAll(cache, PRECACHE_URLS.concat(CDN_URLS));
+
+      // One retry for anything required that missed. The failure this exists
+      // for is a dropped packet, not a missing file, and a second attempt
+      // clears most of those without troubling anyone.
+      let missing = await missingFromCache(cache, REQUIRED_PRECACHE_URLS);
+      if (missing.length) {
+        console.warn('[SW] Retrying ' + missing.length + ' required file(s)');
+        await cacheAddAll(cache, missing);
+        missing = await missingFromCache(cache, REQUIRED_PRECACHE_URLS);
+      }
+      if (missing.length) {
+        // Throwing rejects the install: nothing activates, nothing is claimed,
+        // and the browser comes back to it. If this ever fires on a good
+        // connection it means a required file is genuinely absent from the
+        // deploy — which tests/service-worker.test.mjs exists to catch first.
+        throw new Error('[SW] Install incomplete — ' + missing.length +
+          ' required file(s) missing, first: ' + missing[0]);
+      }
       await self.skipWaiting();
     })()
   );
 });
 
-// Activate: delete old caches
+// Activate: delete old caches, then repair anything the shell has lost
 self.addEventListener('activate', async event => {
   event.waitUntil(
     (async () => {
@@ -255,6 +356,20 @@ self.addEventListener('activate', async event => {
       await Promise.all(
         keys.filter(k => k !== STATIC_CACHE && k !== RUNTIME_CACHE).map(k => caches.delete(k))
       );
+      // Browsers evict cache entries under storage pressure and do not always
+      // take the whole cache with them, so a worker that installed cleanly in
+      // March can still be holed in July. Best-effort on purpose: by the time
+      // activate runs the old worker is already gone, so refusing here would
+      // leave the page with no controller at all — worse than a hole the fetch
+      // handler will refill the next time that file is asked for online.
+      try {
+        const cache = await caches.open(STATIC_CACHE);
+        const missing = await missingFromCache(cache, REQUIRED_PRECACHE_URLS);
+        if (missing.length) {
+          console.warn('[SW] Repairing ' + missing.length + ' evicted file(s)');
+          await cacheAddAll(cache, missing);
+        }
+      } catch (e) { /* offline at activate time — nothing to be done about it */ }
       await self.clients.claim();
     })()
   );

@@ -2,7 +2,7 @@
 
 // ── block ──
 // ══════════════════════════════════════════════════════════════
-// QUESTION BANK — 300 questions across 10 batches
+// QUESTION BANK — 323 questions across 10 batches
 // ══════════════════════════════════════════════════════════════
 
 
@@ -14,6 +14,8 @@ var state = loadState();
 var quizQuestions = [];
 var currentQIdx = 0;
 var quizAnswers = [];  // {correct: bool, category: str}
+var quizSelectedIdx = null;   // pre-commit selection (select-then-Check)
+var quizCommitted = false;    // has the current question been checked/committed
 var lastMode = 'quick';
 var wrongQuestions = [];
 
@@ -40,7 +42,13 @@ function enhanceKeyboardClickables(root) {
 function loadState() {
   try {
     var raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : defaultState();
+    if (!raw) return defaultState();
+    var parsed = JSON.parse(raw);
+    // Guard against valid-but-wrong JSON (null / number / array): a bad payload
+    // used to be returned as-is, then `state.qWeights` threw and the app never
+    // left the disclaimer. Merge over defaults so every expected key exists.
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return defaultState();
+    return Object.assign(defaultState(), parsed);
   } catch(e) { return defaultState(); }
 }
 
@@ -92,7 +100,7 @@ function initStaticActions() {
   bindAction('btn-view-disclaimer', function() { showDisclaimer(); });
   bindAction('btn-quit-quiz', function() { quitQuiz(); });
   bindAction('btn-quit-quiz-rail', function() { quitQuiz(); });
-  bindAction('next-btn', function() { nextQuestion(); });
+  bindAction('next-btn', function() { if (!quizCommitted) { commitAnswer(); } else { nextQuestion(); } });
   bindAction('btn-try-again', function() { startQuiz(lastMode); });
   bindAction('btn-results-dashboard', function() { showView('v-dashboard'); refreshDashboard(); });
   bindAction('review-btn', function() { reviewWrong(); });
@@ -149,13 +157,58 @@ function updateSpacedBtn() {
   }
 }
 
+// Readiness decays in real life; saved sessions carry a timestamp so the
+// note can say how stale the figure is. Older saves have no timestamp and
+// simply omit the sentence.
+function relativeDay(ts) {
+  var days = Math.floor((Date.now() - ts) / 86400000);
+  if (!isFinite(days) || days < 0) return 'just now';
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return days + ' days ago';
+  if (days < 14) return 'last week';
+  if (days < 60) return Math.round(days / 7) + ' weeks ago';
+  return Math.round(days / 30) + ' months ago';
+}
+
+function readinessEntries() {
+  // Old saves are bare numbers; new ones are {pct,total,mode}. Normalise + drop corrupt.
+  var out = [];
+  (state.recentScores || []).forEach(function(s) {
+    if (typeof s === 'number' && !isNaN(s)) out.push({ pct: s, total: null });
+    else if (s && typeof s.pct === 'number' && !isNaN(s.pct)) out.push({ pct: s.pct, total: (typeof s.total === 'number' ? s.total : null), mode: s.mode, at: (typeof s.at === 'number' ? s.at : null) });
+  });
+  state.recentScores = out; // persist normalised shape
+  return out;
+}
+
 function readinessPct() {
-  // Filter out any NaN or non-number values from corrupted saves
-  var valid = state.recentScores.filter(function(s) { return typeof s === 'number' && !isNaN(s); });
-  state.recentScores = valid; // clean up stored state
-  if (!valid.length) return null;
-  var sum = valid.reduce(function(a,b){ return a+b; }, 0);
-  return Math.round(sum / valid.length);
+  var e = readinessEntries();
+  if (!e.length) return null;
+  // Count-weighted: a 50-question mock counts more than a 10-question quiz;
+  // legacy entries of unknown size fall back to a nominal 10.
+  var wsum = 0, num = 0;
+  e.forEach(function(x) { var w = x.total || 10; wsum += w; num += x.pct * w; });
+  return wsum ? Math.round(num / wsum) : null;
+}
+
+function readinessCoverage() {
+  // Cumulative per-category accuracy from catStats — count-weighted + coverage-aware.
+  var cats = Object.keys(CAT_COLORS);
+  var covered = 0, untested = [], weakest = null, totalQ = 0;
+  cats.forEach(function(cat) {
+    var s = state.catStats[cat];
+    var t = s ? s.total : 0;
+    totalQ += t;
+    if (t > 0) {
+      covered++;
+      var p = Math.round(s.correct / t * 100);
+      if (!weakest || p < weakest.pct) weakest = { cat: cat, pct: p };
+    } else {
+      untested.push(cat);
+    }
+  });
+  return { covered: covered, totalCats: cats.length, untested: untested, weakest: weakest, totalQ: totalQ };
 }
 
 function renderReadiness() {
@@ -175,30 +228,45 @@ function renderReadiness() {
     return;
   }
 
-  var prefix = pct >= 80 ? 'Strong ' : pct >= 60 ? 'Developing ' : 'Needs work ';
+  var cov = readinessCoverage();
+  // A lucky 10-question quiz, or eight drills on one topic, isn't readiness — gate on volume + breadth.
+  var provisional = cov.totalQ < 25 || cov.covered < 4;
+  var prefix = provisional ? 'Provisional ' : pct >= 80 ? 'Strong ' : pct >= 60 ? 'Developing ' : 'Needs work ';
   pctEl.innerHTML = '<span style="font-size:0.34em;margin-right:5px;font-weight:700;letter-spacing:0.3px;color:var(--muted);text-transform:uppercase;">' + prefix + '</span>' + pct + '<span>%</span>';
   barEl.style.width = pct + '%';
-  barEl.style.background = pct >= 80
-    ? 'linear-gradient(90deg,#2d7a1a,#7adf7a)'
-    : pct >= 60
-    ? 'linear-gradient(90deg,#e65100,#ff8f00)'
+  barEl.style.background = provisional ? 'var(--muted)'
+    : pct >= 80 ? 'linear-gradient(90deg,#2d7a1a,#7adf7a)'
+    : pct >= 60 ? 'linear-gradient(90deg,#e65100,#ff8f00)'
     : 'linear-gradient(90deg,#b71c1c,#e53935)';
 
-  var verdict = pct >= 80 ? 'Looking good — keep it up!'
-    : pct >= 60 ? 'Getting there — focus on weak areas.'
-    : 'Needs work — study the explanations carefully.';
-  noteEl.textContent = 'Rolling average of last ' + state.recentScores.length + ' session' + (state.recentScores.length>1?'s':'') + '. ' + verdict;
+  if (provisional) {
+    var why = [];
+    if (cov.totalQ < 25) why.push('only ' + cov.totalQ + ' question' + (cov.totalQ === 1 ? '' : 's') + ' answered');
+    if (cov.covered < 4) why.push('covered ' + cov.covered + ' of ' + cov.totalCats + ' topics');
+    noteEl.textContent = 'Provisional — ' + why.join(', ') + '. Sit a few Mock Exams across all topics for a reliable read. Pass mark 80%.';
+  } else {
+    var okNote = 'Weighted by questions answered · covered ' + cov.covered + ' of ' + cov.totalCats + ' topics.';
+    if (cov.weakest) okNote += ' Weakest: ' + cov.weakest.cat + ' ' + cov.weakest.pct + '%.';
+    if (cov.untested.length) okNote += ' Not yet tested: ' + cov.untested.join(', ') + '.';
+    noteEl.textContent = okNote;
+  }
 
-  pillsEl.innerHTML = state.recentScores.map(function(s, i) {
-    var cls = s >= 80 ? 'pass' : 'fail';
-    var label = s >= 80 ? 'Pass ' : 'Needs work ';
-    return '<span class="score-pill ' + cls + '">' + label + s + '%</span>';
+  var lastEntry = (state.recentScores || []).slice(-1)[0];
+  if (lastEntry && typeof lastEntry.at === 'number') {
+    noteEl.textContent += ' Last session ' + relativeDay(lastEntry.at) + '.';
+  }
+
+  pillsEl.innerHTML = state.recentScores.map(function(s) {
+    var v = (typeof s === 'number') ? s : s.pct;
+    var cls = v >= 80 ? 'pass' : 'fail';
+    var label = v >= 80 ? 'Pass ' : 'Needs work ';
+    return '<span class="score-pill ' + cls + '">' + label + v + '%</span>';
   }).join('');
 }
 
 var CAT_COLORS = {
   'Biology': '#5a7a30',
-  'Identification': '#c8a84b',
+  'Identification': '#d8b054',
   'Legislation': '#1565c0',
   'Safety': '#c62828',
   'Fieldcraft': '#f57f17',
@@ -227,14 +295,113 @@ function renderCatStats() {
   }).join('');
 }
 
+// ── Confirm sheet ──────────────────────────────────────────────
+// Replaces native confirm(). A native dialog freezes the whole tab
+// until it is dismissed, cannot be styled, and in an installed PWA
+// prefixes the bare origin to the message. This is a real modal:
+// aria-modal, focus moves in, Tab is trapped, Esc cancels, focus is
+// restored on close, and Cancel — never the destructive action —
+// holds initial focus.
+function flConfirm(opts, onConfirm) {
+  var prevFocus = document.activeElement;
+
+  var overlay = document.createElement('div');
+  overlay.className = 'fl-confirm-overlay';
+
+  var card = document.createElement('div');
+  card.className = 'fl-confirm-card';
+  card.setAttribute('role', 'dialog');
+  card.setAttribute('aria-modal', 'true');
+  card.setAttribute('aria-labelledby', 'fl-confirm-title');
+  card.setAttribute('aria-describedby', 'fl-confirm-body');
+
+  var h = document.createElement('h2');
+  h.className = 'fl-confirm-title';
+  h.id = 'fl-confirm-title';
+  h.textContent = opts.title;
+
+  var p = document.createElement('p');
+  p.className = 'fl-confirm-body';
+  p.id = 'fl-confirm-body';
+  p.textContent = opts.body;
+
+  var row = document.createElement('div');
+  row.className = 'fl-confirm-row';
+
+  var cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'fl-confirm-btn fl-confirm-cancel';
+  cancel.textContent = opts.cancelLabel || 'Cancel';
+
+  var ok = document.createElement('button');
+  ok.type = 'button';
+  ok.className = 'fl-confirm-btn fl-confirm-ok' + (opts.danger ? ' danger' : '');
+  ok.textContent = opts.confirmLabel || 'Confirm';
+
+  row.appendChild(cancel);
+  row.appendChild(ok);
+  card.appendChild(h);
+  card.appendChild(p);
+  card.appendChild(row);
+  overlay.appendChild(card);
+
+  function close() {
+    document.removeEventListener('keydown', onKey, true);
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    document.body.classList.remove('fl-confirm-open');
+    if (prevFocus && document.contains(prevFocus) && typeof prevFocus.focus === 'function') {
+      try { prevFocus.focus(); } catch (e) { /* element went away */ }
+    }
+  }
+
+  function onKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+    var items = [cancel, ok];
+    var i = items.indexOf(document.activeElement);
+    if (i === -1) { (e.shiftKey ? ok : cancel).focus(); return; }
+    items[(i + (e.shiftKey ? items.length - 1 : 1)) % items.length].focus();
+  }
+
+  cancel.addEventListener('click', close);
+  ok.addEventListener('click', function() { close(); onConfirm(); });
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) close(); });
+
+  document.body.appendChild(overlay);
+  document.body.classList.add('fl-confirm-open');
+  document.addEventListener('keydown', onKey, true);
+  cancel.focus();
+}
+
 function confirmReset() {
-  if (confirm('Reset all progress? This cannot be undone.')) {
+  flConfirm({
+    title: 'Reset all progress?',
+    body: 'Your readiness score, category statistics and weak-question history will all be cleared. This cannot be undone.',
+    confirmLabel: 'Reset everything',
+    danger: true
+  }, function() {
     state = defaultState();
     state.disclaimerAccepted = true;
     saveState();
     refreshDashboard();
     showToast('Progress reset');
+  });
+}
+
+// Screen readers get the verdict from the live region, not from the
+// ::before tick glyph, which is CSS generated content and unreliable.
+function setAnswerVerdict(text) {
+  var card = document.getElementById('explanation-card');
+  if (!card) return;
+  var el = document.getElementById('answer-verdict');
+  if (!el) {
+    el = document.createElement('span');
+    el.id = 'answer-verdict';
+    el.className = 'fl-sr-only';
+    card.insertBefore(el, card.firstChild);
   }
+  el.textContent = text;
 }
 
 // ── Fisher-Yates shuffle ───────────────────────────────────────
@@ -263,7 +430,7 @@ function shuffleQuestionOptions(q) {
     options: shuffled.map(function(o) { return o.text; }),
     correctIndex: shuffled.findIndex(function(o) { return o.isCorrect; }),
     explanation: q.explanation,
-    _bankIdx: q._bankIdx
+    _qid: q._qid
   };
 }
 
@@ -306,7 +473,7 @@ function startTimer(totalSeconds) {
 
 function weightedSample(pool, count) {
   // Weighted sampling without replacement — high-weight Qs appear more often
-  var weights = pool.map(function(q) { return (state.qWeights && state.qWeights[q._bankIdx]) || 1; });
+  var weights = pool.map(function(q) { return (state.qWeights && state.qWeights[q._qid]) || 1; });
   var totalWeight = weights.reduce(function(a,b){ return a+b; }, 0);
   var result = [];
   var available = pool.map(function(q,i){ return { q:q, w:weights[i] }; });
@@ -337,7 +504,7 @@ function startQuiz(mode, categoryFilter) {
   if (mode === 'spaced') {
     // Only include genuinely weak questions (weight >= 2), cap at 20, weighted by weakness
     var weakPool = pool.filter(function(q) {
-      return state.qWeights && state.qWeights[q._bankIdx] >= 2;
+      return state.qWeights && state.qWeights[q._qid] >= 2;
     });
     if (weakPool.length === 0) {
       weakPool = pool; // fallback — no weak flags yet
@@ -349,6 +516,13 @@ function startQuiz(mode, categoryFilter) {
     quizQs = shuffle(pool).slice(0, Math.min(count, pool.length));
   }
   quizQuestions = quizQs.map(shuffleQuestionOptions);
+  if (!quizQuestions.length) {
+    // No questions matched (e.g. an empty or renamed category) — don't crash
+    // renderQuestion on quizQuestions[0]; return to the dashboard.
+    showView('v-dashboard');
+    refreshDashboard();
+    return;
+  }
   currentQIdx = 0;
   quizAnswers = [];
   wrongQuestions = [];
@@ -363,6 +537,8 @@ function startQuiz(mode, categoryFilter) {
 
 function renderQuestion() {
   var q = quizQuestions[currentQIdx];
+  quizSelectedIdx = null;
+  quizCommitted = false;
   var total = quizQuestions.length;
   var pct = Math.round(currentQIdx / total * 100);
 
@@ -382,52 +558,85 @@ function renderQuestion() {
     var btn = document.createElement('button');
     btn.className = 'opt-btn';
     btn.textContent = opt;
-    btn.onclick = function() { selectAnswer(i); };
+    btn.onclick = function() { selectOption(i); };
     wrap.appendChild(btn);
   });
 
   // In review mode — pre-highlight the previously wrong answer
   if (lastMode === 'review' && q._reviewSelectedIndex !== undefined) {
     var btns = wrap.querySelectorAll('.opt-btn');
-    btns.forEach(function(b) { b.classList.add('disabled'); b.onclick = null; });
+    btns.forEach(function(b) { b.classList.add('disabled'); b.disabled = true; b.onclick = null; });
     btns[q.correctIndex].classList.add('reveal-correct');
+    btns[q.correctIndex].setAttribute('aria-label', 'Correct answer: ' + btns[q.correctIndex].textContent);
     if (q._reviewSelectedIndex !== q.correctIndex) {
       btns[q._reviewSelectedIndex].classList.add('selected-incorrect');
+      btns[q._reviewSelectedIndex].setAttribute('aria-label',
+        'The answer you gave, incorrect: ' + btns[q._reviewSelectedIndex].textContent);
     }
+    setAnswerVerdict('Reviewing a question you got wrong.');
     document.getElementById('explanation-text').textContent = q.explanation;
     document.getElementById('explanation-card').style.display = 'block';
     document.getElementById('next-btn').classList.add('show');
     document.getElementById('next-btn').textContent = currentQIdx === quizQuestions.length - 1 ? 'Done' : 'Next →';
+    quizCommitted = true; // review is read-only; Next just advances
     return;
   }
 
   // Hide explanation and next
+  setAnswerVerdict('');
   document.getElementById('explanation-card').style.display = 'none';
   document.getElementById('next-btn').classList.remove('show');
 }
 
-function selectAnswer(idx) {
+// Select-then-Check: the first tap SELECTS (changeable); the Check button
+// commits. A mis-tap on the hill no longer scores against you.
+function selectOption(idx) {
+  if (quizCommitted) return;              // options locked once checked
+  quizSelectedIdx = idx;
+  document.querySelectorAll('.opt-btn').forEach(function(btn, i) {
+    btn.classList.toggle('selected', i === idx);
+  });
+  var nb = document.getElementById('next-btn');
+  nb.classList.add('show');
+  nb.textContent = 'Check answer';
+}
+
+function commitAnswer() {
+  if (quizCommitted || quizSelectedIdx === null) return;
+  quizCommitted = true;
   var q = quizQuestions[currentQIdx];
-  var buttons = document.querySelectorAll('.opt-btn');
+  var idx = quizSelectedIdx;
   var correct = idx === q.correctIndex;
 
-  // Record answer
-  quizAnswers.push({ correct: correct, category: q.category, selectedIndex: idx, correctIndex: q.correctIndex, question: q.question, options: q.options, explanation: q.explanation, qIdx: q._bankIdx });
+  // Record answer (same shape as before)
+  quizAnswers.push({ correct: correct, category: q.category, selectedIndex: idx, correctIndex: q.correctIndex, question: q.question, options: q.options, explanation: q.explanation, qid: q._qid });
   if (!correct) wrongQuestions.push(currentQIdx);
 
-  // Style buttons
-  buttons.forEach(function(btn, i) {
+  // Reveal + lock. Native `disabled`, not just the CSS class, so the
+  // answered options actually leave the tab order.
+  document.querySelectorAll('.opt-btn').forEach(function(btn, i) {
+    btn.classList.remove('selected');
     btn.classList.add('disabled');
+    btn.disabled = true;
     btn.onclick = null;
-    if (i === q.correctIndex) btn.classList.add('reveal-correct');
-    if (i === idx && !correct) btn.classList.add('selected-incorrect');
-    if (i === idx && correct) btn.classList.add('selected-correct');
+    if (i === q.correctIndex) {
+      btn.classList.add('reveal-correct');
+      btn.setAttribute('aria-label', 'Correct answer: ' + btn.textContent);
+    }
+    if (i === idx && !correct) {
+      btn.classList.add('selected-incorrect');
+      btn.setAttribute('aria-label', 'Your answer, incorrect: ' + btn.textContent);
+    }
+    if (i === idx && correct) {
+      btn.classList.add('selected-correct');
+      btn.setAttribute('aria-label', 'Your answer, correct: ' + btn.textContent);
+    }
   });
 
-  // Show explanation
+  setAnswerVerdict(correct ? 'Correct.' : 'Incorrect.');
+
   document.getElementById('explanation-text').textContent = q.explanation;
   document.getElementById('explanation-card').style.display = 'block';
-  document.getElementById('next-btn').classList.add('show');
   document.getElementById('next-btn').textContent = currentQIdx === quizQuestions.length - 1 ? 'See Results →' : 'Next →';
 }
 
@@ -443,10 +652,20 @@ function nextQuestion() {
 }
 
 function quitQuiz() {
-  clearTimer();
   if (currentQIdx > 0) {
-    if (!confirm('Quit this session? Progress will be lost.')) return;
+    flConfirm({
+      title: 'Quit this session?',
+      body: 'You are on question ' + (currentQIdx + 1) + ' of ' + quizQuestions.length +
+            '. Nothing from this session will be saved to your progress.',
+      confirmLabel: 'Quit session',
+      danger: true
+    }, function() {
+      clearTimer();
+      showView('v-dashboard');
+    });
+    return;
   }
+  clearTimer();
   showView('v-dashboard');
 }
 
@@ -476,12 +695,16 @@ function finishQuiz() {
     return;
   }
   var correct = quizAnswers.filter(function(a){ return a.correct; }).length;
-  var total = quizAnswers.length;
-  var pct = Math.round(correct / total * 100);
+  // A mock exam is scored out of ALL its questions — unanswered ones (e.g. when
+  // the 45-min timer expires) count as incorrect, otherwise a part-finished mock
+  // shows an inflated PASS and pollutes the readiness average. Other modes score
+  // out of what was answered. Guard total>0 so an empty run can't render "NaN%".
+  var total = (lastMode === 'mock') ? quizQuestions.length : quizAnswers.length;
+  var pct = total > 0 ? Math.round(correct / total * 100) : 0;
   var pass = pct >= 80;
 
   // Save to state
-  if (!isNaN(pct)) state.recentScores.push(pct);
+  if (!isNaN(pct)) state.recentScores.push({ pct: pct, total: total, mode: lastMode, at: Date.now() });
   if (state.recentScores.length > 8) state.recentScores.shift();
 
   quizAnswers.forEach(function(a) {
@@ -489,11 +712,11 @@ function finishQuiz() {
     state.catStats[a.category].total++;
     if (a.correct) state.catStats[a.category].correct++;
     // Spaced repetition: update question weight based on correctness
-    if (a.qIdx !== undefined) {
+    if (a.qid !== undefined) {
       if (!state.qWeights) state.qWeights = {};
-      var w = state.qWeights[a.qIdx] || 1;
+      var w = state.qWeights[a.qid] || 1;
       // Wrong → weight up (surfaces more); correct → weight down (surfaces less)
-      state.qWeights[a.qIdx] = a.correct
+      state.qWeights[a.qid] = a.correct
         ? Math.max(1, Math.round(w * 0.6))
         : Math.min(20, Math.round(w * 2 + 1));
     }
@@ -603,7 +826,7 @@ function reviewWrong() {
 // ── Init ───────────────────────────────────────────────────────
 // ── Category Drill ────────────────────────────────────────────
 var CAT_COLORS_DRILL = {
-  'Biology': '#5a7a30', 'Identification': '#c8a84b', 'Legislation': '#1565c0',
+  'Biology': '#5a7a30', 'Identification': '#d8b054', 'Legislation': '#1565c0',
   'Safety': '#c62828', 'Fieldcraft': '#f57f17', 'Ballistics': '#6a1b9a',
   'Meat Hygiene': '#00695c', 'Disease & Management': '#795548'
 };
@@ -671,7 +894,7 @@ function startDrill(category) {
 function launchConfetti() {
   var container = document.getElementById('pass-banner');
   if (!container) return;
-  var colors = ['#c8a84b','#5a7a30','#7adf7a','#f0c870','#1565c0','#c62828'];
+  var colors = ['#d8b054','#5a7a30','#7adf7a','#f0cc74','#1565c0','#c62828'];
   for (var i = 0; i < 18; i++) {
     (function(i) {
       setTimeout(function() {
@@ -691,12 +914,26 @@ function launchConfetti() {
 }
 
 // ── Quick Reference tab switching ─────────────────────────────
-function switchRefTab(section) {
+// Roving tabindex: only the selected tab is in the tab order, and the
+// arrow keys move between tabs (WAI-ARIA tabs pattern). Hidden panels
+// are display:none, so they drop out of the accessibility tree too.
+function switchRefTab(section, moveFocus) {
   document.querySelectorAll('.ref-section-block').forEach(function(el){ el.style.display = 'none'; });
-  document.querySelectorAll('.ref-tab').forEach(function(el){ el.classList.remove('active'); });
   var target = document.getElementById('ref-' + section);
   if (target) target.style.display = 'block';
-  document.querySelectorAll('.ref-tab[data-section="' + section + '"]').forEach(function(el){ el.classList.add('active'); });
+  document.querySelectorAll('.ref-tab[data-section]').forEach(function(el) {
+    var on = el.dataset.section === section;
+    el.classList.toggle('active', on);
+    el.setAttribute('aria-selected', on ? 'true' : 'false');
+    el.tabIndex = on ? 0 : -1;
+    if (on) {
+      if (moveFocus) el.focus();
+      // The strip is overflow-x:auto with the scrollbar hidden; without this
+      // the End key (or a tap on a half-visible pill) selects a tab that
+      // stays 10px on-screen. block:'nearest' avoids any vertical jump.
+      try { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (err) {}
+    }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -706,6 +943,21 @@ document.addEventListener('DOMContentLoaded', function() {
   document.querySelectorAll('.ref-tab[data-section]').forEach(function(btn) {
     btn.addEventListener('click', function() { switchRefTab(this.dataset.section); });
   });
+  var refTabs = document.getElementById('ref-tabs');
+  if (refTabs) {
+    refTabs.addEventListener('keydown', function(e) {
+      var step = { ArrowRight: 1, ArrowLeft: -1, Home: 'first', End: 'last' }[e.key];
+      if (step === undefined) return;
+      var tabs = Array.prototype.slice.call(refTabs.querySelectorAll('.ref-tab[data-section]'));
+      var i = tabs.indexOf(document.activeElement);
+      if (i === -1 || !tabs.length) return;
+      e.preventDefault();
+      var next = step === 'first' ? 0
+               : step === 'last'  ? tabs.length - 1
+               : (i + step + tabs.length) % tabs.length;
+      switchRefTab(tabs[next].dataset.section, true);
+    });
+  }
   // Show spaced badge if any question has weight >= 2
   (function() {
     var badge = document.getElementById('spaced-badge');
@@ -721,8 +973,52 @@ document.addEventListener('DOMContentLoaded', function() {
   // else disclaimer view is already active
 });
 
-// Assign bank indices to every question (used by spaced repetition)
-QUESTION_BANK.forEach(function(q, i) { q._bankIdx = i; });
+// ── Stable question identity ───────────────────────────────────
+// Spaced-repetition weights used to be keyed by a question's raw
+// QUESTION_BANK index, so inserting, deleting or reordering a single
+// question silently re-pointed every saved weight at a different
+// question. Key on a hash of the question text instead: stable across
+// bank edits, and only a question whose wording actually changed
+// loses its history.
+function questionId(text) {
+  var h = 5381;
+  for (var i = 0; i < text.length; i++) {
+    h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;   // djb2-xor
+  }
+  return 'q' + h.toString(36);
+}
+
+// Bank indices are still handy for debugging; _qid is what persists.
+// The seen[] guard means a hash collision can never make two
+// questions share one weight.
+(function assignQuestionIds() {
+  var seen = {};
+  QUESTION_BANK.forEach(function(q, i) {
+    q._bankIdx = i;
+    var id = questionId(q.question);
+    if (seen[id]) { var n = 2; while (seen[id + '_' + n]) n++; id = id + '_' + n; }
+    seen[id] = true;
+    q._qid = id;
+  });
+}());
+
+// One-time migration of saves written before _qid existed. Legacy keys
+// are bare integers; they are resolved against the bank as shipped,
+// which is the same ordering those indices were written under.
+(function migrateQWeights() {
+  if (!state.qWeights || typeof state.qWeights !== 'object') { state.qWeights = {}; return; }
+  var legacy = Object.keys(state.qWeights).filter(function(k) { return /^\d+$/.test(k); });
+  if (!legacy.length) return;
+  legacy.forEach(function(k) {
+    var w = state.qWeights[k];
+    var q = QUESTION_BANK[Number(k)];
+    delete state.qWeights[k];
+    if (q && q._qid && typeof w === 'number' && isFinite(w)) {
+      state.qWeights[q._qid] = Math.max(state.qWeights[q._qid] || 0, w);
+    }
+  });
+  saveState();
+}());
 
 function showDisclaimer() {
   showView('v-disclaimer');
