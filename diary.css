@@ -849,7 +849,7 @@ body.in-select-mode .entries{padding-bottom:92px;}
 /* ── Pin-drop full-screen map ── */
 .pinmap-overlay{display:none;position:fixed;inset:0;z-index:600;flex-direction:column;background:#1a1a1a;}
 .pinmap-overlay.open{display:flex;}
-.pinmap-topbar{position:absolute;top:0;left:0;right:0;z-index:720;background:linear-gradient(160deg,#0f1e0a,#0a1506);padding:14px 16px 12px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 16px rgba(0,0,0,0.4);}
+.pinmap-topbar{position:absolute;top:0;left:0;right:0;z-index:720;background:linear-gradient(160deg,#0f1e0a,#0a1506);padding:calc(14px + env(safe-area-inset-top,0px)) 16px 12px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 16px rgba(0,0,0,0.4);}
 .pinmap-back{width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;color:white;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .pinmap-title{font-family:'Playfair Display',serif;font-size:16px;color:white;flex:1;}
 .pinmap-sub{font-size:10px;color:rgba(255,255,255,0.6);margin-top:1px;}
@@ -858,13 +858,18 @@ body.in-select-mode .entries{padding-bottom:92px;}
    map (they floated over the search topbar — seen in the G3 preview shots)
    and seat the zoom control below the bar. */
 #pin-map-div{position:relative;z-index:0;}
-#pinmap-overlay .leaflet-top{top:70px;}
+#pinmap-overlay .leaflet-top{top:calc(70px + env(safe-area-inset-top,0px));}
 .map-fs-btn{width:34px;height:34px;display:flex;align-items:center;justify-content:center;border:1.5px solid #e8e4de;border-radius:10px;background:white;color:var(--bark);cursor:pointer;flex-shrink:0;}
 /* height:100vh is load-bearing: the base rule sets height:248px, and for a
    fixed box with top+bottom+height all set, height wins and bottom is ignored —
    so without this the container stays 248px tall and the bottom tray floats up. */
 #cull-map-container.map-fullscreen{position:fixed!important;inset:0;height:100vh;z-index:9998;background:white;}
 #cull-map-container.map-fullscreen #cull-map-div{height:100vh!important;}
+/* iPhone (2026-07-27): with viewport-fit=cover the fullscreen map runs under the
+   status bar. The tiles SHOULD (edge-to-edge, like any map app) - the controls
+   must not. Shift the floating controls and Leaflet's top corners, not the map. */
+#cull-map-container.map-fullscreen .cullmap-ctrl{top:calc(12px + env(safe-area-inset-top,0px));}
+#cull-map-container.map-fullscreen .leaflet-top{top:env(safe-area-inset-top,0px);}
 .map-fs-close{position:absolute;top:12px;right:12px;z-index:9999;width:40px;height:40px;border-radius:50%;background:white;border:1.5px solid #e0d8ce;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.25);font-size:18px;color:var(--bark);}
 /* Fullscreen "workbench": toggleMapFullscreen moves the data controls
    (Culls/Sightings/Both, Pins/Heat, species chips) onto the map as a bottom tray,
@@ -875,7 +880,7 @@ body.in-select-mode .entries{padding-bottom:92px;}
 .map-fs-btn.is-exit{background:var(--forest);color:#fff;border-color:var(--forest);}
 .layer-tog{position:absolute;top:72px;right:12px;z-index:701;display:flex;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.35);border:1.5px solid rgba(255,255,255,0.12);}
 /* Pin overlay: keep Map/Satellite below the top bar so search results (dropdown) aren’t covered */
-.pinmap-overlay > .layer-tog{z-index:710;}
+.pinmap-overlay > .layer-tog{z-index:710;top:calc(72px + env(safe-area-inset-top,0px));}
 .lt-b{padding:7px 14px;font-size:11px;font-weight:700;cursor:pointer;border:none;font-family:'DM Sans',sans-serif;letter-spacing:0.2px;}
 .lt-b.off{background:rgba(14,42,8,0.88);color:rgba(255,255,255,0.6);backdrop-filter:blur(8px);}
 .lt-b.on{background:white;color:var(--bark);box-shadow:inset 0 0 0 1px rgba(0,0,0,0.06);}
@@ -911,10 +916,10 @@ body.in-select-mode .entries{padding-bottom:92px;}
    zoom out. left:56px clears the control column, and pointer-events:none means
    text that cannot be clicked can never again swallow a tap meant for
    something behind it. */
-.pinmap-fallback-msg{display:none;position:absolute;top:118px;left:56px;right:12px;z-index:699;pointer-events:none;padding:8px 10px;border-radius:10px;background:rgba(30,22,8,0.92);border:1px solid rgba(216,176,84,0.45);color:#f0e4c8;font-size:11px;line-height:1.45;box-shadow:0 2px 12px rgba(0,0,0,0.35);}
+.pinmap-fallback-msg{display:none;position:absolute;top:calc(118px + env(safe-area-inset-top,0px));left:56px;right:12px;z-index:699;pointer-events:none;padding:8px 10px;border-radius:10px;background:rgba(30,22,8,0.92);border:1px solid rgba(216,176,84,0.45);color:#f0e4c8;font-size:11px;line-height:1.45;box-shadow:0 2px 12px rgba(0,0,0,0.35);}
 .pinmap-hint{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:702;margin-top:-56px;text-align:center;}
 .pinmap-hint-txt{background:rgba(14,42,8,0.8);color:white;font-size:11px;font-weight:600;padding:6px 14px;border-radius:12px;display:inline-block;backdrop-filter:blur(4px);}
-.pinmap-confirm{position:absolute;bottom:0;left:0;right:0;z-index:700;background:white;padding:12px 16px 28px;box-shadow:0 -4px 24px rgba(0,0,0,0.15);max-height:55vh;overflow-y:auto;}
+.pinmap-confirm{position:absolute;bottom:0;left:0;right:0;z-index:700;background:white;padding:12px 16px max(28px, calc(12px + env(safe-area-inset-bottom,0px)));box-shadow:0 -4px 24px rgba(0,0,0,0.15);max-height:55vh;overflow-y:auto;}
 .pinmap-manual{margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--stone);}
 .pinmap-manual-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-bottom:6px;}
 .pinmap-manual-row{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;}
@@ -2447,7 +2452,7 @@ body.in-select-mode .entries{padding-bottom:92px;}
 }
 .di-lightbox-close{
   position:absolute;
-  top:20px;
+  top:calc(20px + env(safe-area-inset-top,0px));
   right:20px;
   background:rgba(255,255,255,0.15);
   border:none;
@@ -2918,7 +2923,7 @@ body.in-select-mode .entries{padding-bottom:92px;}
    containment trick, cf. #stands-map-div) so the topbar/panel always win;
    then push the zoom control below the absolute topbar so it stays usable. */
 #gmap-div{width:100%;height:100%;position:relative;z-index:0;}
-#gmap-overlay .leaflet-top{top:68px;}
+#gmap-overlay .leaflet-top{top:calc(68px + env(safe-area-inset-top,0px));}
 /* AE: 50%/50% is the middle of the SCREEN, and the bottom third of the screen
    is the control panel — so the sight pointed at something behind it. JS
    measures the chrome and writes the delta into these two properties; the
