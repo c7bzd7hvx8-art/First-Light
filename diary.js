@@ -14975,19 +14975,26 @@ function flMapCtrlClampDelta(bandPx, frameTop, gapPx) {
   return d > 0 ? d : 0;
 }
 
-var flSaTopProbe = null;
 function flSafeTopPx() {
-  if (!flSaTopProbe) {
-    flSaTopProbe = document.createElement('div');
-    flSaTopProbe.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none;';
-    document.body.appendChild(flSaTopProbe);
-  }
-  return flSaTopProbe.offsetHeight || 0;
+  // Measured off the status-bar scrim (body::after, diary.css) rather than a
+  // JS-injected probe div: iOS resolves env() reliably in STYLESHEETS but not
+  // in inline styles - the probe read 0 on a confirmed-12.50 iPhone while the
+  // stylesheet scrim rendered at full height on the same screen (owner
+  // screenshots, 2026-07-27). The scrim ships in the same stylesheet as the
+  // rules this clamp exists to cooperate with, so the two cannot drift.
+  var h = parseFloat(getComputedStyle(document.body, '::after').height);
+  return isNaN(h) ? 0 : h;
 }
 
+var flClampWasActive = false;
 function flClampInlineMapCtrls() {
   var band = flSafeTopPx();
-  if (!band) return;
+  // Zero band normally means "nothing to do" (desktop, non-notched phones) —
+  // but after a rotation to landscape the inset COLLAPSES to zero while the
+  // last clamp's transforms are still applied, so one clearing pass must run
+  // before going quiet again (caught live in the desktop simulation).
+  if (!band && !flClampWasActive) return;
+  flClampWasActive = band > 0;
   var jobs = [];
   var sw = document.getElementById('stands-map-wrap');
   if (sw && !sw.classList.contains('fullscreen') && sw.offsetParent && sw.firstElementChild) {
@@ -15005,8 +15012,9 @@ function flClampInlineMapCtrls() {
     var frame = jobs[i][0];
     var d = flMapCtrlClampDelta(band, frame.getBoundingClientRect().top, 8);
     var els = frame.querySelectorAll(jobs[i][1]);
+    var want = d ? 'translateY(' + d + 'px)' : '';
     for (var j = 0; j < els.length; j++) {
-      els[j].style.transform = d ? 'translateY(' + d + 'px)' : '';
+      if (els[j].style.transform !== want) els[j].style.transform = want;
     }
   }
 }
