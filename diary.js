@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.52';
+const FL_JS_BUILD = '12.54';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -15000,10 +15000,8 @@ function flClampInlineMapCtrls() {
   if (!band && !flClampWasActive) return;
   flClampWasActive = band > 0;
   var jobs = [];
-  var sw = document.getElementById('stands-map-wrap');
-  if (sw && !sw.classList.contains('fullscreen') && sw.offsetParent && sw.firstElementChild) {
-    jobs.push([sw.firstElementChild, '.layer-tog, .stnd-map-fs, .leaflet-top']);
-  }
+  // (stands map controls are pinned by flInitStandsCtlPin's observers now -
+  // keeping them out of this translate-clamp so the two can never fight)
   var gw = document.getElementById('sight-map-wrap');
   if (gw && gw.offsetParent && gw.firstElementChild) {
     jobs.push([gw.firstElementChild, '.layer-tog, .leaflet-top']);
@@ -15029,6 +15027,40 @@ function flQueueClamp() {
   flClampQueued = true;
   requestAnimationFrame(function () { flClampQueued = false; flClampInlineMapCtrls(); });
 }
+// ── Stands map control pinning (2026-07-27) ──────────────────────────────
+// Two JS clamp generations failed on iOS (inline env(), then a band the
+// browser would not report). This version measures NOTHING in JS: the
+// sentinel's CSS places it one status-bar-height above the card top, and an
+// IntersectionObserver only answers "has it left the top of the screen?" -
+// the pinned positions themselves are stylesheet env() rules (.ctl-pinned).
+// Every ingredient is individually proven on the owner's phone.
+var flStandsPinTopAbove = false;
+var flStandsPinFrameVis = false;
+function flStandsPinApply() {
+  var wrap = document.getElementById('stands-map-wrap');
+  if (!wrap) return;
+  wrap.classList.toggle('ctl-pinned',
+    flStandsPinTopAbove && flStandsPinFrameVis && !wrap.classList.contains('fullscreen'));
+}
+function flInitStandsCtlPin() {
+  if (!('IntersectionObserver' in window)) return;
+  var wrap = document.getElementById('stands-map-wrap');
+  var sent = document.getElementById('stnd-pin-sentinel');
+  var frame = wrap && wrap.firstElementChild;
+  if (!wrap || !sent || !frame) return;
+  new IntersectionObserver(function (entries) {
+    for (var i = 0; i < entries.length; i++) {
+      flStandsPinTopAbove = !entries[i].isIntersecting && entries[i].boundingClientRect.top < 0;
+    }
+    flStandsPinApply();
+  }).observe(sent);
+  new IntersectionObserver(function (entries) {
+    for (var i = 0; i < entries.length; i++) flStandsPinFrameVis = entries[i].isIntersecting;
+    flStandsPinApply();
+  }).observe(frame);
+}
+flInitStandsCtlPin();
+
 // capture:true catches scrolls of the inner .stats-scroll containers too.
 document.addEventListener('scroll', flQueueClamp, { capture: true, passive: true });
 window.addEventListener('resize', flQueueClamp);
@@ -15811,6 +15843,7 @@ function flToggleStandsMapFull(fromPop) {
   if (!wrap) return;
   var on = !wrap.classList.contains('fullscreen');
   wrap.classList.toggle('fullscreen', on);
+  flStandsPinApply(); // fullscreen and pinning are mutually exclusive; re-evaluate
   document.body.style.overflow = on ? 'hidden' : '';
   var btn = document.getElementById('stnd-map-expand');
   if (btn) {
