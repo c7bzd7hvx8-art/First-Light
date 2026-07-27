@@ -82,6 +82,10 @@ import {
 // (two strings, but cheap to update; see PROJECT-LOG on the error-logger
 // rollout).
 const FL_APP_VERSION = '7.402';
+// Payload build tag - proves which diary.js actually reached the device (the
+// SW version alone cannot: sw.js is always fetched fresh while the precache
+// could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
+const FL_JS_BUILD = '12.52';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -18920,7 +18924,10 @@ function renderSettingsAppRows() {
     // launch-day patches shipped under one FL version. Ask the controlling
     // SW which build is actually serving this page and show both.
     flQuerySwVersion().then(function (swv) {
-      if (swv && v.isConnected) v.textContent = 'v' + FL_APP_VERSION + ' \u00b7 SW ' + swv;
+      if (swv && v.isConnected) {
+        v.textContent = 'v' + FL_APP_VERSION + ' \u00b7 SW ' + swv + ' \u00b7 js ' + FL_JS_BUILD;
+        if (swv !== FL_JS_BUILD) v.textContent += ' (mismatch)';
+      }
     });
   }
   var s = document.getElementById('offline-sync-value');

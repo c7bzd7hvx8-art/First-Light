@@ -5,7 +5,7 @@
 // the cache strings (`v7.34`) because they were three separate literals.
 // Bumping triggers the `activate` step to sweep old caches and reload clients
 // via the `controllerchange` path in diary.js.
-const SW_VERSION = '12.51';
+const SW_VERSION = '12.52';
 const STATIC_CACHE  = 'first-light-static-v'  + SW_VERSION;
 const RUNTIME_CACHE = 'first-light-runtime-v' + SW_VERSION;
 
@@ -296,7 +296,14 @@ async function cacheAddAll(cache, urls) {
   const failed = [];
   await Promise.all(urls.map(async url => {
     try {
-      await cache.add(url);
+      // cache: 'reload' (2026-07-27): plain cache.add() fetches THROUGH the
+      // HTTP cache, and GitHub Pages' CDN serves stale files for up to ten
+      // minutes after an upload. The SW update check always fetches sw.js
+      // itself fresh (per spec), so a quick update after a deploy produced a
+      // new cache VERSION wrapping old file BYTES - five launch-day patches
+      // "arrived" on the owner's phone as a fresh SW number over stale code.
+      // Forcing network here makes the versioned precache mean what it says.
+      await cache.add(new Request(url, { cache: 'reload' }));
     } catch (e) {
       failed.push(url);
       console.warn('[SW] Failed to cache:', url, e);
