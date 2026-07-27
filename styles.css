@@ -2460,3 +2460,10 @@ html.fl-standalone .fl-mi-install { display: none !important; }
 @media (prefers-reduced-motion: reduce){
   .skip-link{transition:none;}
 }
+
+/* Status-bar scrim (2026-07-27): with viewport-fit=cover, page content scrolls
+   under the iPhone status bar / Dynamic Island. Native apps put a frosted band
+   there so content visibly passes behind system chrome - this is that band.
+   height:env(...) is 0 on non-notched devices, so it does not exist there.
+   pointer-events:none - it never eats a tap; controls beneath stay usable. */
+body::after{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top,0px);z-index:11000;pointer-events:none;background:rgba(10,20,6,0.55);-webkit-backdrop-filter:blur(14px) saturate(1.2);backdrop-filter:blur(14px) saturate(1.2);}

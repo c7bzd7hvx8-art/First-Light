@@ -3751,3 +3751,10 @@ body.in-select-mode .entries{padding-bottom:92px;}
    until it syncs — same gold family as the app's other status accents. */
 .stnd-pending{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:9px;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;background:rgba(216,176,84,0.18);color:#d8b054;border:1px solid rgba(216,176,84,0.4);vertical-align:middle;white-space:nowrap;}
 .stnd-row-name .stnd-pending{margin-left:4px;}
+
+/* Status-bar scrim (2026-07-27): with viewport-fit=cover, page content scrolls
+   under the iPhone status bar / Dynamic Island. Native apps put a frosted band
+   there so content visibly passes behind system chrome - this is that band.
+   height:env(...) is 0 on non-notched devices, so it does not exist there.
+   pointer-events:none - it never eats a tap; controls beneath stay usable. */
+body::after{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top,0px);z-index:11000;pointer-events:none;background:rgba(10,20,6,0.55);-webkit-backdrop-filter:blur(14px) saturate(1.2);backdrop-filter:blur(14px) saturate(1.2);}
