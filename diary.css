@@ -875,7 +875,7 @@ body.in-select-mode .entries{padding-bottom:92px;}
    (Culls/Sightings/Both, Pins/Heat, species chips) onto the map as a bottom tray,
    so the fullscreen map has every option to hand. Base map + exit float top-right;
    the fullscreen button becomes a filled forest "exit" while fullscreen. */
-.cullmap-fs-tray{position:absolute;left:0;right:0;bottom:0;z-index:9997;background:rgba(255,255,255,0.97);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:18px 18px 0 0;box-shadow:0 -6px 24px rgba(0,0,0,0.18);padding:6px 0 calc(14px + env(safe-area-inset-bottom));}
+.cullmap-fs-tray{position:absolute;left:0;right:0;bottom:0;z-index:9997;background:rgba(255,255,255,0.97);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:18px 18px 0 0;box-shadow:0 -6px 24px rgba(0,0,0,0.18);padding:6px 0 calc(14px + env(safe-area-inset-bottom,0px));}
 .cullmap-fs-tray #cullmap-filter{border-bottom:none;}
 .map-fs-btn.is-exit{background:var(--forest);color:#fff;border-color:var(--forest);}
 .layer-tog{position:absolute;top:72px;right:12px;z-index:701;display:flex;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.35);border:1.5px solid rgba(255,255,255,0.12);}
@@ -2749,7 +2749,7 @@ body.in-select-mode .entries{padding-bottom:92px;}
 .stnd-map-showall{display:flex;align-items:center;justify-content:center;width:max-content;max-width:100%;margin:7px auto 0;padding:9px 15px;min-height:40px;box-sizing:border-box;border-radius:20px;border:1px solid rgba(216,176,84,0.42);background:rgba(20,30,12,0.9);color:#f0cc74;font-size:11.5px;font-weight:700;font-family:'DM Sans',sans-serif;line-height:1.25;text-align:center;cursor:pointer;-webkit-tap-highlight-color:transparent;}
 .stnd-map-showall:active{background:rgba(216,176,84,0.18);}
 .stnd-map-fs .fs-close{display:none;}
-#stands-map-wrap.fullscreen{display:flex !important;flex-direction:column;position:fixed;inset:0;z-index:4000;margin:0;background:#0a1406;padding:calc(10px + env(safe-area-inset-top)) 12px calc(8px + env(safe-area-inset-bottom));}
+#stands-map-wrap.fullscreen{display:flex !important;flex-direction:column;position:fixed;inset:0;z-index:4000;margin:0;background:#0a1406;padding:calc(10px + env(safe-area-inset-top,0px)) 12px calc(8px + env(safe-area-inset-bottom,0px)) !important;}
 #stands-map-wrap.fullscreen > div:first-child{flex:1;display:flex;flex-direction:column;min-height:0;}
 #stands-map-wrap.fullscreen #stands-map-div{height:100% !important;min-height:0;flex:1;}
 #stands-map-wrap.fullscreen .stnd-map-fs .fs-open{display:none;}
@@ -2929,7 +2929,7 @@ body.in-select-mode .entries{padding-bottom:92px;}
    measures the chrome and writes the delta into these two properties; the
    static centring below is what shows before (and if) that ever runs. */
 .gmap-cross{position:absolute;top:50%;left:50%;transform:translate(calc(-50% + var(--gmap-cross-dx,0px)),calc(-50% + var(--gmap-cross-dy,0px)));z-index:702;pointer-events:none;}
-.gmap-panel{position:absolute;bottom:0;left:0;right:0;z-index:700;background:linear-gradient(160deg,#0f1e0a,#0a1506);padding:12px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 -4px 24px rgba(0,0,0,0.35);}
+.gmap-panel{position:absolute;bottom:0;left:0;right:0;z-index:700;background:linear-gradient(160deg,#0f1e0a,#0a1506);padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px));box-shadow:0 -4px 24px rgba(0,0,0,0.35);}
 .gmap-readout{display:flex;align-items:center;gap:10px;}
 .gmap-readout-txt{flex:1;min-width:0;font-size:12px;color:#f0e4c8;font-family:'DM Mono',monospace;line-height:1.4;}
 .gmap-locate{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.18);color:white;font-size:15px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;}
@@ -3772,6 +3772,11 @@ body::after{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-
    pin line is the literal viewport top and behaviour is unchanged until the
    card is scrolled right off it - at which point pinning is an improvement
    there too. */
+/* Positioning base for the pin sentinel. In the STYLESHEET, never inline:
+   an inline position:relative on the wrap out-ranks .fullscreen's
+   position:fixed and turns the expand button into a map-shrinker (the
+   2026-07-27 regression). Here, #id.class (1,1,0) beats #id (1,0,0). */
+#stands-map-wrap{position:relative;}
 /* > #id (2 ids) out-ranks the #stands-map-wrap > div containment rule (id+type),
    which was silently winning position over a lone #id selector. */
 #stands-map-wrap > #stnd-pin-sentinel{position:absolute;left:0;top:calc(-9px - env(safe-area-inset-top,0px));width:1px;height:1px;visibility:hidden;pointer-events:none;}

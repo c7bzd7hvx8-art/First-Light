@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.54';
+const FL_JS_BUILD = '12.58';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -15565,14 +15565,35 @@ function standMarkerIcon(score, isSelected, mini, name, facingDeg) {
     return L.divIcon({ html: mhtml, iconSize: [msz, msz], iconAnchor: [msz / 2, msz / 2], popupAnchor: [0, -msz / 2 - 1], className: '' });
   }
   var txt = score == null ? '–' : String(score);
-  var sz = isSelected ? 34 : 30;
-  var shadow = isSelected ? 'box-shadow:0 0 0 3px #f0cc74,0 2px 7px rgba(0,0,0,0.5);' : 'box-shadow:0 1px 4px rgba(0,0,0,0.35);';
+  // High-seat silhouette marker (owner mockup pick 'B without the ladder',
+  // 2026-07-27): dark cabin + roof + stilts with a white halo so it reads on
+  // satellite and OS tiles alike; the score rides as a band-coloured badge on
+  // the roof shoulder. Same information as the old bubble - score, band
+  // colour, selection, facing, name - different body. Anchored on the CABIN
+  // centre (~41% down), where the old bubble centre sat, so every seat stays
+  // visually on its spot.
+  var W = isSelected ? 44 : 40;
+  var H = Math.round(W * 46 / 40);
+  var ay = Math.round(H * 0.41);
+  var badgeTxt = band === '#d8b054' ? '#1a1206' : '#fff';
+  var svg = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 40 46" style="display:block;overflow:visible;'
+    + (isSelected ? 'filter:drop-shadow(0 0 4px rgba(240,204,116,0.9));' : 'filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4));') + '">'
+    + '<g stroke="#ffffff" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" fill="none">'
+    + '<path d="M11 27 L7 44 M29 27 L33 44 M12.5 33.5 L27.5 33.5 M11 39.5 L29 39.5"/>'
+    + '<path d="M3 11 L20 2 L37 11 Z"/><rect x="7" y="11" width="26" height="16" rx="3.5"/></g>'
+    + '<path d="M11 27 L7 44 M29 27 L33 44 M12.5 33.5 L27.5 33.5 M11 39.5 L29 39.5" stroke="#2d3a1f" stroke-width="2.1" fill="none" stroke-linecap="round"/>'
+    + '<path d="M3 11 L20 2 L37 11 Z" fill="#2d3a1f"/>'
+    + '<rect x="7" y="11" width="26" height="16" rx="3.5" fill="#2d3a1f"/>'
+    + '<rect x="11.5" y="15" width="17" height="5.5" rx="1.8" fill="rgba(240,228,192,0.3)"/>'
+    + '<circle cx="32" cy="9" r="9" fill="' + band + '" stroke="' + (isSelected ? '#f0cc74' : '#ffffff') + '" stroke-width="' + (isSelected ? 3 : 2.4) + '"/>'
+    + '<text x="32" y="12.4" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9.8" font-weight="700" fill="' + badgeTxt + '">' + txt + '</text>'
+    + '</svg>';
   // Name pill (round 24 clarification — owner: "shall these not have their
   // names?"): the seat's short name rides under the badge at badge zoom,
   // centred and free to be wider than the circle. Hidden with the dots.
   // South-sector facings (135–225°) point the tick at the pill's spot — drop
   // the pill 9 px so the pointer stays visible instead of hiding behind it.
-  var lblTop = (facingDeg != null && facingDeg >= 135 && facingDeg <= 225) ? sz + 11 : sz + 2;
+  var lblTop = (facingDeg != null && facingDeg >= 135 && facingDeg <= 225) ? H + 9 : H + 1;
   var lbl = name
     ? '<div class="fl-lbl-seat' + (isSelected ? ' fl-lbl-pri' : '') + '" style="position:absolute;top:' + lblTop + 'px;left:50%;transform:translateX(-50%);'
       + 'background:rgba(10,20,6,0.82);color:#f0e4c0;font:700 9px/1 \'DM Sans\',sans-serif;'
@@ -15582,18 +15603,20 @@ function standMarkerIcon(score, isSelected, mini, name, facingDeg) {
   // centre (= the badge centre), carrying a triangle docked just above the
   // rim — rotate(0) points north, matching compass degrees. SVG so the
   // triangle can take a dark stroke and stay visible on pale tiles.
+  // Chevron facing pointer (owner pick from the mockup rounds, 2026-07-27):
+  // drawn INSIDE the marker svg, orbiting the cabin centre. Dark understroke +
+  // white stroke - line-art stays legible over scent cones where fills turned
+  // to mud (the searchlight lesson), and it reads as a daytime "looks that
+  // way", not a lamp. Appended after the badge so a NE bearing rides over it.
   var tick = (facingDeg != null)
-    ? '<div style="position:absolute;left:0;top:0;width:' + sz + 'px;height:' + sz + 'px;'
-      + 'transform:rotate(' + facingDeg + 'deg);pointer-events:none;">'
-      + '<svg width="12" height="10" viewBox="0 0 12 10" style="position:absolute;top:-9px;left:50%;margin-left:-6px;display:block;">'
-      + '<polygon points="6,0 11,9 1,9" fill="#fff" stroke="rgba(0,0,0,0.45)" stroke-width="1"/></svg></div>'
+    ? '<g transform="rotate(' + facingDeg + ' 20 19)">'
+      + '<path d="M13 -3 L20 -10 L27 -3" fill="none" stroke="#2d3a1f" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>'
+      + '<path d="M13 -3 L20 -10 L27 -3" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+      + '</g>'
     : '';
-  var html = '<div style="position:relative;width:' + sz + 'px;height:' + sz + 'px;">'
-    + '<div style="width:' + sz + 'px;height:' + sz + 'px;border-radius:50%;background:' + band
-    + ';border:2.5px solid #fff;' + shadow + 'display:flex;align-items:center;'
-    + 'justify-content:center;font:700 ' + (isSelected ? 13 : 12) + 'px/1 \'DM Sans\',sans-serif;color:#fff;">' + txt + '</div>'
-    + tick + lbl + '</div>';
-  return L.divIcon({ html: html, iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2], popupAnchor: [0, -sz / 2 - 1], className: '' });
+  var html = '<div style="position:relative;width:' + W + 'px;height:' + H + 'px;">'
+    + svg.replace('</svg>', tick + '</svg>') + lbl + '</div>';
+  return L.divIcon({ html: html, iconSize: [W, H], iconAnchor: [W / 2, ay], popupAnchor: [0, -ay - 2], className: '' });
 }
 
 /** Short map label for a stand: the bit before " – "/" - ", capped at 12 chars. */
