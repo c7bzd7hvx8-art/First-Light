@@ -4265,7 +4265,7 @@ if ('serviceWorker' in navigator) {
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
             // New version available — show refresh prompt (no inline onclick: CSP script-src blocks it)
             var toast = document.createElement('div');
-            toast.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(30,50,20,0.96);color:white;font-size:13px;font-weight:600;padding:12px 18px;border-radius:14px;border:1px solid rgba(200,168,75,0.3);z-index:9999;display:flex;align-items:center;gap:10px;box-shadow:0 6px 24px rgba(0,0,0,0.4);max-width:320px;';
+            toast.style.cssText = 'position:fixed;bottom:calc(80px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:rgba(30,50,20,0.96);color:white;font-size:13px;font-weight:600;padding:12px 18px;border-radius:14px;border:1px solid rgba(200,168,75,0.3);z-index:9999;display:flex;align-items:center;gap:10px;box-shadow:0 6px 24px rgba(0,0,0,0.4);max-width:320px;';
             var toastMsg = document.createElement('span');
             toastMsg.textContent = 'New version available';
             var toastBtn = document.createElement('button');

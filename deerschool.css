@@ -27,7 +27,7 @@ a:focus-visible,
 }
 
 /* ── Toast ── */
-.toast{position:fixed;top:24px;left:50%;transform:translateX(-50%);background:#2d3a1f;color:white;font-size:12px;font-weight:600;padding:10px 18px;border-radius:20px;z-index:9999;opacity:0;transition:opacity 0.3s;pointer-events:none;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,0.3);}
+.toast{position:fixed;top:calc(24px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);background:#2d3a1f;color:white;font-size:12px;font-weight:600;padding:10px 18px;border-radius:20px;z-index:9999;opacity:0;transition:opacity 0.3s;pointer-events:none;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,0.3);}
 .toast.show{opacity:1;}
 
 /* ── DISCLAIMER ── */

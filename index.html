@@ -71,7 +71,7 @@
 <div class="bg-texture" aria-hidden="true" role="presentation"></div>
 
 <!-- Pull to refresh indicator -->
-<div id="ptr-indicator" style="display:none;position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(26,46,26,0.95);border-radius:0 0 20px 20px;padding:8px 18px;font-size:var(--fs-sm);font-weight:600;color:#d8b054;display:none;align-items:center;gap:8px;border:1px solid rgba(216,176,84,0.2);border-top:none;box-shadow:0 4px 16px rgba(0,0,0,0.4);">
+<div id="ptr-indicator" style="display:none;position:fixed;top:env(safe-area-inset-top,0px);left:50%;transform:translateX(-50%);z-index:9999;background:rgba(26,46,26,0.95);border-radius:0 0 20px 20px;padding:8px 18px;font-size:var(--fs-sm);font-weight:600;color:#d8b054;display:none;align-items:center;gap:8px;border:1px solid rgba(216,176,84,0.2);border-top:none;box-shadow:0 4px 16px rgba(0,0,0,0.4);">
   <svg id="ptr-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none" style="transition:transform 0.2s;" aria-hidden="true">
     <path d="M8 2v9M4 8l4 4 4-4" stroke="#d8b054" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>

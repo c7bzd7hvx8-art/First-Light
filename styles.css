@@ -2032,7 +2032,7 @@
   #lightbox-counter { color:rgba(255,255,255,0.6); font-size:var(--fs-xs); margin-top:4px; }
   .lightbox-nav { display:flex; gap:24px; margin-top:20px; }
   .lightbox-btn { background:rgba(255,255,255,0.12); border:none; color:white; font-size:var(--fs-4xl); width:48px; height:48px; border-radius:var(--r-full); cursor:pointer; display:flex; align-items:center; justify-content:center; }
-  .lightbox-close { position:absolute; top:16px; right:16px; background:rgba(255,255,255,0.12); border:none; color:white; font-size:var(--fs-3xl); width:40px; height:40px; border-radius:var(--r-full); cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .lightbox-close { position:absolute; top:calc(16px + env(safe-area-inset-top,0px)); right:16px; background:rgba(255,255,255,0.12); border:none; color:white; font-size:var(--fs-3xl); width:40px; height:40px; border-radius:var(--r-full); cursor:pointer; display:flex; align-items:center; justify-content:center; }
 .loc-preset {
   padding:9px 6px;
   border:1px solid #e8e8e8;
