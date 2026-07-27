@@ -7398,6 +7398,7 @@ var flSightMapBand = 'all';    // 'all' | 'dawn' | 'day' | 'dusk' | 'night'
 var flSightMapMonth = 'all';   // 'all' | 1..12 (calendar month of seen_at)
 
 function renderSightMap() {
+  flQueueClamp();
   var wrap = document.getElementById('sight-map-wrap');
   if (!wrap) return;
   var list = (sightView === 'list') ? filteredSightingsForView() : [];
@@ -10675,6 +10676,7 @@ function cullMapEmptyHtml(state, showCulls, showSights) {
 }
 
 function renderCullMapPins() {
+  flQueueClamp();
   if (!cullMap) return;
   renderCullMapChips(); // chips + vanish-reset first — the filter below reads cullFilter
   // Remove existing markers and cluster group
@@ -14955,7 +14957,73 @@ var flStandsState = {
   sheet: { editingId: null, lat: null, lng: null, locName: '', badWinds: [], facing: null, photos: [], newPhotos: [], removedPaths: [] }
 };
 
+// ── Status-bar clamp for inline map controls (2026-07-27) ────────────────
+// With viewport-fit=cover the whole page scrolls under the iPhone status bar,
+// and the frosted scrim (body::after) makes anything parked there illegible —
+// which is fine for tiles and text, and wrong for CONTROLS. The three inline
+// maps (stands, sightings, cull) anchor their floating controls to the top of
+// a card that can rest anywhere, so when the card's top edge rides under the
+// bar the Map/Satellite toggle vanishes into the frost (owner report, iPhone,
+// 2026-07-27). This clamp translates those controls down just far enough to
+// clear the bar — and not one pixel when the card is fully below it. Pure CSS
+// can't do this (sticky dies inside the cards' overflow:hidden frames), so a
+// rAF-throttled scroll listener does. On devices with no top inset the probe
+// measures 0 and the whole thing is inert.
+function flMapCtrlClampDelta(bandPx, frameTop, gapPx) {
+  if (!bandPx) return 0; // no band, no clamp — the gap only exists to clear a real inset
+  var d = (bandPx + gapPx) - frameTop;
+  return d > 0 ? d : 0;
+}
+
+var flSaTopProbe = null;
+function flSafeTopPx() {
+  if (!flSaTopProbe) {
+    flSaTopProbe = document.createElement('div');
+    flSaTopProbe.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none;';
+    document.body.appendChild(flSaTopProbe);
+  }
+  return flSaTopProbe.offsetHeight || 0;
+}
+
+function flClampInlineMapCtrls() {
+  var band = flSafeTopPx();
+  if (!band) return;
+  var jobs = [];
+  var sw = document.getElementById('stands-map-wrap');
+  if (sw && !sw.classList.contains('fullscreen') && sw.offsetParent && sw.firstElementChild) {
+    jobs.push([sw.firstElementChild, '.layer-tog, .stnd-map-fs, .leaflet-top']);
+  }
+  var gw = document.getElementById('sight-map-wrap');
+  if (gw && gw.offsetParent && gw.firstElementChild) {
+    jobs.push([gw.firstElementChild, '.layer-tog, .leaflet-top']);
+  }
+  var cc = document.getElementById('cull-map-container');
+  if (cc && !cc.classList.contains('map-fullscreen') && cc.offsetParent) {
+    jobs.push([cc, '.cullmap-ctrl, .leaflet-top']);
+  }
+  for (var i = 0; i < jobs.length; i++) {
+    var frame = jobs[i][0];
+    var d = flMapCtrlClampDelta(band, frame.getBoundingClientRect().top, 8);
+    var els = frame.querySelectorAll(jobs[i][1]);
+    for (var j = 0; j < els.length; j++) {
+      els[j].style.transform = d ? 'translateY(' + d + 'px)' : '';
+    }
+  }
+}
+
+var flClampQueued = false;
+function flQueueClamp() {
+  if (flClampQueued) return;
+  flClampQueued = true;
+  requestAnimationFrame(function () { flClampQueued = false; flClampInlineMapCtrls(); });
+}
+// capture:true catches scrolls of the inner .stats-scroll containers too.
+document.addEventListener('scroll', flQueueClamp, { capture: true, passive: true });
+window.addEventListener('resize', flQueueClamp);
+flQueueClamp();
+
 async function refreshStandsView(force) {
+  flQueueClamp();
   if (!currentUser || !sb) return;
   if (flStandsState.loading) return;
   flStandsState.loading = true;
