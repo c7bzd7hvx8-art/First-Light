@@ -5,7 +5,7 @@
 // the cache strings (`v7.34`) because they were three separate literals.
 // Bumping triggers the `activate` step to sweep old caches and reload clients
 // via the `controllerchange` path in diary.js.
-const SW_VERSION = '12.49';
+const SW_VERSION = '12.50';
 const STATIC_CACHE  = 'first-light-static-v'  + SW_VERSION;
 const RUNTIME_CACHE = 'first-light-runtime-v' + SW_VERSION;
 
@@ -410,4 +410,13 @@ self.addEventListener('fetch', event => {
       }
     })()
   );
+});
+
+// Version query (2026-07-27): lets the page ask the SW that is actually
+// CONTROLLING it which build it is — cache-name sniffing can briefly see two
+// static caches around an update, but the controller answers for itself.
+self.addEventListener('message', (event) => {
+  if (event.data === 'fl-sw-version' && event.ports && event.ports[0]) {
+    event.ports[0].postMessage(SW_VERSION);
+  }
 });

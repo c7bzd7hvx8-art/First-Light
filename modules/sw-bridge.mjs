@@ -100,6 +100,18 @@ export function initSwBridge() {
   // initial activation, not a true update.
   const initialController = navigator.serviceWorker.controller;
 
+  // Foreground update check (2026-07-27): an installed PWA that is RESUMED
+  // (not relaunched) never re-fetches sw.js, so it can sit on stale code all
+  // day — exactly the loop the launch-day iPhone patches got stuck in.
+  // reg.update() is a cheap conditional fetch; run it whenever the app comes
+  // back to the foreground so the update banner appears without a relaunch.
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) return;
+    navigator.serviceWorker.getRegistration().then(function(reg) {
+      if (reg) reg.update().catch(function() {});
+    }).catch(function() {});
+  });
+
   navigator.serviceWorker.addEventListener('controllerchange', function() {
     if (initialController) showSwUpdateBar();
   });

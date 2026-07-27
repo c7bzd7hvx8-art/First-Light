@@ -4254,6 +4254,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
 // ── block ──
 if ('serviceWorker' in navigator) {
+  // Foreground update check (2026-07-27): see modules/sw-bridge.mjs — resumed
+  // PWAs never re-fetch sw.js on their own.
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) return;
+    navigator.serviceWorker.getRegistration().then(function(reg) {
+      if (reg) reg.update().catch(function() {});
+    }).catch(function() {});
+  });
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('./sw.js').then(function(reg) {
       ui.updatePwaStatus();

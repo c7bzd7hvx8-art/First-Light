@@ -18890,9 +18890,31 @@ function closeSettingsSheet() {
 }
 
 /** Fill the App card rows (version + offline queue) in the settings sheet. */
+function flQuerySwVersion() {
+  return new Promise(function (resolve) {
+    var c = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!c) { resolve(null); return; }
+    try {
+      var ch = new MessageChannel();
+      var to = setTimeout(function () { resolve(null); }, 800);
+      ch.port1.onmessage = function (e) { clearTimeout(to); resolve(e.data); };
+      c.postMessage('fl-sw-version', [ch.port2]);
+    } catch (e) { resolve(null); }
+  });
+}
+
 function renderSettingsAppRows() {
   var v = document.getElementById('app-version-value');
-  if (v) v.textContent = 'v' + FL_APP_VERSION;
+  if (v) {
+    v.textContent = 'v' + FL_APP_VERSION;
+    // Diagnostic suffix (2026-07-27): the app version alone cannot tell a
+    // stale install from a fresh one when only the SW/CSS changed — five
+    // launch-day patches shipped under one FL version. Ask the controlling
+    // SW which build is actually serving this page and show both.
+    flQuerySwVersion().then(function (swv) {
+      if (swv && v.isConnected) v.textContent = 'v' + FL_APP_VERSION + ' \u00b7 SW ' + swv;
+    });
+  }
   var s = document.getElementById('offline-sync-value');
   if (s) {
     var q = getOfflineQueueForCurrentUser();
