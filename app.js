@@ -4651,26 +4651,34 @@ if ('serviceWorker' in navigator) {
   // no Leaflet, no tiles, no network. Hidden signed-out; the empty state is
   // the mapping invitation for signed-in users with nothing mapped yet.
 
-  /** PURE (vm-extracted by tests): uniform lat/lng -> px fit, centred. */
+  /** PURE (vm-extracted by tests): uniform Web-Mercator lat/lng -> px fit,
+      centred. Conformal like the slippy tile pyramid, so vectors drawn with
+      this fit align with satellite tiles placed by gcTileMosaic(). */
   function gcFit(pts, w, h, pad) {
-    var minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+    var D = Math.PI / 180;
+    function mx(lng) { return lng * D; }
+    function my(lat) { return Math.log(Math.tan(Math.PI / 4 + (lat * D) / 2)); }
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (var i = 0; i < pts.length; i++) {
-      var p = pts[i];
-      if (p[0] < minLat) minLat = p[0];
-      if (p[0] > maxLat) maxLat = p[0];
-      if (p[1] < minLng) minLng = p[1];
-      if (p[1] > maxLng) maxLng = p[1];
+      var X = mx(pts[i][1]), Y = my(pts[i][0]);
+      if (X < minX) minX = X;
+      if (X > maxX) maxX = X;
+      if (Y < minY) minY = Y;
+      if (Y > maxY) maxY = Y;
     }
-    if (!isFinite(minLat)) { minLat = maxLat = 0; minLng = maxLng = 0; }
-    var midLat = (minLat + maxLat) / 2;
-    var kx = Math.cos(midLat * Math.PI / 180);
-    var spanX = Math.max((maxLng - minLng) * kx, 0.0004);
-    var spanY = Math.max(maxLat - minLat, 0.0004);
+    if (!isFinite(minX)) { minX = maxX = 0; minY = maxY = 0; }
+    var cX = (minX + maxX) / 2, cY = (minY + maxY) / 2;
+    // 0.0004 deg-of-lat metric floor, in mercator units at this latitude
+    var cosMid = Math.max(Math.cos(2 * Math.atan(Math.exp(cY)) - Math.PI / 2), 0.01);
+    var floorSpan = (0.0004 * D) / cosMid;
+    var spanX = Math.max(maxX - minX, floorSpan);
+    var spanY = Math.max(maxY - minY, floorSpan);
     var s = Math.min((w - 2 * pad) / spanX, (h - 2 * pad) / spanY);
-    var cLng = (minLng + maxLng) / 2;
-    return function (p) {
-      return [w / 2 + (p[1] - cLng) * kx * s, h / 2 + (midLat - p[0]) * s];
+    var m = function (p) {
+      return [w / 2 + (mx(p[1]) - cX) * s, h / 2 + (cY - my(p[0])) * s];
     };
+    m.cX = cX; m.cY = cY; m.s = s;
+    return m;
   }
 
   var GC_TOWER = '<g stroke="#fff" stroke-width="2.6" fill="none" stroke-linejoin="round">'
@@ -4679,6 +4687,104 @@ if ('serviceWorker' in navigator) {
     + '<path d="M11 27 L7 42 M29 27 L33 42 M12 36 L28 36" stroke="#2d3a1f" stroke-width="2.2" fill="none"/>'
     + '<path d="M3 11 L20 2 L37 11 Z" fill="#2d3a1f"/><rect x="7" y="11" width="26" height="16" rx="3.5" fill="#2d3a1f"/>';
   var GC_BAND = { g: '#5ab43c', a: '#d8b054', o: '#d8792e' };
+
+  // Satellite backdrop: the same Mapbox satellite-streets imagery the diary
+  // map's Satellite layer uses (Esri if Mapbox errors, dark panel offline).
+  var GC_ATTR_TEXT = { mapbox: '\u00a9 Mapbox \u00a9 Maxar', esri: '\u00a9 Esri' };
+  var gcTileSeq = 0;
+  var gcTileState = { mosaic: null };
+
+  function gcMapboxToken() {
+    try {
+      var meta = document.querySelector('meta[name="fl-mapbox-token"]');
+      return meta ? String(meta.getAttribute('content') || '').trim() : '';
+    } catch (e) { return ''; }
+  }
+
+  /** PURE (vm-extracted by tests): pick slippy z/x/y satellite tiles covering
+      the fitted panel and place them in panel px. m is a gcFit() mapping
+      (carries cX/cY/s). Capped at 8 tiles; zooms out if the cap is hit. */
+  function gcTileMosaic(m, w, h) {
+    if (!m || !isFinite(m.s) || m.s <= 0) return { z: 0, tiles: [] };
+    var z = Math.ceil(Math.log(m.s * Math.PI / 128) / Math.LN2) - 1;
+    if (z > 16) z = 16;
+    if (z < 3) z = 3;
+    var n, span, x0, x1, y0, y1;
+    for (;;) {
+      n = Math.pow(2, z);
+      span = 2 * Math.PI / n;
+      var mercW = w / m.s, mercH = h / m.s;
+      x0 = Math.floor((m.cX - mercW / 2 + Math.PI) / span);
+      x1 = Math.floor((m.cX + mercW / 2 + Math.PI) / span);
+      y0 = Math.floor((Math.PI - (m.cY + mercH / 2)) / span);
+      y1 = Math.floor((Math.PI - (m.cY - mercH / 2)) / span);
+      if ((x1 - x0 + 1) * (y1 - y0 + 1) <= 8 || z <= 3) break;
+      z--;
+    }
+    var tiles = [];
+    for (var ty = Math.max(y0, 0); ty <= Math.min(y1, n - 1); ty++) {
+      for (var tx = x0; tx <= x1; tx++) {
+        var west = tx * span - Math.PI;
+        var north = Math.PI - ty * span;
+        tiles.push({
+          x: ((tx % n) + n) % n,
+          y: ty,
+          l: w / 2 + (west - m.cX) * m.s,
+          t: h / 2 + (m.cY - north) * m.s,
+          w: span * m.s,
+          h: span * m.s
+        });
+      }
+    }
+    return { z: z, tiles: tiles };
+  }
+
+  function gcTileUrl(provider, z, x, y) {
+    if (provider === 'mapbox') {
+      return 'https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/512/'
+        + z + '/' + x + '/' + y + '@2x?access_token=' + encodeURIComponent(gcMapboxToken());
+    }
+    return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/'
+      + z + '/' + y + '/' + x;
+  }
+
+  function gcLoadTiles(provider) {
+    var tg = document.getElementById('gc-tg');
+    var attr = document.getElementById('gc-attr');
+    var mos = gcTileState.mosaic;
+    if (!tg || !mos || !mos.tiles.length) return;
+    if (!navigator.onLine) return; // dark panel is the offline look
+    if (provider === 'mapbox' && !gcMapboxToken()) provider = 'esri';
+    var want = ++gcTileSeq;
+    var imgs = [], failed = false, left = mos.tiles.length;
+    function done() {
+      if (want !== gcTileSeq) return; // a newer render superseded this load
+      if (failed) {
+        if (provider === 'mapbox') { gcLoadTiles('esri'); return; }
+        tg.innerHTML = '';
+        if (attr) attr.classList.remove('on');
+        return;
+      }
+      var out = '';
+      for (var i = 0; i < mos.tiles.length; i++) {
+        var td = mos.tiles[i];
+        out += '<image href="' + imgs[i].src.replace(/&/g, '&amp;')
+          + '" x="' + td.l.toFixed(2) + '" y="' + td.t.toFixed(2)
+          + '" width="' + (td.w + 0.5).toFixed(2) + '" height="' + (td.h + 0.5).toFixed(2)
+          + '" preserveAspectRatio="none"/>';
+      }
+      out += '<rect x="0" y="0" width="332" height="150" fill="rgba(8,16,6,0.18)"/>';
+      tg.innerHTML = out;
+      if (attr) { attr.textContent = GC_ATTR_TEXT[provider]; attr.classList.add('on'); }
+    }
+    mos.tiles.forEach(function (td) {
+      var im = new Image();
+      im.onload = function () { if (--left === 0) done(); };
+      im.onerror = function () { failed = true; if (--left === 0) done(); };
+      im.src = gcTileUrl(provider, mos.z, td.x, td.y);
+      imgs.push(im);
+    });
+  }
 
   function renderGroundCard(signedIn) {
     var card = document.getElementById('ground-card');
@@ -4702,9 +4808,13 @@ if ('serviceWorker' in navigator) {
     if (sub) sub.textContent = (snap.label ? snap.label + ' · ' : '')
       + seats.length + (seats.length === 1 ? ' seat' : ' seats');
     var best = document.getElementById('gc-best');
-    if (best) best.innerHTML = (snap.best && snap.best.score != null)
-      ? 'Next sit · ' + String(snap.best.when || '').replace(/[<>&]/g, '') + ' · <b>' + Math.round(snap.best.score) + '</b>'
-      : '';
+    if (best) {
+      var bn = snap.best ? String(snap.best.name || '').replace(/[<>&"]/g, '') : '';
+      best.innerHTML = (snap.best && snap.best.score != null)
+        ? 'Next sit \u00b7 ' + (bn ? '<span class="gc-bn">' + bn + '</span> \u00b7 ' : '')
+          + String(snap.best.when || '').replace(/[<>&]/g, '') + ' \u00b7 <b>' + Math.round(snap.best.score) + '</b>'
+        : '';
+    }
     var svg = document.getElementById('gc-svg');
     if (!svg) return;
     var all = [];
@@ -4722,18 +4832,25 @@ if ('serviceWorker' in navigator) {
         : '<path d="' + d + '" fill="rgba(216,176,84,0.08)" stroke="rgba(216,176,84,0.75)" stroke-width="1.8" stroke-linejoin="round"/>';
     });
     var ranked = seats.slice().sort(function (x, y) { return (y.score || 0) - (x.score || 0); });
-    // One tower only - the best seat - or clustered grounds pile towers in a
-    // corner (live finding). Everyone else is a band-coloured dot.
-    ranked.slice(1, 17).forEach(function (s) {
+    // Every seat is a tower (owner: "Highseats are dots") - the best one
+    // larger and drawn last so it sits on top; 13+ fall back to dots so a
+    // dense ground cannot pile towers on towers.
+    ranked.slice(12, 17).forEach(function (s) {
       var xy = map([s.lat, s.lng]);
       out += '<circle cx="' + xy[0].toFixed(1) + '" cy="' + xy[1].toFixed(1)
         + '" r="4.5" fill="' + (GC_BAND[s.band] || '#9a9488') + '" stroke="#fff" stroke-width="1.6"/>';
     });
-    ranked.slice(0, 1).forEach(function (s) {
-      var xy = map([s.lat, s.lng]);
-      out += '<g transform="translate(' + (xy[0] - 11).toFixed(1) + ' ' + (xy[1] - 10.5).toFixed(1) + ') scale(0.55)">' + GC_TOWER + '</g>';
-    });
-    svg.innerHTML = out;
+    var towers = ranked.slice(0, 12);
+    for (var ti = towers.length - 1; ti >= 0; ti--) {
+      var tw = towers[ti], sc = ti === 0 ? 0.55 : 0.42;
+      var txy = map([tw.lat, tw.lng]);
+      out += '<g transform="translate(' + (txy[0] - 20 * sc).toFixed(1) + ' ' + (txy[1] - 19 * sc).toFixed(1)
+        + ') scale(' + sc + ')">' + GC_TOWER
+        + '<circle cx="33" cy="9" r="7.5" fill="' + (GC_BAND[tw.band] || '#9a9488') + '" stroke="#fff" stroke-width="2"/></g>';
+    }
+    svg.innerHTML = '<g id="gc-tg"></g><g id="gc-vg">' + out + '</g>';
+    gcTileState.mosaic = gcTileMosaic(map, 332, 150);
+    gcLoadTiles('mapbox');
   }
 
   async function syncDiaryCard() {
