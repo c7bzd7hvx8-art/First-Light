@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.58';
+const FL_JS_BUILD = '12.62';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -15572,7 +15572,10 @@ function standMarkerIcon(score, isSelected, mini, name, facingDeg) {
   // colour, selection, facing, name - different body. Anchored on the CABIN
   // centre (~41% down), where the old bubble centre sat, so every seat stays
   // visually on its spot.
-  var W = isSelected ? 44 : 40;
+  // 40px read too big in the field (owner, 2026-07-27 "Too big?") - 34px keeps
+  // the tower legible while giving the wood back to the map; the badge grows a
+  // touch inside the viewBox to hold score legibility at the smaller render.
+  var W = isSelected ? 34 : 30;
   var H = Math.round(W * 46 / 40);
   var ay = Math.round(H * 0.41);
   var badgeTxt = band === '#d8b054' ? '#1a1206' : '#fff';
@@ -15585,8 +15588,8 @@ function standMarkerIcon(score, isSelected, mini, name, facingDeg) {
     + '<path d="M3 11 L20 2 L37 11 Z" fill="#2d3a1f"/>'
     + '<rect x="7" y="11" width="26" height="16" rx="3.5" fill="#2d3a1f"/>'
     + '<rect x="11.5" y="15" width="17" height="5.5" rx="1.8" fill="rgba(240,228,192,0.3)"/>'
-    + '<circle cx="32" cy="9" r="9" fill="' + band + '" stroke="' + (isSelected ? '#f0cc74' : '#ffffff') + '" stroke-width="' + (isSelected ? 3 : 2.4) + '"/>'
-    + '<text x="32" y="12.4" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9.8" font-weight="700" fill="' + badgeTxt + '">' + txt + '</text>'
+    + '<circle cx="32" cy="9" r="10.4" fill="' + band + '" stroke="' + (isSelected ? '#f0cc74' : '#ffffff') + '" stroke-width="' + (isSelected ? 3 : 2.4) + '"/>'
+    + '<text x="32" y="12.8" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11.2" font-weight="700" fill="' + badgeTxt + '">' + txt + '</text>'
     + '</svg>';
   // Name pill (round 24 clarification — owner: "shall these not have their
   // names?"): the seat's short name rides under the badge at badge zoom,
@@ -15928,11 +15931,39 @@ function renderStandsMap() {
   standsMarkerById = {};
 
   var useClustering = typeof L.markerClusterGroup === 'function';
-  if (useClustering) standsClusterGroup = L.markerClusterGroup({ maxClusterRadius: 45 });
+  // Branded cluster (owner, 2026-07-27: "Not sure if this grouping looks
+  // great") - the default library green discs were the last stock visual on
+  // this map. Same .fl-cmk disc the cull map uses, with the ring coloured by
+  // the BEST current score in the group (same band thresholds as the seat
+  // badges), so a cluster also says whether it hides a good seat right now.
+  // Owner, 2026-07-27: "But shall we cluster?" - mostly no. Seats are
+  // individually-known objects (unlike stacked culls), and the mini-dots
+  // already handle overview density. Clustering keeps exactly one job:
+  // stopping two towers metres apart from occluding each other. So: a tight
+  // radius (30px - only true overlaps group), and none at all from zoom 14 up,
+  // where you are working a ground and every seat must show itself.
+  if (useClustering) standsClusterGroup = L.markerClusterGroup({
+    maxClusterRadius: 30,
+    disableClusteringAtZoom: 14,
+    iconCreateFunction: function (cluster) {
+      var n = cluster.getChildCount();
+      var best = null;
+      cluster.getAllChildMarkers().forEach(function (m) {
+        var sc = m.options && m.options.flScore;
+        if (sc != null && (best == null || sc > best)) best = sc;
+      });
+      var ring = best == null ? '#9a9488' : best >= 65 ? '#5ab43c' : best >= 45 ? '#d8b054' : '#d8792e';
+      var size = n < 10 ? 34 : (n < 30 ? 40 : 46);
+      return L.divIcon({
+        html: '<div class="fl-cmk" style="--ring:' + ring + ';width:' + size + 'px;height:' + size + 'px;">' + n + '</div>',
+        className: '', iconSize: [size, size], iconAnchor: [size / 2, size / 2]
+      });
+    }
+  });
 
   var bounds = [];
   stands.forEach(function(s) {
-    var marker = L.marker([s.lat, s.lng], { icon: flStandMarkerIconFor(s.id, s.id === flStandsState.selectedId) });
+    var marker = L.marker([s.lat, s.lng], { icon: flStandMarkerIconFor(s.id, s.id === flStandsState.selectedId), flScore: flStandMarkerScore(s.id) });
     marker.on('click', function(){
       // Round 31: aiming — a tap on a marker is still a point on the ground
       // (e.g. "looks toward HS12's clearing"); use its position as the target.
