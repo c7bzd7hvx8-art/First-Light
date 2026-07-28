@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.64';
+const FL_JS_BUILD = '12.67';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -3372,7 +3372,7 @@ function resetSessionState() {
 // erasure. App display prefs + the on-device ballistics profiles are left intact.
 function purgeLocalUserDataCaches() {
   try {
-    var prefixes = ['fl-grounds-cache', 'fl-stands-cache', 'fl-stands-forecast', 'fl-score-log', 'fl-last-ground', 'fl-my-species'];
+    var prefixes = ['fl-grounds-cache', 'fl-stands-cache', 'fl-stands-forecast', 'fl-score-log', 'fl-last-ground', 'fl-my-species', 'fl-home-ground-card'];
     var extra = [OFFLINE_KEY + '-corrupt', OFFLINE_KEY + '-deadletter'];
     var kill = [];
     for (var i = 0; i < localStorage.length; i++) {
@@ -3677,12 +3677,20 @@ function diaryApplyAuthSession(session) {
     return;
   }
   if (currentUser && currentUser.id === session.user.id) {
-    if (window.location.hash) history.replaceState(null, '', window.location.pathname);
+    flConsumeStandsHash();
     return;
   }
   currentUser = session.user;
   onSignedIn();
+  flConsumeStandsHash();
+}
+
+/** #stands deep link (home ground card, 2026-07-28): honour it, then strip
+ *  the hash exactly as before. Recovery URLs never reach here. */
+function flConsumeStandsHash() {
+  var wantStands = window.location.hash === '#stands';
   if (window.location.hash) history.replaceState(null, '', window.location.pathname);
+  if (wantStands) { try { go('v-stands'); } catch (e) { /* pre-init */ } }
 }
 
 // Init on DOM ready
@@ -15638,10 +15646,12 @@ function flStandMarkerIconFor(id, isSelected) {
 }
 
 // Badges need room: below this zoom, markers render as dots (colour only).
-// 12 -> 14 (owner, 2026-07-28 "Still too big"): towers only from true working
-// zoom, matching disableClusteringAtZoom - estate overviews show the small
-// colour dots, which is what an overview needs anyway.
-var STANDS_BADGE_MIN_ZOOM = 14;
+// 12 -> 14 -> 15, calibrated from the owner's four-zoom screenshot series
+// (2026-07-28): z14 was the collision zone - towers shoulder to shoulder in a
+// wood - while z15/z16 read cleanly. Towers from z15; below it the overview
+// language (colour dots + branded cluster discs). Keep in lock-step with
+// disableClusteringAtZoom.
+var STANDS_BADGE_MIN_ZOOM = 15;
 
 /** Are we zoomed in enough for numbered badges? */
 function flStandsBadgeZoom() {
@@ -15947,7 +15957,7 @@ function renderStandsMap() {
   // where you are working a ground and every seat must show itself.
   if (useClustering) standsClusterGroup = L.markerClusterGroup({
     maxClusterRadius: 30,
-    disableClusteringAtZoom: 14,
+    disableClusteringAtZoom: 15,
     iconCreateFunction: function (cluster) {
       var n = cluster.getChildCount();
       var best = null;
@@ -16663,6 +16673,69 @@ function renderStandsList() {
   if (tonightEl) tonightEl.innerHTML = buildTonightHero(stTonight);
   renderStandsMap();
   syncGroundInvite(); // G6: draw-invite over the map until a boundary exists
+  flWriteHomeGroundCard(stTonight); // home-page ground card snapshot
+}
+
+// ── Home-page ground card snapshot (2026-07-28) ───────────────────────────
+// The home page (index.html) shows a lightweight drawn "Your ground" card -
+// boundary, seat towers, next sit - without Leaflet, tiles or any network.
+// It cannot recompute scores or read Supabase cheaply, so THIS side (which
+// just rendered all of it) writes a pre-digested snapshot to localStorage
+// and app.js only draws. Best-effort by design: any failure here must never
+// touch the stands view.
+function flWriteHomeGroundCard(tonight) {
+  try {
+    if (!currentUser) return;
+    var stands = flStandsState.list || [];
+    // FOCUS one ground (live-verified necessity: grounds counties apart fit
+    // to specks). Prefer the next sit's ground, else the ground with most
+    // located seats, else the un-grounded seats as one group.
+    var counts = {};
+    stands.forEach(function (s) {
+      if (s.lat == null || s.lng == null) return;
+      var g = s.ground || '';
+      counts[g] = (counts[g] || 0) + 1;
+    });
+    var focus = (tonight && tonight.s && tonight.s.ground) || '';
+    if (!focus || !counts[focus]) {
+      var max = -1;
+      Object.keys(counts).forEach(function (g) { if (counts[g] > max) { max = counts[g]; focus = g; } });
+    }
+    var seats = [];
+    stands.forEach(function (s) {
+      if (s.lat == null || s.lng == null) return;
+      if ((s.ground || '') !== focus) return;
+      var sc = null;
+      try { sc = flStandMarkerScore(s.id); } catch (e) { /* fine */ }
+      seats.push({
+        lat: s.lat, lng: s.lng, score: sc,
+        band: sc == null ? null : sc >= 65 ? 'g' : sc >= 45 ? 'a' : 'o'
+      });
+    });
+    var parcels = [];
+    (groundFeaturesNow() || []).forEach(function (f) {
+      if (parcels.length >= 6) return;
+      if ((f.ground || '') !== focus) return;
+      if (f.kind && f.kind !== 'boundary' && f.kind !== 'parcel') return; // stored kind is 'boundary'
+      var ring = parseGeometry(f.geometry);
+      if (!ring) return;
+      var step = Math.max(1, Math.ceil(ring.length / 40));
+      var pts = [];
+      for (var i = 0; i < ring.length; i += step) pts.push([ring[i][0], ring[i][1]]);
+      if (pts.length >= 3) parcels.push(pts);
+    });
+    var label = focus || (seats.length ? 'Your seats' : '');
+    var best = null;
+    if (tonight && tonight.s) {
+      var when = tonight.di === 0 ? (tonight.win === 'Dawn' ? 'this dawn' : 'tonight')
+        : tonight.di === 1 ? 'tomorrow ' + tonight.win.toLowerCase()
+        : tonight.dt.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'Europe/London' }) + ' ' + tonight.win.toLowerCase();
+      best = { name: tonight.s.name, when: when, score: tonight.score };
+    }
+    localStorage.setItem('fl-home-ground-card-v1', JSON.stringify({
+      v: 1, label: label, seats: seats, parcels: parcels, best: best, at: Date.now()
+    }));
+  } catch (e) { /* the card is a bonus */ }
 }
 
 // ── History at this stand (S5) ───────────────────────────────────
@@ -17455,14 +17528,20 @@ function flFacingConePolygon(lat, lng, bearingDeg, rangeM) {
   return pts;
 }
 function flSeatMarkerIcon() {
-  // Distinct from cull pins: bigger, gold, dark centre — the facing cone and the
-  // legend disambiguate it further, so it never reads as a Red-deer (gold) pin.
-  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="42" viewBox="0 0 32 42">'
-    + '<filter id="flseat"><feDropShadow dx="0" dy="1" stdDeviation="1.6" flood-opacity="0.35"/></filter>'
-    + '<path d="M16 2C9.4 2 4 7.4 4 14c0 9.5 12 24 12 24s12-14.5 12-24C28 7.4 22.6 2 16 2z" fill="#d8b054" stroke="#fff" stroke-width="2.2" filter="url(#flseat)"/>'
-    + '<circle cx="16" cy="14.5" r="6.2" fill="#12280a"/><circle cx="16" cy="14.5" r="2.5" fill="#f0cc74"/>'
+  // The high-seat tower, same art as the stands map (owner, 2026-07-28: the
+  // detail view still wore the old teardrop). No badge and no chevron here -
+  // the detail map draws the facing wedge itself and the score lives in the
+  // week strip below. Feet anchored on the seat's exact spot.
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="35" viewBox="0 0 40 46" style="overflow:visible;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4));">'
+    + '<g stroke="#ffffff" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" fill="none">'
+    + '<path d="M11 27 L7 44 M29 27 L33 44 M12.5 33.5 L27.5 33.5 M11 39.5 L29 39.5"/>'
+    + '<path d="M3 11 L20 2 L37 11 Z"/><rect x="7" y="11" width="26" height="16" rx="3.5"/></g>'
+    + '<path d="M11 27 L7 44 M29 27 L33 44 M12.5 33.5 L27.5 33.5 M11 39.5 L29 39.5" stroke="#2d3a1f" stroke-width="2.1" fill="none" stroke-linecap="round"/>'
+    + '<path d="M3 11 L20 2 L37 11 Z" fill="#2d3a1f"/>'
+    + '<rect x="7" y="11" width="26" height="16" rx="3.5" fill="#2d3a1f"/>'
+    + '<rect x="11.5" y="15" width="17" height="5.5" rx="1.8" fill="rgba(240,228,192,0.3)"/>'
     + '</svg>';
-  return L.divIcon({ html: svg, iconSize: [32, 42], iconAnchor: [16, 42], className: '' });
+  return L.divIcon({ html: svg, iconSize: [30, 35], iconAnchor: [15, 34], className: '' });
 }
 function flAddSatLayerWithFallback(map) {
   var tiles = mapProviderTileUrls();
@@ -17519,7 +17598,7 @@ function flDrawStandMapFeatures(map, s, doFit) {
   });
   L.marker([s.lat, s.lng], { icon: flSeatMarkerIcon(), zIndexOffset: 1000 }).addTo(map);
   if (doFit) { try { map.fitBounds(ring.getBounds(), { padding: [8, 8] }); } catch (e) {} }
-  var lh = '<span class="mml"><span class="mml-seat"></span>This seat</span>';
+  var lh = '<span class="mml"><svg width="12" height="14" viewBox="0 0 40 46" style="flex-shrink:0;"><g stroke="#fff" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M11 27 L7 44 M29 27 L33 44 M12 39 L30 39"/><path d="M3 11 L20 2 L37 11 Z"/><rect x="7" y="11" width="26" height="16" rx="3.5"/></g><path d="M11 27 L7 44 M29 27 L33 44 M12 39 L30 39" stroke="#2d3a1f" stroke-width="2.2" fill="none"/><path d="M3 11 L20 2 L37 11 Z" fill="#2d3a1f"/><rect x="7" y="11" width="26" height="16" rx="3.5" fill="#2d3a1f"/></svg>This seat</span>';
   if (s.facing != null) lh += '<span class="mml"><span class="mml-cone"></span>Looks ' + esc(flWindDirLabel8(s.facing)) + '</span>';
   Object.keys(seen).forEach(function(sp) {
     var n = near.filter(function(e){ return e.species === sp; }).length;

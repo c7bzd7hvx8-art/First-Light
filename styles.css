@@ -2471,3 +2471,20 @@ body::after{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-
 /* PTR pill top lives HERE, not in the element's inline style: iOS resolves
    env() in stylesheets but proved unreliable with it inline (2026-07-27). */
 #ptr-indicator{top:env(safe-area-inset-top,0px);}
+
+/* ── Your ground card (2026-07-28) ── drawn snapshot of the stands map. */
+#ground-card{display:block;margin:14px 16px 4px;border-radius:18px;border:1px solid rgba(216,176,84,0.30);background:linear-gradient(150deg,#182a10 0%,#0f1d0a 55%,#122411 100%);padding:14px 14px 12px;text-decoration:none;position:relative;z-index:1;}
+.gc-hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;}
+.gc-lbl{font-family:'DM Mono',monospace;font-size:var(--fs-tiny);letter-spacing:1.6px;color:#d8b054;font-weight:700;}
+.gc-sub{font-size:var(--fs-xs);color:rgba(242,239,233,0.6);}
+.gc-panel{position:relative;border-radius:12px;overflow:hidden;background:radial-gradient(120% 90% at 30% 20%, #1b2f14 0%, #12220d 55%, #0d1a09 100%);border:1px solid rgba(255,255,255,0.09);}
+.gc-panel svg{display:block;width:100%;height:auto;}
+.gc-foot{display:flex;justify-content:space-between;align-items:center;margin-top:10px;}
+.gc-best{display:inline-flex;align-items:center;gap:6px;background:rgba(216,176,84,0.14);border:1px solid rgba(216,176,84,0.4);color:#f0cc74;border-radius:14px;padding:5px 11px;font-size:var(--fs-xs);font-weight:700;}
+.gc-best b{font-family:'DM Mono',monospace;}
+.gc-best:empty{visibility:hidden;}
+.gc-go{color:#d8b054;font-size:var(--fs-sm);font-weight:700;}
+.gc-empty-body{text-align:center;padding:8px 6px 6px;}
+.gc-empty-title{font-family:'Playfair Display',Georgia,serif;font-size:var(--fs-xl);color:#f2efe9;margin:8px 0 5px;}
+.gc-empty-line{font-size:var(--fs-sm);line-height:1.5;color:rgba(242,239,233,0.65);max-width:300px;margin:0 auto 12px;}
+.gc-empty-btn{display:inline-block;background:linear-gradient(135deg,#d8b054,#b8903c);color:#1a1206;font-weight:700;font-size:var(--fs-sm);border-radius:13px;padding:10px 20px;}

@@ -4645,14 +4645,106 @@ if ('serviceWorker' in navigator) {
     if (signedInBlock) signedInBlock.style.display = signedIn ? '' : 'none';
   }
 
+  // ── Your ground card (2026-07-28) ────────────────────────────────────
+  // Draws the fl-home-ground-card-v1 snapshot diary.js writes: boundary
+  // parcels, seat towers/dots and the next sit - pure SVG from cached data,
+  // no Leaflet, no tiles, no network. Hidden signed-out; the empty state is
+  // the mapping invitation for signed-in users with nothing mapped yet.
+
+  /** PURE (vm-extracted by tests): uniform lat/lng -> px fit, centred. */
+  function gcFit(pts, w, h, pad) {
+    var minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+    for (var i = 0; i < pts.length; i++) {
+      var p = pts[i];
+      if (p[0] < minLat) minLat = p[0];
+      if (p[0] > maxLat) maxLat = p[0];
+      if (p[1] < minLng) minLng = p[1];
+      if (p[1] > maxLng) maxLng = p[1];
+    }
+    if (!isFinite(minLat)) { minLat = maxLat = 0; minLng = maxLng = 0; }
+    var midLat = (minLat + maxLat) / 2;
+    var kx = Math.cos(midLat * Math.PI / 180);
+    var spanX = Math.max((maxLng - minLng) * kx, 0.0004);
+    var spanY = Math.max(maxLat - minLat, 0.0004);
+    var s = Math.min((w - 2 * pad) / spanX, (h - 2 * pad) / spanY);
+    var cLng = (minLng + maxLng) / 2;
+    return function (p) {
+      return [w / 2 + (p[1] - cLng) * kx * s, h / 2 + (midLat - p[0]) * s];
+    };
+  }
+
+  var GC_TOWER = '<g stroke="#fff" stroke-width="2.6" fill="none" stroke-linejoin="round">'
+    + '<path d="M11 27 L7 42 M29 27 L33 42 M12 36 L28 36"/>'
+    + '<path d="M3 11 L20 2 L37 11 Z"/><rect x="7" y="11" width="26" height="16" rx="3.5"/></g>'
+    + '<path d="M11 27 L7 42 M29 27 L33 42 M12 36 L28 36" stroke="#2d3a1f" stroke-width="2.2" fill="none"/>'
+    + '<path d="M3 11 L20 2 L37 11 Z" fill="#2d3a1f"/><rect x="7" y="11" width="26" height="16" rx="3.5" fill="#2d3a1f"/>';
+  var GC_BAND = { g: '#5ab43c', a: '#d8b054', o: '#d8792e' };
+
+  function renderGroundCard(signedIn) {
+    var card = document.getElementById('ground-card');
+    if (!card) return;
+    if (!signedIn) { card.style.display = 'none'; return; }
+    var snap = null;
+    try { snap = JSON.parse(localStorage.getItem('fl-home-ground-card-v1') || 'null'); } catch (e) { /* fine */ }
+    var seats = (snap && snap.seats) || [];
+    var parcels = (snap && snap.parcels) || [];
+    var full = document.getElementById('gc-full');
+    var empty = document.getElementById('gc-empty');
+    card.style.display = 'block';
+    if (!seats.length && !parcels.length) {
+      if (full) full.style.display = 'none';
+      if (empty) empty.style.display = 'block';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+    if (full) full.style.display = 'block';
+    var sub = document.getElementById('gc-sub');
+    if (sub) sub.textContent = (snap.label ? snap.label + ' · ' : '')
+      + seats.length + (seats.length === 1 ? ' seat' : ' seats');
+    var best = document.getElementById('gc-best');
+    if (best) best.innerHTML = (snap.best && snap.best.score != null)
+      ? 'Next sit · ' + String(snap.best.when || '').replace(/[<>&]/g, '') + ' · <b>' + Math.round(snap.best.score) + '</b>'
+      : '';
+    var svg = document.getElementById('gc-svg');
+    if (!svg) return;
+    var all = [];
+    parcels.forEach(function (ring) { ring.forEach(function (p) { all.push(p); }); });
+    seats.forEach(function (s) { all.push([s.lat, s.lng]); });
+    var map = gcFit(all, 332, 150, 20);
+    var out = '';
+    parcels.forEach(function (ring, i) {
+      var d = ring.map(function (p, j) {
+        var xy = map(p);
+        return (j ? 'L' : 'M') + xy[0].toFixed(1) + ' ' + xy[1].toFixed(1);
+      }).join(' ') + ' Z';
+      out += i === 0
+        ? '<path d="' + d + '" fill="rgba(90,160,140,0.10)" stroke="#4fa08b" stroke-width="2.2" stroke-linejoin="round"/>'
+        : '<path d="' + d + '" fill="rgba(216,176,84,0.08)" stroke="rgba(216,176,84,0.75)" stroke-width="1.8" stroke-linejoin="round"/>';
+    });
+    var ranked = seats.slice().sort(function (x, y) { return (y.score || 0) - (x.score || 0); });
+    // One tower only - the best seat - or clustered grounds pile towers in a
+    // corner (live finding). Everyone else is a band-coloured dot.
+    ranked.slice(1, 17).forEach(function (s) {
+      var xy = map([s.lat, s.lng]);
+      out += '<circle cx="' + xy[0].toFixed(1) + '" cy="' + xy[1].toFixed(1)
+        + '" r="4.5" fill="' + (GC_BAND[s.band] || '#9a9488') + '" stroke="#fff" stroke-width="1.6"/>';
+    });
+    ranked.slice(0, 1).forEach(function (s) {
+      var xy = map([s.lat, s.lng]);
+      out += '<g transform="translate(' + (xy[0] - 11).toFixed(1) + ' ' + (xy[1] - 10.5).toFixed(1) + ') scale(0.55)">' + GC_TOWER + '</g>';
+    });
+    svg.innerHTML = out;
+  }
+
   async function syncDiaryCard() {
     try {
       var db = supabase.createClient(DIARY_URL, DIARY_KEY);
       var session = await db.auth.getSession();
-      if (!session.data.session) { setDiaryCardMode(false); return; } // signed out — show the pitch
+      if (!session.data.session) { setDiaryCardMode(false); renderGroundCard(false); return; } // signed out — show the pitch
 
       var user = session.data.session.user;
       setDiaryCardMode(true); // signed in — swap the pitch for live stats
+      renderGroundCard(true);
       var meta = user.user_metadata || {};
       var d = getSeasonDates(meta.fl_season_start_month);
       var r = await db.from('cull_entries')

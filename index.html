@@ -368,6 +368,30 @@
 <!-- Full forecast docks here — relocated directly under the card by app.js init -->
 <div id="forecast-dock" style="padding:0 16px;position:relative;z-index:1;"></div>
 
+<!-- Your ground — drawn snapshot of the stands map (no Leaflet, no tiles, no
+     network): diary.js writes fl-home-ground-card-v1 whenever it renders the
+     stands view; renderGroundCard in app.js draws it. Hidden signed-out. -->
+<a id="ground-card" href="./diary.html#stands" style="display:none;" aria-label="Open your ground map">
+  <div id="gc-full">
+    <div class="gc-hdr"><span class="gc-lbl">YOUR GROUND</span><span class="gc-sub" id="gc-sub"></span></div>
+    <div class="gc-panel"><svg id="gc-svg" viewBox="0 0 332 150" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg></div>
+    <div class="gc-foot"><span class="gc-best" id="gc-best"></span><span class="gc-go">Open the map &rsaquo;</span></div>
+  </div>
+  <div id="gc-empty" style="display:none;">
+    <div class="gc-hdr"><span class="gc-lbl">YOUR GROUND</span></div>
+    <div class="gc-empty-body">
+      <svg width="120" height="44" viewBox="0 0 120 46" aria-hidden="true">
+        <g transform="translate(2,6) scale(0.75)" opacity="0.55"><g stroke="#fff" stroke-width="2.6" fill="none" stroke-linejoin="round"><path d="M11 27 L7 42 M29 27 L33 42 M12 36 L28 36"/><path d="M3 11 L20 2 L37 11 Z"/><rect x="7" y="11" width="26" height="16" rx="3.5"/></g><path d="M11 27 L7 42 M29 27 L33 42 M12 36 L28 36" stroke="#2d3a1f" stroke-width="2.2" fill="none"/><path d="M3 11 L20 2 L37 11 Z" fill="#2d3a1f"/><rect x="7" y="11" width="26" height="16" rx="3.5" fill="#2d3a1f"/></g>
+        <g transform="translate(42,0) scale(0.95)"><g stroke="#fff" stroke-width="2.6" fill="none" stroke-linejoin="round"><path d="M11 27 L7 42 M29 27 L33 42 M12 36 L28 36"/><path d="M3 11 L20 2 L37 11 Z"/><rect x="7" y="11" width="26" height="16" rx="3.5"/></g><path d="M11 27 L7 42 M29 27 L33 42 M12 36 L28 36" stroke="#2d3a1f" stroke-width="2.2" fill="none"/><path d="M3 11 L20 2 L37 11 Z" fill="#2d3a1f"/><rect x="7" y="11" width="26" height="16" rx="3.5" fill="#2d3a1f"/><circle cx="33" cy="9" r="8" fill="#d8b054" stroke="#fff" stroke-width="2"/><text x="33" y="12.4" text-anchor="middle" font-size="9" font-weight="700" fill="#1a1206" font-family="'DM Mono',monospace">62</text></g>
+        <g transform="translate(86,8) scale(0.68)" opacity="0.55"><g stroke="#fff" stroke-width="2.6" fill="none" stroke-linejoin="round"><path d="M11 27 L7 42 M29 27 L33 42 M12 36 L28 36"/><path d="M3 11 L20 2 L37 11 Z"/><rect x="7" y="11" width="26" height="16" rx="3.5"/></g><path d="M11 27 L7 42 M29 27 L33 42 M12 36 L28 36" stroke="#2d3a1f" stroke-width="2.2" fill="none"/><path d="M3 11 L20 2 L37 11 Z" fill="#2d3a1f"/><rect x="7" y="11" width="26" height="16" rx="3.5" fill="#2d3a1f"/></g>
+      </svg>
+      <div class="gc-empty-title">Map your ground</div>
+      <div class="gc-empty-line">Draw your boundary, pin your high seats, and let the wind pick tonight&rsquo;s sit.</div>
+      <span class="gc-empty-btn">Start with one seat &rsaquo;</span>
+    </div>
+  </div>
+</a>
+
 <!-- Suite tools (Cull Diary + Ballistic Calculator) — persistent band above the reference tabs (design-audit IA fix: were nested in the Species panel) -->
 <div class="home-tools">
     <!-- Cull Diary — compact tool card (keeps #diary-card-* hooks for syncDiaryCard) -->
