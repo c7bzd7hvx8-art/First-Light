@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.68';
+const FL_JS_BUILD = '12.69';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -1401,7 +1401,7 @@ function initDiaryFlUi() {
         break;
       case 'toggle-map-fullscreen': toggleMapFullscreen(); break;
       case 'filter-cull-map': filterCullMap(el.getAttribute('data-species'), el); break;
-      case 'go': go(el.getAttribute('data-view')); break;
+      case 'go': go(el.getAttribute('data-view'), el.hasAttribute('data-restore-scroll')); break;
       case 'sync-offline': syncOfflineQueue(); break;
       case 'open-quick': openQuickEntry(); break;
       case 'open-new': openNewEntry(); break;
@@ -2029,7 +2029,8 @@ function confirmDiscardUnsavedForm() {
   return true;
 }
 
-function go(id) {
+var flViewScrollMem = {};
+function go(id, restoreScroll) {
   var target = document.getElementById(id);
   if (!target) return;
   // A pending facing-aim (round 31) dies on ANY navigation — without this a
@@ -2048,6 +2049,12 @@ function go(id) {
   // Exit diary-list select mode whenever we leave the list — prevents the
   // floating select bar from hanging around on stats / detail / form views.
   if (id !== 'v-list' && flSelection.active) exitSelectMode();
+  // Remember how far down the outgoing view was scrolled, so back-style
+  // navigations (restoreScroll) land where the user left off instead of
+  // snapping to the top (owner: "it doesn't remember where you had
+  // scrolled to").
+  var flCurView = document.querySelector('.view.active');
+  if (flCurView) flViewScrollMem[flCurView.id] = window.scrollY || 0;
   VIEWS.forEach(function(v){
     var el = document.getElementById(v);
     if (el) el.classList.remove('active');
@@ -2064,7 +2071,7 @@ function go(id) {
     var activeNav = document.getElementById(NAV_MAP[id]);
     if (activeNav) activeNav.classList.add('on');
   }
-  window.scrollTo(0,0);
+  window.scrollTo(0, restoreScroll ? (flViewScrollMem[id] || 0) : 0);
   if (id === 'v-form') {
     var fs = target.querySelector('.form-scroll');
     if (fs) fs.scrollTop = 0;
@@ -2112,7 +2119,10 @@ function go(id) {
 
 function formBack() {
   if (!confirmDiscardUnsavedForm()) return;
-  go('v-list');
+  // Edits only ever open from the detail view, so back returns there; a
+  // fresh capture came from the list, which keeps its scroll position.
+  if (editingId) { openDetail(editingId); return; }
+  go('v-list', true);
 }
 
 var formProgressRaf = false;
@@ -4798,7 +4808,7 @@ async function openDetail(id) {
     var htmlB = '<div class="detail-hero detail-hero--dense detail-hero--blank sp-blank" style="background:linear-gradient(135deg,#4a3a12,#1a1408);">'
       + '<div class="detail-blank-hero-ic" aria-hidden="true">' + SVG_BLANK_DAY_LANDSCAPE + '</div>'
       + '<div class="detail-hero-ov"></div>'
-      + '<button type="button" class="detail-hero-back" data-fl-action="go" data-view="v-list" aria-label="Back to list">←</button>'
+      + '<button type="button" class="detail-hero-back" data-fl-action="go" data-view="v-list" data-restore-scroll="1" aria-label="Back to list">←</button>'
       + '<div class="detail-hero-bot">'
       + '<div class="detail-species">Blank day</div>'
       + '<div class="detail-chips">'
@@ -5006,7 +5016,7 @@ async function openDetail(id) {
     + (_safeHero ? ' data-fl-action="open-photo-lb" data-photo-url="' + encodeURIComponent(_safeHero) + '"' : '') + '>'
     + heroImg
     + '<div class="detail-hero-ov"></div>'
-    + '<button type="button" class="detail-hero-back" data-fl-action="go" data-view="v-list" aria-label="Back to list">←</button>'
+    + '<button type="button" class="detail-hero-back" data-fl-action="go" data-view="v-list" data-restore-scroll="1" aria-label="Back to list">←</button>'
     + (_safeHero ? '<button type="button" class="detail-hero-expand" data-fl-action="open-photo-lb" data-photo-url="' + encodeURIComponent(_safeHero) + '" aria-label="View photo full size">⤢</button>' : '')
     + '<div class="detail-hero-bot">'
     + '<div class="detail-species">' + esc(e.species || '') + ' ' + esc(sxLbl) + '</div>'
@@ -7920,7 +7930,14 @@ async function saveEntry() {
     var gVal = getGroundValue();
     if (gVal) saveGround(gVal);
     await loadEntries();
-    go('v-list');
+    if (editingId) {
+      // Owner: "instead of it taking you back to the detailed view of that
+      // entry it takes you back to the diary list view" - an edit returns to
+      // the entry it came from (edits only ever open from the detail view).
+      openDetail(editingId);
+    } else {
+      go('v-list');
+    }
 
     // Silently fetch and attach weather in background (last 7 days only).
     var savedId = editingId || (result.data && result.data[0] && result.data[0].id) || null;
