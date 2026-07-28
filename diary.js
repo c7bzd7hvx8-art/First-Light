@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.62';
+const FL_JS_BUILD = '12.64';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -15575,21 +15575,21 @@ function standMarkerIcon(score, isSelected, mini, name, facingDeg) {
   // 40px read too big in the field (owner, 2026-07-27 "Too big?") - 34px keeps
   // the tower legible while giving the wood back to the map; the badge grows a
   // touch inside the viewBox to hold score legibility at the smaller render.
-  var W = isSelected ? 34 : 30;
+  var W = isSelected ? 31 : 27;
   var H = Math.round(W * 46 / 40);
   var ay = Math.round(H * 0.41);
   var badgeTxt = band === '#d8b054' ? '#1a1206' : '#fff';
   var svg = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 40 46" style="display:block;overflow:visible;'
     + (isSelected ? 'filter:drop-shadow(0 0 4px rgba(240,204,116,0.9));' : 'filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4));') + '">'
-    + '<g stroke="#ffffff" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" fill="none">'
+    + '<g stroke="#ffffff" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" fill="none">'
     + '<path d="M11 27 L7 44 M29 27 L33 44 M12.5 33.5 L27.5 33.5 M11 39.5 L29 39.5"/>'
     + '<path d="M3 11 L20 2 L37 11 Z"/><rect x="7" y="11" width="26" height="16" rx="3.5"/></g>'
     + '<path d="M11 27 L7 44 M29 27 L33 44 M12.5 33.5 L27.5 33.5 M11 39.5 L29 39.5" stroke="#2d3a1f" stroke-width="2.1" fill="none" stroke-linecap="round"/>'
     + '<path d="M3 11 L20 2 L37 11 Z" fill="#2d3a1f"/>'
     + '<rect x="7" y="11" width="26" height="16" rx="3.5" fill="#2d3a1f"/>'
     + '<rect x="11.5" y="15" width="17" height="5.5" rx="1.8" fill="rgba(240,228,192,0.3)"/>'
-    + '<circle cx="32" cy="9" r="10.4" fill="' + band + '" stroke="' + (isSelected ? '#f0cc74' : '#ffffff') + '" stroke-width="' + (isSelected ? 3 : 2.4) + '"/>'
-    + '<text x="32" y="12.8" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="11.2" font-weight="700" fill="' + badgeTxt + '">' + txt + '</text>'
+    + '<circle cx="32" cy="9" r="11" fill="' + band + '" stroke="' + (isSelected ? '#f0cc74' : '#ffffff') + '" stroke-width="' + (isSelected ? 3 : 2.4) + '"/>'
+    + '<text x="32" y="12.8" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="12" font-weight="700" fill="' + badgeTxt + '">' + txt + '</text>'
     + '</svg>';
   // Name pill (round 24 clarification — owner: "shall these not have their
   // names?"): the seat's short name rides under the badge at badge zoom,
@@ -15638,7 +15638,10 @@ function flStandMarkerIconFor(id, isSelected) {
 }
 
 // Badges need room: below this zoom, markers render as dots (colour only).
-var STANDS_BADGE_MIN_ZOOM = 12;
+// 12 -> 14 (owner, 2026-07-28 "Still too big"): towers only from true working
+// zoom, matching disableClusteringAtZoom - estate overviews show the small
+// colour dots, which is what an overview needs anyway.
+var STANDS_BADGE_MIN_ZOOM = 14;
 
 /** Are we zoomed in enough for numbered badges? */
 function flStandsBadgeZoom() {
@@ -16241,9 +16244,14 @@ function syncStandStepMarkers() {
     // P82: unqualified, this read as a caption for whatever was below it —
     // wrong the moment the view switched to Plan week. It has always described
     // the pins directly above it; now it says which.
-    note.textContent = badges
+    // z-level suffix (owner, 2026-07-28 "How can I tell the zoom level?"):
+    // towers appear from z14, clustering stops at z14 - tuning conversations
+    // need the number, and map-literate users like having it anyway.
+    var zTag = '';
+    try { if (standsMap) zTag = ' · z' + standsMap.getZoom(); } catch (e) { /* fine */ }
+    note.textContent = (badges
       ? 'Tap a pin on the map for its forecast · numbers score ' + when
-      : 'Tap a pin on the map for its forecast · colours score ' + when + ' · zoom in for numbers';
+      : 'Tap a pin on the map for its forecast · colours score ' + when + ' · zoom in for numbers') + zTag;
     // ST-3/ST-10: setting textContent above has already cleared any previous
     // button, so this rebuilds from scratch on every sync and never stacks.
     var offN = flStandsOffScreenCount();
