@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.69';
+const FL_JS_BUILD = '12.71';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -1567,7 +1567,10 @@ function initDiaryFlUi() {
       case 'close-photo-lb': closePhotoLightbox(); break;
       case 'open-detail':
         if (flSelection.active) toggleEntrySelection(el.getAttribute('data-entry-id'));
-        else openDetail(el.getAttribute('data-entry-id'));
+        else {
+          if (flMapModal) flCloseMapModal(); // popup inside the fullscreen map
+          openDetail(el.getAttribute('data-entry-id'));
+        }
         break;
       case 'enter-select-mode': enterSelectMode(); break;
       case 'exit-select-mode': exitSelectMode(); break;
@@ -10839,21 +10842,6 @@ function renderCullMapPins() {
 
   var bounds = [];
 
-  // Branded, clickable popup shared by pins and heat blobs, so a cull location
-  // always links back to its record (never a read-only dead marker).
-  function cullPopupHtml(e) {
-    var sexSym = e.sex === 'm' ? ' &#9794;' : (e.sex === 'f' ? ' &#9792;' : '');
-    return '<div class="flp">'
-      + '<div class="flp-hdr">' + esc(e.species || 'Cull') + sexSym + '</div>'
-      + '<div class="flp-sub">' + esc(e.date || '') + (e.time ? ' · ' + esc(e.time) : '') + '</div>'
-      + (hasValue(e.weight_kg) ? '<div class="flp-row">' + esc(String(e.weight_kg)) + ' kg</div>' : '')
-      + (e.tag_number ? '<div class="flp-row"><b>Tag</b> ' + esc(e.tag_number) + '</div>' : '')
-      + (e.shot_placement ? '<div class="flp-row">' + esc(e.shot_placement) + '</div>' : '')
-      + (e.location_name ? '<div class="flp-loc">' + esc(e.location_name) + '</div>' : '')
-      + '<button type="button" class="flp-open" data-fl-action="open-detail" data-entry-id="' + esc(e.id) + '">Open entry ›</button>'
-      + '</div>';
-  }
-
   if (cullHeat) {
     // Density "heat" (Batch 2): one translucent disc per cull; overlaps stack
     // into warm hotspots so favoured ground reads at a glance, no pin clutter.
@@ -17588,6 +17576,22 @@ function flAddSatLayerWithFallback(map) {
   }
   return sat;
 }
+// Branded, clickable popup shared by the cull map's pins and heat blobs AND
+// the detail-view fullscreen maps, so a cull location always links back to
+// its record (never a read-only dead marker).
+function cullPopupHtml(e) {
+  var sexSym = e.sex === 'm' ? ' &#9794;' : (e.sex === 'f' ? ' &#9792;' : '');
+  return '<div class="flp">'
+    + '<div class="flp-hdr">' + esc(e.species || 'Cull') + sexSym + '</div>'
+    + '<div class="flp-sub">' + esc(e.date || '') + (e.time ? ' · ' + esc(e.time) : '') + '</div>'
+    + (hasValue(e.weight_kg) ? '<div class="flp-row">' + esc(String(e.weight_kg)) + ' kg</div>' : '')
+    + (e.tag_number ? '<div class="flp-row"><b>Tag</b> ' + esc(e.tag_number) + '</div>' : '')
+    + (e.shot_placement ? '<div class="flp-row">' + esc(e.shot_placement) + '</div>' : '')
+    + (e.location_name ? '<div class="flp-loc">' + esc(e.location_name) + '</div>' : '')
+    + '<button type="button" class="flp-open" data-fl-action="open-detail" data-entry-id="' + esc(e.id) + '">Open entry ›</button>'
+    + '</div>';
+}
+
 function flMiniMapCommon(el, lat, lng) {
   var map = L.map(el, {
     zoomControl: false, attributionControl: false, dragging: false,
@@ -17600,8 +17604,27 @@ function flMiniMapCommon(el, lat, lng) {
 }
 // Feature drawing is shared between the little preview and the fullscreen modal,
 // so both show exactly the same picture — just at different sizes / interactivity.
-function flDrawStandMapFeatures(map, s, doFit) {
+function flDrawStandMapFeatures(map, s, doFit, interactive) {
   var ring = L.circle([s.lat, s.lng], { radius: STAND_HISTORY_RADIUS_M, color: '#ffffff', weight: 1.3, opacity: 0.7, fill: false, dashArray: '4 6' }).addTo(map);
+  // Scent cone for the current hour's wind — the stands map's "Now" step,
+  // verdict-coloured the same way (owner: "when you click a high seat from
+  // the list for detailed view, it doesn't give you scent cones"). Drawn
+  // before the facing wedge so the sightline stays on top, like the big map.
+  var coneChip = '';
+  try {
+    var sdFc = flStandsState.forecasts && flStandsState.forecasts.byStandId[s.id];
+    var sdAw = flStandConeWind(s, sdFc, { mode: 'now', di: 0 }, Math.floor(flToMinutes(new Date()) / 60));
+    if (sdAw && sdAw.dirDeg != null) {
+      var sdPoly = flScentConePolygon(s.lat, s.lng, sdAw.dirDeg, sdAw.speedKmh);
+      if (sdPoly.length) {
+        var sdV = flScentConeVerdict(sdAw.dirDeg, sdAw.speedKmh, s.bad_winds || []);
+        var sdSt = SWIND_CONE_STYLE[sdV] || SWIND_CONE_STYLE.clear;
+        L.polygon(sdPoly.map(function(p){ return [p.lat, p.lng]; }),
+          { color: sdSt.color, weight: 1.6, opacity: 0.8, fillColor: sdSt.fill, fillOpacity: 0.24, interactive: false }).addTo(map);
+        coneChip = '<span class="mml"><span class="mml-dot" style="background:' + sdSt.fill + ';"></span>Scent now</span>';
+      }
+    }
+  } catch (e) { /* forecast not loaded yet — the map still renders, cone joins on the repaint */ }
   if (s.facing != null) {
     L.polygon(flFacingConePolygon(s.lat, s.lng, s.facing, STAND_HISTORY_RADIUS_M * 0.82), {
       color: '#d8b054', weight: 1, opacity: 0.65, fillColor: '#d8b054', fillOpacity: 0.16
@@ -17611,12 +17634,16 @@ function flDrawStandMapFeatures(map, s, doFit) {
   near.forEach(function(e) {
     var clr = SP_COLORS[e.species] || '#5a7a30';
     if (e.species) seen[e.species] = clr;
-    L.marker([e.lat, e.lng], { icon: makeMarkerIcon(clr, e.sex), opacity: 0.92 }).addTo(map);
+    var mk = L.marker([e.lat, e.lng], { icon: makeMarkerIcon(clr, e.sex), opacity: 0.92, interactive: !!interactive }).addTo(map);
+    // Tappable only on the fullscreen modal (the little preview is one big
+    // expand button; interactive markers there would eat the tap).
+    if (interactive) mk.bindPopup(cullPopupHtml(e), { className: 'fl-cull-popup' });
   });
   L.marker([s.lat, s.lng], { icon: flSeatMarkerIcon(), zIndexOffset: 1000 }).addTo(map);
   if (doFit) { try { map.fitBounds(ring.getBounds(), { padding: [8, 8] }); } catch (e) {} }
   var lh = '<span class="mml"><svg width="12" height="14" viewBox="0 0 40 46" style="flex-shrink:0;"><g stroke="#fff" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M11 27 L7 44 M29 27 L33 44 M12 39 L30 39"/><path d="M3 11 L20 2 L37 11 Z"/><rect x="7" y="11" width="26" height="16" rx="3.5"/></g><path d="M11 27 L7 44 M29 27 L33 44 M12 39 L30 39" stroke="#2d3a1f" stroke-width="2.2" fill="none"/><path d="M3 11 L20 2 L37 11 Z" fill="#2d3a1f"/><rect x="7" y="11" width="26" height="16" rx="3.5" fill="#2d3a1f"/></svg>This seat</span>';
   if (s.facing != null) lh += '<span class="mml"><span class="mml-cone"></span>Looks ' + esc(flWindDirLabel8(s.facing)) + '</span>';
+  lh += coneChip;
   Object.keys(seen).forEach(function(sp) {
     var n = near.filter(function(e){ return e.species === sp; }).length;
     lh += '<span class="mml"><span class="mml-dot" style="background:' + seen[sp] + ';"></span>' + esc(sp) + ' · ' + n + '</span>';
@@ -17624,14 +17651,15 @@ function flDrawStandMapFeatures(map, s, doFit) {
   if (!Object.keys(seen).length) lh += '<span class="mml mml-none">No culls logged within ' + STAND_HISTORY_RADIUS_M + ' m yet</span>';
   return { ring: ring, legend: lh };
 }
-function flDrawEntryMapFeatures(map, e, doFit) {
+function flDrawEntryMapFeatures(map, e, doFit, interactive) {
   var seen = {};
   (allEntries || []).forEach(function(x) {
     if (x.id === e.id || x.lat == null || x.lng == null || isBlankDayEntry(x)) return;
     if (flDistMeters(e.lat, e.lng, x.lat, x.lng) > STAND_HISTORY_RADIUS_M) return;
     var clr = SP_COLORS[x.species] || '#5a7a30';
     if (x.species) seen[x.species] = clr;
-    L.marker([x.lat, x.lng], { icon: makeMarkerIcon(clr, x.sex), opacity: 0.5 }).addTo(map);
+    var mk = L.marker([x.lat, x.lng], { icon: makeMarkerIcon(clr, x.sex), opacity: 0.5, interactive: !!interactive }).addTo(map);
+    if (interactive) mk.bindPopup(cullPopupHtml(x), { className: 'fl-cull-popup' });
   });
   var kc = SP_COLORS[e.species] || '#5a7a30';
   L.marker([e.lat, e.lng], { icon: makeMarkerIcon(kc, e.sex), zIndexOffset: 1000 }).addTo(map);
@@ -17708,7 +17736,7 @@ function flOpenMapModal(kind, id) {
   flMapModal = { map: map, el: ov };
   flAddSatLayerWithFallback(map);
   try { renderGroundBoundaries(map); } catch (e) {}
-  var res = (kind === 'stand') ? flDrawStandMapFeatures(map, rec, true) : flDrawEntryMapFeatures(map, rec, true);
+  var res = (kind === 'stand') ? flDrawStandMapFeatures(map, rec, true, true) : flDrawEntryMapFeatures(map, rec, true, true);
   var leg = document.getElementById('fl-map-modal-legend');
   if (leg && res && res.legend) leg.innerHTML = res.legend;
   try { history.pushState({ flMapModal: 1 }, ''); } catch (e) {}
