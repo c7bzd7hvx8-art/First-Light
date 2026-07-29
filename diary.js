@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.72';
+const FL_JS_BUILD = '12.73';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -15067,10 +15067,16 @@ function flInitStandsCtlPin() {
     }
     flStandsPinApply();
   }).observe(sent);
+  // rootMargin shrinks the root's top by the pinned stack's worst-case
+  // footprint (filter bottom = 100px offset + 34px button + max ~59px iPhone
+  // inset + margin), so "frame visible" means "the visible strip can HOLD the
+  // pinned column". Without this, a thin remaining strip kept the pin alive
+  // and the filter button floated below the map onto the caption (owner
+  // screenshot, 2026-07-28). Constant on purpose: still zero JS measuring.
   new IntersectionObserver(function (entries) {
     for (var i = 0; i < entries.length; i++) flStandsPinFrameVis = entries[i].isIntersecting;
     flStandsPinApply();
-  }).observe(frame);
+  }, { rootMargin: '-204px 0px 0px 0px' }).observe(frame);
 }
 flInitStandsCtlPin();
 
