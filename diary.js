@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.71';
+const FL_JS_BUILD = '12.72';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -12228,8 +12228,8 @@ function groundMarkerGlyph(type) {
 /** PURE (G10): the badge painted on maps — dark chip, moss glyph, optional
  *  name pill underneath. Sized for divIcon (iconSize [24,24], anchor centre). */
 function groundMarkerBadgeHtml(type, name) {
-  return '<div style="width:24px;height:24px;border-radius:8px;background:rgba(20,30,12,0.92);'
-    + 'border:1.5px solid rgba(216,176,84,0.55);color:#9ec46a;display:flex;align-items:center;'
+  return '<div style="width:24px;height:24px;border-radius:8px;background:rgba(24,18,8,0.94);'
+    + 'border:1.5px solid rgba(216,176,84,0.8);color:#e2bd60;display:flex;align-items:center;'
     + 'justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.4);">' + groundMarkerGlyph(type) + '</div>'
     + (name
       ? '<div class="gmk-name" style="position:absolute;top:26px;left:50%;transform:translateX(-50%);background:rgba(10,20,6,0.82);'
