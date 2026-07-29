@@ -4789,7 +4789,22 @@ if ('serviceWorker' in navigator) {
   function renderGroundCard(signedIn) {
     var card = document.getElementById('ground-card');
     if (!card) return;
-    if (!signedIn) { card.style.display = 'none'; return; }
+    var hint = document.getElementById('gc-signup-hint');
+    if (!signedIn) {
+      // Signed-out visitors get the SAME mapping pitch (owner, 2026-07-29:
+      // a new visitor "isn't seeing anything obvious" - the v3 flagship was
+      // invisible before sign-in). Static markup, nothing personal; the
+      // #stands deep link survives the auth gate, so the tap lands on the
+      // Stands view right after sign-up.
+      card.style.display = 'block';
+      var f0 = document.getElementById('gc-full');
+      var e0 = document.getElementById('gc-empty');
+      if (f0) f0.style.display = 'none';
+      if (e0) e0.style.display = 'block';
+      if (hint) hint.style.display = 'block';
+      return;
+    }
+    if (hint) hint.style.display = 'none';
     var snap = null;
     try { snap = JSON.parse(localStorage.getItem('fl-home-ground-card-v1') || 'null'); } catch (e) { /* fine */ }
     var seats = (snap && snap.seats) || [];

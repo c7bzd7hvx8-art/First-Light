@@ -2692,6 +2692,18 @@ body.in-select-mode .entries{padding-bottom:92px;}
    wood gets saved as a high seat with nothing ever saying it was a guess. */
 .stnd-loc-approx{display:block;margin-top:3px;font-size:10.5px;line-height:1.35;font-weight:600;color:var(--gold-ink);}
 .stnd-save-btn{display:block;width:100%;margin-top:16px;padding:13px;border:none;border-radius:12px;background:linear-gradient(135deg,var(--moss),#3d5a1c);color:#fff;font-size:14px;font-weight:700;cursor:pointer;}
+.stnd-empty-ground{background:none;border:1.5px solid rgba(216,176,84,0.55);color:#f0cc74;}
+/* Grounds bar (2026-07-29): one-tap route to the grounds sheet, sat between
+   the next-sit card and the map. Eyebrow matches YOUR NEXT SIT; the icon is
+   the user's own boundary silhouette when one exists. */
+.stnd-gbar{position:relative;display:flex;align-items:center;gap:11px;width:100%;text-align:left;overflow:hidden;background:radial-gradient(140% 180% at 12% 0%, #223616 0%, #16260e 45%, #101d0b 100%);border:1.5px solid rgba(216,176,84,0.42);border-radius:16px;padding:10px 12px 10px 14px;margin:0 0 12px;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,0.06);color:inherit;font-family:inherit;-webkit-tap-highlight-color:transparent;}
+.stnd-gbar::after{content:'';position:absolute;left:0;top:14%;bottom:14%;width:3px;border-radius:3px;background:linear-gradient(180deg,rgba(216,176,84,0),rgba(216,176,84,0.85),rgba(216,176,84,0));}
+.stnd-gbar-ic{flex-shrink:0;filter:drop-shadow(0 2px 5px rgba(0,0,0,0.45));}
+.stnd-gbar-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+.stnd-gbar-eyebrow{font-family:'DM Mono',monospace;font-size:9.5px;letter-spacing:2.2px;color:#d8b054;font-weight:500;}
+.stnd-gbar-line{font-size:13.5px;font-weight:700;color:#f2efe9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.stnd-gbar-line em{font-style:normal;font-weight:400;color:rgba(242,239,233,0.55);}
+.stnd-gbar-go{flex-shrink:0;border:1.5px solid rgba(216,176,84,0.55);color:#f0cc74;border-radius:999px;padding:6px 13px;font-size:12px;font-weight:700;background:rgba(216,176,84,0.10);white-space:nowrap;}
 #stand-sheet-ov .ff textarea{resize:vertical;min-height:64px;}
 .stnd-tonight{display:block;width:100%;text-align:left;margin:0 0 12px;padding:0;border:1px solid rgba(216,176,84,0.4);border-radius:16px;background:linear-gradient(150deg,#12280d,#0a1a06);box-shadow:0 3px 14px rgba(0,0,0,0.3);cursor:pointer;overflow:hidden;-webkit-tap-highlight-color:transparent;}
 .stnd-th-eyebrow{font:700 10px/1 'DM Mono',monospace;letter-spacing:1.2px;text-transform:uppercase;color:rgba(216,176,84,0.9);padding:13px 16px 0;}
@@ -2948,6 +2960,15 @@ body.in-select-mode .entries{padding-bottom:92px;}
 /* Draggable vertex handles (Leaflet divIcon content) */
 .gvx{width:26px;height:26px;border-radius:50%;background:rgba(216,176,84,0.92);border:2.5px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,0.5);box-sizing:border-box;}
 .gvx.gvx-armed{background:var(--red);}
+/* 2026-07-29: calm closed-state dot — line boundary, not a series of blobs. */
+.gvx-calm{width:10px;height:10px;border-radius:50%;background:rgba(216,176,84,0.95);border:1.5px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.45);box-sizing:border-box;}
+/* Zoom-bucketed handle sizing: visual size follows the view; hit area stays. */
+#gmap-div.gmz-mid .gvx{transform:scale(0.65);}
+#gmap-div.gmz-mid .gvx-mid{transform:scale(0.7);}
+#gmap-div.gmz-mid .gvx-calm{transform:scale(0.8);}
+#gmap-div.gmz-far .gvx{transform:scale(0.42);}
+#gmap-div.gmz-far .gvx-mid{display:none;}
+#gmap-div.gmz-far .gvx-calm{transform:scale(0.6);}
 
 /* ── G3: boundaries on every map + density strip ── */
 /* Ground name label at the largest parcel's centroid (zoom-gated in JS).

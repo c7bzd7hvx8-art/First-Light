@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.73';
+const FL_JS_BUILD = '12.76';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -1302,6 +1302,7 @@ function initDiaryFlUi() {
       case 'gmap-close-ring': gmapCloseRing(); break;
       case 'gmap-save': gmapSave(); break;
       case 'gmap-cancel': gmapCancel(); break;
+      case 'gmap-adjust': gmapAdjustToggle(); break;
       case 'gmap-layer': setGmapLayer(el.getAttribute('data-layer')); break;
       case 'gmap-locate': gmapLocate(); break;
       // G4 (GROUNDS-PLAN §6)
@@ -2258,7 +2259,9 @@ flOnReady(function() {
 });
 
 window.addEventListener('beforeunload', function(e) {
-  if (!hasUnsavedFormChanges()) return;
+  var gmapEd = (typeof flGroundsState !== 'undefined') && flGroundsState.editor;
+  var gmapDirty = !!(gmapEd && gmapEd.mode !== 'measure' && gmapEd.ring.length && gmapEd.undo.length);
+  if (!hasUnsavedFormChanges() && !gmapDirty) return;
   e.preventDefault();
   e.returnValue = '';
 });
@@ -3385,7 +3388,7 @@ function resetSessionState() {
 // erasure. App display prefs + the on-device ballistics profiles are left intact.
 function purgeLocalUserDataCaches() {
   try {
-    var prefixes = ['fl-grounds-cache', 'fl-stands-cache', 'fl-stands-forecast', 'fl-score-log', 'fl-last-ground', 'fl-my-species', 'fl-home-ground-card'];
+    var prefixes = ['fl-grounds-cache', 'fl-stands-cache', 'fl-stands-forecast', 'fl-score-log', 'fl-last-ground', 'fl-my-species', 'fl-home-ground-card', 'fl-gmap-draft'];
     var extra = [OFFLINE_KEY + '-corrupt', OFFLINE_KEY + '-deadletter'];
     var kill = [];
     for (var i = 0; i < localStorage.length; i++) {
@@ -12180,7 +12183,7 @@ function gmapReadoutText(ring, closed, mode, kind) {
 }
 
 /** PURE: the helper line for the current mode (vm-extracted). */
-function gmapHintText(closed, mode, kind) {
+function gmapHintText(closed, mode, kind, adjusting) {
   if (mode === 'measure') {
     // Section 6 (2026-07-26): "Undo to reopen the path" over-promised. Undo is
     // one stack, and closing pushed a snapshot onto it along with everything
@@ -12200,9 +12203,10 @@ function gmapHintText(closed, mode, kind) {
   // onward — the line drawing them is the same one edit mode uses — but the
   // open-ring hint never said so, so the only way to fix a corner mid-draw
   // looked like Undo-and-start-again. Say it while it is useful.
-  return closed
+  if (!closed) return 'Line the crosshair up on each corner in turn · drag one to adjust it';
+  return adjusting
     ? 'Drag a corner to adjust it · tap a corner twice to remove it'
-    : 'Line the crosshair up on each corner in turn · drag one to adjust it';
+    : 'Looks right? Save it · Adjust corners brings the handles back';
 }
 
 /** PURE (G10): inline glyph per marker type — 13px, currentColor strokes. */
@@ -12320,7 +12324,37 @@ function gmapKindHtml(kind, canRing) {
 /** PURE: the state-dependent button row (vm-extracted). Measure mode never
  *  offers Save — it is a tape measure, not a pencil. A LINE never offers
  *  Close — it saves open at ≥2 points (G9). */
-function gmapButtonsHtml(ring, closed, undoCount, mode, kind) {
+// ── Draft autosave (2026-07-29, forum: "drew in the boundaries of a complex
+// 330 acre farm and I've lost it") ─────────────────────────────────────────
+// The ring lived only in memory, and iOS reloads a backgrounded page without
+// asking. Every gmapRefresh now writes the work-in-progress to localStorage;
+// every ORDERLY exit (save, discard, plain close) clears it. So a draft only
+// ever exists after a disorderly death — exactly the case worth restoring.
+var GMAP_DRAFT_KEY = 'fl-gmap-draft-v1';
+function gmapPersistDraft() {
+  var ed = flGroundsState.editor;
+  if (!ed || ed.mode === 'measure') return;
+  try {
+    if (!ed.ring.length) { localStorage.removeItem(GMAP_DRAFT_KEY); return; }
+    var gSel = document.getElementById('gmap-ground');
+    localStorage.setItem(GMAP_DRAFT_KEY, JSON.stringify({
+      v: 1, ring: ed.ring, closed: !!ed.closed, kind: ed.kind, mtype: ed.mtype,
+      ltype: ed.ltype, featureId: ed.featureId || null,
+      ground: (gSel && gSel.value) || ed.ground || null, at: Date.now()
+    }));
+  } catch (e) { /* storage full — the live editor still works */ }
+}
+function gmapDraftNow() {
+  try {
+    var d = JSON.parse(localStorage.getItem(GMAP_DRAFT_KEY) || 'null');
+    return (d && d.v === 1 && Array.isArray(d.ring) && d.ring.length) ? d : null;
+  } catch (e) { return null; }
+}
+function gmapClearDraft() {
+  try { localStorage.removeItem(GMAP_DRAFT_KEY); } catch (e) { /* fine */ }
+}
+
+function gmapButtonsHtml(ring, closed, undoCount, mode, kind, adjusting) {
   var n = ring ? ring.length : 0;
   // AF (2026-07-26): the commit button is RESERVED, not conditionally inserted.
   // "Add point" gets tapped over and over — five, eight times for a real parcel —
@@ -12351,6 +12385,8 @@ function gmapButtonsHtml(ring, closed, undoCount, mode, kind) {
     h += '<button type="button" class="gmx-btn pri" data-fl-action="gmap-add-point">✚ Add point</button>';
     h += slot('gmap-close-ring', mode === 'measure' ? 'Close for area' : 'Close ring', n >= 3);
   } else if (mode !== 'measure') {
+    h += '<button type="button" class="gmx-btn sec" data-fl-action="gmap-adjust">'
+      + (adjusting ? 'Done adjusting' : 'Adjust corners') + '</button>';
     // Section 6 (2026-07-26): every closed shape shared one CTA, so the
     // no-shoot editor read "Draw no-shoot zone" in the title bar and offered
     // "✓ Save boundary" underneath it. Name the thing you are actually saving.
@@ -12360,9 +12396,23 @@ function gmapButtonsHtml(ring, closed, undoCount, mode, kind) {
   return h;
 }
 
+function gmapApplyZoomClass() {
+  // Handles are screen-fixed; the land is not (forum: "the point marker
+  // didn't scale with the zoom... the blobs obliterated a lot"). Visually
+  // shrink them as the view widens — the 26px Leaflet hit target stays.
+  if (!gmap) return;
+  var el = document.getElementById('gmap-div');
+  if (!el) return;
+  var z = gmap.getZoom();
+  el.classList.toggle('gmz-mid', z >= 14 && z < 16);
+  el.classList.toggle('gmz-far', z < 14);
+}
+
 function initGmap() {
   if (gmap) return;
   gmap = L.map('gmap-div', { zoomControl: true, attributionControl: false }).setView([54.0, -2.0], 6);
+  gmap.on('zoomend', gmapApplyZoomClass);
+  gmap.whenReady(gmapApplyZoomClass);
   var tiles = mapProviderTileUrls();
   gmapStdLayer = L.tileLayer(tiles.std, tileOptsForUrl(tiles.std)).addTo(gmap);
   gmapSatLayer = L.tileLayer(tiles.sat, tileOptsForUrl(tiles.sat));
@@ -12656,10 +12706,26 @@ function openBoundaryEditor(ground, featureId, kindOpt, seedLatLng) {
     showToast('⚠️ Shape limit reached (' + GROUND_FEATURES_MAX + ') — remove one first');
     return;
   }
+  // Disorderly-death recovery: a NEW editor of the same kind picks the draft
+  // straight back up (never onto an existing feature — that would duplicate).
+  var gmapRestored = null;
+  if (!featureId) {
+    var gmapDraft = gmapDraftNow();
+    if (gmapDraft && !gmapDraft.featureId && gmapDraft.kind === kind) {
+      ring = gmapDraft.ring;
+      closed = !!gmapDraft.closed;
+      if (kind === 'marker') mtype = gmapDraft.mtype || mtype;
+      if (kind === 'line') ltype = gmapDraft.ltype || ltype;
+      if (!ground && gmapDraft.ground) ground = gmapDraft.ground;
+      gmapRestored = ring.length;
+    }
+  }
   flGroundsState.editor = {
     ground: ground, featureId: featureId || null, ring: ring, closed: closed,
-    kind: kind, mtype: mtype, ltype: ltype, undo: [], armedVertexIdx: -1, armedVertexAt: 0, armedCancelAt: 0
+    kind: kind, mtype: mtype, ltype: ltype, undo: [], armedVertexIdx: -1, armedVertexAt: 0, armedCancelAt: 0,
+    adjusting: false
   };
+  if (gmapRestored) showToast('\u21a9 Restored your unsaved work \u00b7 ' + gmapRestored + (gmapRestored === 1 ? ' point' : ' points'));
   var ov = document.getElementById('gmap-overlay');
   if (ov) { ov.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
   var s = document.getElementById('gmap-sub');
@@ -12828,6 +12894,7 @@ function openBoundaryEditor(ground, featureId, kindOpt, seedLatLng) {
 }
 
 function closeBoundaryEditor() {
+  gmapClearDraft();
   if (gmapWalkWatchId != null) {
     try { navigator.geolocation.clearWatch(gmapWalkWatchId); } catch (_) {}
     gmapWalkWatchId = null;
@@ -12888,12 +12955,20 @@ function gmapAddPoint() {
   gmapRefresh();
 }
 
+function gmapAdjustToggle() {
+  var ed = flGroundsState.editor;
+  if (!ed) return;
+  ed.adjusting = !ed.adjusting;
+  gmapRefresh();
+}
+
 function gmapCloseRing() {
   var ed = flGroundsState.editor;
   if (!ed || ed.closed || ed.ring.length < 3) return;
   gmapWalkStop(true); // G4: closing the ring ends a walk
   gmapSnapshot();
   ed.closed = true;
+  ed.adjusting = false;
   gmapRefresh();
 }
 
@@ -12961,6 +13036,7 @@ function gmapMakeVertexMarker(p, idx) {
 function gmapRefresh() {
   var ed = flGroundsState.editor;
   if (!ed || !gmap) return;
+  gmapPersistDraft();
   if (gmapPreviewLayer) { try { gmap.removeLayer(gmapPreviewLayer); } catch (_) {} gmapPreviewLayer = null; }
   gmapVertexMarkers.forEach(function(m) { try { gmap.removeLayer(m); } catch (_) {} });
   gmapVertexMarkers = [];
@@ -12977,11 +13053,22 @@ function gmapRefresh() {
       : L.polyline(pts, { color: clr, weight: isLine ? 2.6 : 2, opacity: 0.95, dashArray: isLine ? null : '6 5', interactive: false });
     gmapPreviewLayer.addTo(gmap);
   }
-  ed.ring.forEach(function(p, idx) { gmapVertexMarkers.push(gmapMakeVertexMarker(p, idx)); });
+  // 2026-07-29 (forum: "once drawn, I'd just like to see a line boundary not
+  // a series of blobs"): a closed ring rests CALM — line + small quiet dots,
+  // no drag handles, no midpoints — until Adjust corners wakes them.
+  var gmapCalm = ed.closed && !ed.adjusting && !isLine && !isMarker && !isMeasure;
+  if (gmapCalm) {
+    ed.ring.forEach(function(p) {
+      var calmIcon = L.divIcon({ html: '<div class="gvx-calm"></div>', iconSize: [10, 10], iconAnchor: [5, 5], className: '' });
+      gmapVertexMarkers.push(L.marker([p[0], p[1]], { icon: calmIcon, keyboard: false, interactive: false }).addTo(gmap));
+    });
+  } else {
+    ed.ring.forEach(function(p, idx) { gmapVertexMarkers.push(gmapMakeVertexMarker(p, idx)); });
+  }
   // G4: midpoint insert handles — tap one to add a corner on that edge.
   // G9: lines get them too while editing, but never on the phantom closing
   // edge (an open path has length-1 edges).
-  if (ed.closed && ed.ring.length >= 3 && ed.ring.length < MAX_BOUNDARY_VERTICES && !isLine) {
+  if (ed.closed && ed.adjusting && ed.ring.length >= 3 && ed.ring.length < MAX_BOUNDARY_VERTICES && !isLine) {
     for (var mi = 0; mi < ed.ring.length; mi++) {
       gmapVertexMarkers.push(gmapMakeMidMarker(mi));
     }
@@ -13035,9 +13122,9 @@ function gmapRefresh() {
   // polygon's problem, so lines never see the hint.
   if (warn) warn.style.display = (!isMeasure && !isLine && ed.ring.length >= 4 && ringSelfIntersects(ed.ring)) ? 'block' : 'none';
   var hint = document.getElementById('gmap-hint');
-  if (hint) hint.textContent = gmapHintText(ed.closed, ed.mode, ed.kind);
+  if (hint) hint.textContent = gmapHintText(ed.closed, ed.mode, ed.kind, ed.adjusting);
   var btns = document.getElementById('gmap-btns');
-  if (btns) btns.innerHTML = gmapButtonsHtml(ed.ring, ed.closed, ed.undo.length, ed.mode, ed.kind);
+  if (btns) btns.innerHTML = gmapButtonsHtml(ed.ring, ed.closed, ed.undo.length, ed.mode, ed.kind, ed.adjusting);
   // AE: the panel just changed height (a kind row appeared, a Save button
   // arrived, a warning wrapped to two lines) — re-aim the crosshair at what is
   // still visible. Done last, after every element above has its final size.
@@ -16550,8 +16637,81 @@ function standListRowHtml(s, showGround) {
     + '</button>';
 }
 
+/** PURE (vm-extracted by tests): fit a [lat,lng] ring into a square SVG
+ *  viewBox, centred, cos-corrected — the grounds bar's boundary silhouette.
+ *  Returns an SVG path string, or '' when the ring is degenerate. */
+function flGbarRingPath(ring, box, pad) {
+  if (!ring || ring.length < 3) return '';
+  var minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity, i;
+  for (i = 0; i < ring.length; i++) {
+    if (ring[i][0] < minLat) minLat = ring[i][0];
+    if (ring[i][0] > maxLat) maxLat = ring[i][0];
+    if (ring[i][1] < minLng) minLng = ring[i][1];
+    if (ring[i][1] > maxLng) maxLng = ring[i][1];
+  }
+  if (!isFinite(minLat) || maxLat - minLat <= 0 && maxLng - minLng <= 0) return '';
+  var midLat = (minLat + maxLat) / 2;
+  var kx = Math.cos(midLat * Math.PI / 180);
+  var spanX = Math.max((maxLng - minLng) * kx, 1e-9);
+  var spanY = Math.max(maxLat - minLat, 1e-9);
+  var sc = Math.min((box - 2 * pad) / spanX, (box - 2 * pad) / spanY);
+  var cLng = (minLng + maxLng) / 2;
+  var step = Math.max(1, Math.ceil(ring.length / 28)); // icon needs no more
+  var d = '';
+  for (i = 0; i < ring.length; i += step) {
+    var x = box / 2 + (ring[i][1] - cLng) * kx * sc;
+    var y = box / 2 + (midLat - ring[i][0]) * sc;
+    d += (d ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1);
+  }
+  return d + 'Z';
+}
+
+/** The Stands tab's grounds bar (owner, 2026-07-29: "shall we not have a
+ *  direct link/hero card to manage grounds") — one tap to the grounds sheet,
+ *  carrying the user's own boundary silhouette and live acreage. */
+var flGmapDraftNudged = false;
+function renderStandsGroundsBar() {
+  var bar = document.getElementById('stnd-gbar');
+  if (!bar) return;
+  // Once per session: a surviving draft means a drawing died mid-flight —
+  // say so where the user will land next.
+  if (!flGmapDraftNudged && currentUser && !flGroundsState.editor && gmapDraftNow()) {
+    flGmapDraftNudged = true;
+    showToast('\u21a9 You have an unsaved boundary \u2014 tap Draw boundary to restore it');
+  }
+  var stands = flStandsState.list || [];
+  var grounds = savedGrounds || [];
+  if (!currentUser || (!stands.length && !grounds.length)) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  var feats = groundFeaturesNow();
+  var areas = groundAreasHaFrom(feats);
+  var totalHa = 0;
+  Object.keys(areas).forEach(function(k) { totalHa += areas[k]; });
+  var line = document.getElementById('stnd-gbar-line');
+  var first = grounds[0] || (stands[0] && stands[0].ground) || 'Your ground';
+  var name = first + (grounds.length > 1 ? ' + ' + (grounds.length - 1) + ' more' : '');
+  if (line) {
+    line.innerHTML = totalHa > 0
+      ? esc(name) + ' <em>\u00b7 ' + Math.round(totalHa * 2.47105).toLocaleString('en-GB') + ' acres</em>'
+      : esc(name) + ' <em>\u00b7 no boundary drawn yet</em>';
+  }
+  var ringEl = document.getElementById('stnd-gbar-ring');
+  if (ringEl) {
+    var d = '';
+    try {
+      var bf = null;
+      for (var i = 0; i < feats.length; i++) {
+        if (feats[i] && feats[i].kind === 'boundary') { bf = feats[i]; break; }
+      }
+      if (bf) d = flGbarRingPath(parseGeometry(bf.geometry), 56, 9);
+    } catch (e) { /* generic silhouette below */ }
+    ringEl.setAttribute('d', d || 'M16 10 C24 6 34 7 42 12 C50 17 49 27 45 34 C41 42 30 48 21 45 C12 42 8 33 9 25 C10 17 11 12 16 10 Z');
+  }
+}
+
 function renderStandsList() {
   var listEl = document.getElementById('stands-list');
+  renderStandsGroundsBar();
   var emptyEl = document.getElementById('stands-empty');
   var asofEl = document.getElementById('stands-asof');
   if (!listEl) return;
