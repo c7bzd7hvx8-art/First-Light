@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.80';
+const FL_JS_BUILD = '12.82';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -12568,8 +12568,11 @@ function groundMarkerGlyph(type) {
   switch (type) {
     case 'trail_cam':
       return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2.5" y="1.5" width="8" height="10" rx="1.4"/><rect x="4.4" y="3.2" width="4.2" height="2.6" rx="0.6"/><circle cx="6.5" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="6.5" cy="10.2" r="0.7" fill="currentColor" stroke="none"/></svg>';
-    case 'parking':
-      return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 11.5V1.5h3.2a2.8 2.8 0 1 1 0 5.6H4"/></svg>';
+    case 'parking': // 12.82 (owner): the P was the set's only letterform and
+      // read as street signage. A solid pickup silhouette — wheel arches cut
+      // from the body, filled wheels — stays legible at 24px where an outline
+      // truck went mushy, and says what the pin means: the truck is HERE.
+      return '<svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor" stroke="none" aria-hidden="true"><path d="M1.3 9.3V6.1h3.9V4.2h3l1.9 1.9h1.6v3.2h-1.2a1.5 1.5 0 0 0-2.9 0H5.6a1.5 1.5 0 0 0-2.9 0z"/><circle cx="4.1" cy="9.4" r="1.1"/><circle cx="9.2" cy="9.4" r="1.1"/></svg>';
     case 'structure':
       return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 6L6.5 2l5 4"/><path d="M3 6v5.5h7V6"/><rect x="5.2" y="7.2" width="2.6" height="2.6"/></svg>';
     case 'gate':
@@ -12586,8 +12589,14 @@ function groundMarkerGlyph(type) {
 /** PURE (G10): the badge painted on maps — dark chip, moss glyph, optional
  *  name pill underneath. Sized for divIcon (iconSize [24,24], anchor centre). */
 function groundMarkerBadgeHtml(type, name) {
-  return '<div style="width:24px;height:24px;border-radius:8px;background:rgba(24,18,8,0.94);'
-    + 'border:1.5px solid rgba(216,176,84,0.8);color:#e2bd60;display:flex;align-items:center;'
+  // 12.81 (owner, after the HuntStand side-by-side: "may be we improve our
+  // parking too"): parking is the one marker you hunt FOR — arriving in the
+  // dark, a guest following your pin. It inverts the livery: gold chip,
+  // charcoal glyph. Same two brand colours as every other marker, so it pops
+  // on satellite and standard maps alike with no green-on-green regression.
+  var inv = type === 'parking';
+  return '<div style="width:24px;height:24px;border-radius:8px;background:' + (inv ? '#e2bd60' : 'rgba(24,18,8,0.94)') + ';'
+    + 'border:1.5px solid ' + (inv ? 'rgba(24,18,8,0.85)' : 'rgba(216,176,84,0.8)') + ';color:' + (inv ? '#1a1208' : '#e2bd60') + ';display:flex;align-items:center;'
     + 'justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.4);">' + groundMarkerGlyph(type) + '</div>'
     + (name
       ? '<div class="gmk-name" style="position:absolute;top:26px;left:50%;transform:translateX(-50%);background:rgba(10,20,6,0.82);'
@@ -12765,6 +12774,9 @@ function gmapApplyZoomClass() {
 function initGmap() {
   if (gmap) return;
   gmap = L.map('gmap-div', { zoomControl: true, attributionControl: false }).setView([54.0, -2.0], 6);
+  // 12.81: same metric scale as the stands map — you are judging paces while
+  // you trace, this is where scale matters most.
+  L.control.scale({ metric: true, imperial: false, maxWidth: 110, position: 'bottomleft' }).addTo(gmap);
   gmap.on('zoomend', gmapApplyZoomClass);
   gmap.whenReady(gmapApplyZoomClass);
   var tiles = mapProviderTileUrls();
@@ -16275,6 +16287,10 @@ function initStandsMap() {
   if (!document.getElementById('stands-map-div')) return;
   standsMap = L.map('stands-map-div', { zoomControl: true, attributionControl: false })
     .setView([54.0, -2.0], 6); // UK overview until fitBounds
+  // 12.81 (owner, HuntStand side-by-side): the one thing their map had that
+  // ours didn't — a scale bar. Metric only; 1500 ft on a Norfolk farm helps
+  // nobody. Styled to the brand in diary.css.
+  L.control.scale({ metric: true, imperial: false, maxWidth: 110, position: 'bottomleft' }).addTo(standsMap);
   // Round 24: badges ↔ dots follow the zoom level.
   standsMap.on('zoomend', function() { syncStandStepMarkers(); });
   // ST-3: the off-screen count is a function of the viewport, so it has to
