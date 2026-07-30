@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.83';
+const FL_JS_BUILD = '12.84';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -9999,7 +9999,14 @@ function osTileOpts() {
 }
 
 function esriTileOpts() {
-  return { maxZoom: 20, maxNativeZoom: 19 };
+  // className: Esri World_Imagery is only ever a SATELLITE layer here, so the
+  // 12.84 colour grade rides along even on the legacy/fallback path.
+  return { maxZoom: 20, maxNativeZoom: 19, className: 'fl-sat-tiles' };
+}
+
+/** PURE: is this tile url satellite imagery? (Mapbox sat style or Esri.) */
+function flIsSatUrl(url) {
+  return !!(url && (String(url).indexOf('satellite') !== -1 || String(url).indexOf('World_Imagery') !== -1));
 }
 
 function mapProviderTileUrls() {
@@ -10014,9 +10021,18 @@ function mapProviderTileUrls() {
 }
 
 function tileOptsForUrl(url) {
-  if (url && url.indexOf('api.mapbox.com/styles/v1/') !== -1) return mapboxTileOpts();
-  if (url && url.indexOf('api.os.uk/') !== -1) return osTileOpts();
-  return esriTileOpts();
+  var o;
+  if (url && url.indexOf('api.mapbox.com/styles/v1/') !== -1) o = mapboxTileOpts();
+  else if (url && url.indexOf('api.os.uk/') !== -1) o = osTileOpts();
+  else o = esriTileOpts();
+  // 12.84 (owner, HuntStand side-by-side: "crisper and brighter... they are
+  // on mapbox too"): same Maxar pixels — theirs are colour-graded. Satellite
+  // layers get the class the grade hangs off (diary.css); the OS/Mapbox
+  // STREET layers never do, cartography is tuned already. Leaflet puts the
+  // class on the layer's container div, so the filter composites ONCE, not
+  // per tile.
+  if (flIsSatUrl(url)) o.className = 'fl-sat-tiles';
+  return o;
 }
 
 function bumpMapLoadEstimate(context) {

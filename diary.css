@@ -2892,6 +2892,11 @@ body.in-select-mode .entries{padding-bottom:92px;}
 /* Manager sheet (light, settings-sheet territory) */
 .grounds-offline-note{margin-bottom:10px;padding:8px 10px;border-radius:10px;background:rgba(216,176,84,0.1);border:1px solid rgba(216,176,84,0.4);color:#7a6428;font-size:11px;line-height:1.45;}
 /* 12.81: Leaflet's metric scale bar, in brand livery (stands map + editor) */
+/* 12.84: the satellite colour grade — same Maxar imagery HuntStand draws,
+   they grade it and we served it neat. Applies to the sat layer's container
+   only (Mapbox satellite-streets + Esri fallback); street cartography never. */
+.fl-sat-tiles{filter:saturate(1.18) brightness(1.07) contrast(1.05);}
+
 /* 12.83: the map scale — a hairline with end ticks, not a black band. Sits
    bottom-right clear of the Grounds/+/Locate bar; width GLIDES between nice
    round distances instead of snapping every pinch frame. */
