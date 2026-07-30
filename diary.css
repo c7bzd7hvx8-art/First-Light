@@ -2891,17 +2891,55 @@ body.in-select-mode .entries{padding-bottom:92px;}
 /* ── Grounds & boundary editor (G2 — GROUNDS-PLAN.md §4) ── */
 /* Manager sheet (light, settings-sheet territory) */
 .grounds-offline-note{margin-bottom:10px;padding:8px 10px;border-radius:10px;background:rgba(216,176,84,0.1);border:1px solid rgba(216,176,84,0.4);color:#7a6428;font-size:11px;line-height:1.45;}
+/* 12.80: the grounds sheet's dark estate header (grx-hd) */
+.grx-hd{background:radial-gradient(140% 160% at 18% 0%,#2c3d1c 0%,#1a2411 55%,#141c0d 100%);border-radius:20px 20px 0 0;padding:12px 18px 16px;position:relative;}
+.grx-hd-grab{width:40px;height:4px;border-radius:2px;background:rgba(240,228,192,0.25);margin:0 auto 14px;}
+.grx-hd-eyebrow{font-family:'DM Mono',monospace;font-size:9.5px;letter-spacing:2.2px;color:#d8b054;margin-bottom:3px;}
+.grx-hd-title{font-family:'Playfair Display',serif;font-size:25px;font-weight:700;color:#f5efdd;letter-spacing:0.3px;}
+.grx-hd-x{position:absolute;right:14px;top:32px;width:34px;height:34px;border-radius:50%;border:1px solid rgba(240,228,192,0.22);background:rgba(240,228,192,0.08);color:#e8dfc4;font-size:14px;line-height:1;cursor:pointer;}
+.grx-hd-chips{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap;}
+.grx-hd-chip{font-family:'DM Mono',monospace;font-size:10.5px;letter-spacing:0.4px;color:#cfc4a0;background:rgba(240,228,192,0.07);border:1px solid rgba(216,176,84,0.28);border-radius:999px;padding:5px 11px;}
+.grx-hd-chip b{color:#e2bd60;font-weight:500;}
+/* ── Grounds portfolio cards (2026-07-29 owner round) ───────────────── */
+.grx-card-top{display:flex;align-items:center;gap:11px;padding:2px 0 6px;}
+.grx-thumb{width:78px;height:62px;border-radius:12px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(216,176,84,0.22),0 2px 6px rgba(26,36,17,0.22);}
+.grx-card-mid{flex:1;min-width:0;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+.grx-card-mid .grx-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+
+.grx-feat-sum{font-size:11.5px;color:#7d7057;margin-top:5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.grx-k{display:inline-block;width:7px;height:7px;border-radius:2.5px;margin:0 4px 0 8px;}
+.grx-feat-sum .grx-k:first-child{margin-left:0;}
+.grx-feat-sum--nudge{color:#8a6516;font-weight:600;}
+.grx-card-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;}
+.grx-mapbtn{border:none;background:linear-gradient(180deg,#2c3d1c,#1c2810);color:#e8dfc4;border-radius:999px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 2px 6px rgba(26,36,17,0.28);}
+.grx-chev{color:#b8963e;font-size:15px;transition:transform 0.15s;display:inline-block;margin-right:6px;}
+.grx-chev.open{transform:rotate(90deg);color:#3e5a1e;}
+.grx-detail{border-top:1px solid rgba(43,36,22,0.07);margin-top:6px;padding-top:1px;}
+.grx-group-head{display:flex;align-items:center;gap:7px;margin:13px 0 4px;}
+.grx-gh-dot{width:8px;height:8px;border-radius:3px;flex-shrink:0;}
+.grx-gh-t{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:1.8px;font-weight:500;}
+.grx-gh-n{font-family:'DM Mono',monospace;font-size:9.5px;border-radius:999px;padding:2px 8px;letter-spacing:0.5px;}
+.grx-gh-line{flex:1;height:1px;background:rgba(43,36,22,0.08);}
+.grx-gh-meta{font-family:'DM Mono',monospace;font-size:9.5px;color:#a4957a;letter-spacing:0.5px;white-space:nowrap;}
+.grx-group-head::after{content:'';flex:1;height:1px;background:#eceae0;}
+.grx-gactions{display:flex;gap:8px;margin-top:13px;}
+.grx-gact{flex:1;border:1px solid rgba(43,36,22,0.13);background:#fff;border-radius:12px;padding:10px 4px;font-size:11.5px;font-weight:600;color:#4a4131;cursor:pointer;box-shadow:0 1px 2px rgba(43,36,22,0.04);}
+.grx-gact--danger{color:#b3402e;border-color:#e8c8c0;}
+.grounds-add-row--top{margin:0 0 12px;}
+.grx-import-top{border:1px solid rgba(138,101,22,0.4);background:transparent;border-radius:14px;padding:0 14px;font-size:12px;font-weight:700;color:#8a6516;cursor:pointer;white-space:nowrap;}
 .grx-empty{padding:14px 4px 8px;text-align:center;font-size:12px;color:var(--muted);line-height:1.5;}
-.grx-ground{border:1px solid var(--stone);border-radius:14px;background:white;padding:12px;margin-bottom:10px;}
+.grx-ground{position:relative;border:1px solid rgba(43,36,22,0.09);border-radius:18px;background:#fffdf8;padding:13px;margin-bottom:11px;box-shadow:0 1px 2px rgba(43,36,22,0.04);overflow:hidden;}
+.grx-ground--open{box-shadow:0 1px 2px rgba(43,36,22,0.05),0 10px 28px rgba(43,36,22,0.08);}
+.grx-ground--open::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,#e2bd60,#b8963e 60%,rgba(184,150,62,0));}
 /* Section 6: sheet-level summary, a map-matching colour dot per ground, and an
    explicit "not mapped yet" where the acreage chip would otherwise be absent
    with no explanation. */
-.grx-sum{font-size:11px;color:var(--muted);padding:0 2px 9px;line-height:1.4;}
+
 .grx-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;align-self:center;box-shadow:0 0 0 1.5px rgba(0,0,0,.07);}
-.grx-unmapped{font-size:10px;color:var(--muted);white-space:nowrap;flex-shrink:0;}
-.grx-head{display:flex;align-items:baseline;gap:8px;}
-.grx-name{font-size:14px;font-weight:700;color:var(--bark);flex:1;min-width:0;overflow-wrap:anywhere;}
-.grx-area{font-size:10px;color:var(--moss);font-family:'DM Mono',monospace;white-space:nowrap;flex-shrink:0;}
+.grx-unmapped{display:inline-block;font-size:10px;color:#8a7a58;font-family:'DM Mono',monospace;letter-spacing:0.4px;white-space:nowrap;background:rgba(43,36,22,0.05);border:1px solid rgba(43,36,22,0.1);border-radius:999px;padding:2px 9px;margin-top:3px;}
+.grx-head{display:flex;align-items:center;gap:7px;min-width:0;}
+.grx-name{font-size:16.5px;font-weight:700;color:#241d10;letter-spacing:0.1px;flex:1;min-width:0;overflow-wrap:anywhere;}
+.grx-area{display:inline-block;font-size:10px;color:#7a5a10;font-family:'DM Mono',monospace;letter-spacing:0.4px;white-space:nowrap;background:#f7edd6;border:1px solid rgba(184,150,62,0.35);border-radius:999px;padding:2px 9px;margin-top:3px;}
 /* Finding S: rename / remove affordances on the ground's own head row. The
    cluster is self-aligned because .grx-head is baseline-aligned for the name
    and area chip, and icons have no meaningful baseline. */
@@ -2915,18 +2953,25 @@ body.in-select-mode .entries{padding-bottom:92px;}
 .grx-iconbtn:disabled:active{background:transparent;}
 .grx-head--renaming{align-items:center;}
 .grx-rename-inp{flex:1;min-width:0;box-sizing:border-box;padding:8px 10px;border-radius:9px;border:1.5px solid rgba(90,122,48,0.45);background:#fff;color:var(--bark);font-size:13.5px;font-weight:700;font-family:'DM Sans',sans-serif;}
-.grx-parcel{display:flex;align-items:center;gap:8px;padding-top:9px;}
+.grx-parcel{display:flex;align-items:center;gap:10px;padding:6px 0;}
+.grx-rtag{width:32px;height:32px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(43,36,22,0.05);}
+.grx-rbody{flex:1;min-width:0;}
+.grx-rname{font-size:13.5px;font-weight:600;color:#2b2416;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.grx-rmeta{font-family:'DM Mono',monospace;font-size:10px;color:#a4957a;letter-spacing:0.3px;margin-top:2px;display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
+.grx-open{border:1px solid rgba(62,90,30,0.28);background:rgba(90,122,48,0.07);color:#3e5a1e;font-weight:700;font-size:12px;font-family:'DM Sans',sans-serif;padding:8px 13px;border-radius:999px;cursor:pointer;flex-shrink:0;}
+.grx-more{display:flex;align-items:center;justify-content:center;width:100%;margin:5px 0 2px;padding:11px;border:none;border-radius:12px;font-weight:700;font-size:12px;font-family:'DM Sans',sans-serif;cursor:pointer;}
 .grx-parcel-name{font-size:12px;color:var(--bark);flex:1;min-width:0;overflow-wrap:anywhere;}
 .grx-parcel-area{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;white-space:nowrap;}
-.grx-btn{padding:7px 12px;border-radius:9px;border:1.5px solid rgba(90,122,48,0.25);background:rgba(90,122,48,0.06);color:var(--moss);font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;flex-shrink:0;}
+.grx-btn{width:40px;min-width:40px;height:40px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:12px;border:1px solid rgba(43,36,22,0.1);background:#fff;color:#6b5f48;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;flex-shrink:0;box-shadow:0 1px 2px rgba(43,36,22,0.05);}
 .grx-btn:disabled{opacity:0.45;cursor:default;}
-.grx-btn-x{border-color:var(--stone);background:var(--stone);color:var(--muted);}
-.grx-draw{margin-top:10px;width:100%;padding:10px;border-radius:10px;border:1.5px dashed rgba(90,122,48,0.35);background:transparent;color:var(--moss);font-weight:700;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;}
+.grx-btn-x{border-color:rgba(43,36,22,0.06);background:rgba(43,36,22,0.05);color:#8a7f6b;box-shadow:none;}
+.grx-draw{margin-top:10px;width:100%;padding:11px 6px;border-radius:12px;border:1px solid rgba(90,122,48,0.3);background:rgba(90,122,48,0.1);color:#4a6626;font-weight:700;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;display:flex;align-items:center;justify-content:center;gap:7px;}
+.grx-draw svg{flex-shrink:0;}
 .grx-draw:disabled{opacity:0.45;cursor:default;}
 .grounds-add-row{display:flex;gap:8px;margin-top:12px;}
-.grounds-add-row input{flex:1;min-width:0;padding:10px 12px;border:1.5px solid var(--stone);border-radius:10px;font-size:13px;font-family:'DM Sans',sans-serif;color:var(--bark);outline:none;background:white;}
+.grounds-add-row input{flex:1;min-width:0;padding:12px 14px;border:1px solid rgba(43,36,22,0.13);border-radius:14px;font-size:13.5px;font-family:'DM Sans',sans-serif;color:var(--bark);outline:none;background:#fffdf8;box-shadow:0 1px 3px rgba(43,36,22,0.05);}
 .grounds-add-row input:focus{border-color:var(--moss);}
-.grounds-add-btn{padding:10px 16px;border-radius:10px;background:var(--forest);color:white;border:none;font-weight:700;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;flex-shrink:0;}
+.grounds-add-btn{padding:10px 18px;border-radius:14px;background:linear-gradient(180deg,#4a6626,#3a5419);color:#f5efdd;border:none;font-weight:700;font-size:13px;cursor:pointer;font-family:'DM Sans',sans-serif;flex-shrink:0;box-shadow:0 2px 6px rgba(42,58,20,0.3);}
 /* Editor overlay (dark, pinmap territory) */
 .gmap-title-wrap{flex:1;min-width:0;}
 .gmap-title{font-family:'Playfair Display',serif;font-size:16px;color:white;}
@@ -3006,13 +3051,13 @@ body.in-select-mode .entries{padding-bottom:92px;}
    "Add another parcel". Ellipsis is a belt-and-braces guard only. */
 .grx-draw-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;}
 .grx-draw-row .grx-draw{margin-top:0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.grx-draw--zone{border-color:rgba(198,40,40,0.35);color:#a83232;}
+.grx-draw--zone{border-color:rgba(198,40,40,0.28);background:rgba(198,40,40,0.06);color:#a83232;}
 .grx-parcel--zone .grx-parcel-name{color:#8a4444;}
 .grx-zone-tag{display:inline-block;margin-right:6px;padding:2px 7px;border-radius:8px;background:rgba(198,40,40,0.1);border:1px solid rgba(198,40,40,0.3);color:#a83232;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;font-family:'DM Mono',monospace;vertical-align:1px;}
 /* G9: line rows — moss tag + draw button; length chip reuses grx-parcel-area. */
 .grx-line-tag{background:rgba(90,122,48,0.1);border-color:rgba(90,122,48,0.35);color:#5a7a30;}
 .grx-parcel--line .grx-parcel-name{color:#55663a;}
-.grx-draw--line{border-color:rgba(90,122,48,0.35);color:#5a7a30;}
+.grx-draw--line{border-color:rgba(52,101,164,0.28);background:rgba(52,101,164,0.07);color:#3465a4;}
 .grx-io-row{display:flex;gap:8px;margin-top:12px;}
 /* Findings 19/20: the seat-privacy choice reads as a sentence, not a toggle
    the eye skips. Sized past 44px like every other control in the sweep. */
@@ -3089,7 +3134,9 @@ body.in-select-mode .entries{padding-bottom:92px;}
 .gmk-b--lt.on .gmk-lt-sw{border-top-color:#fff !important;}
 /* G10: marker rows in the grounds sheet — slate glyph tag. */
 .grx-mk-tag{display:inline-flex;align-items:center;background:rgba(70,90,110,0.1);border-color:rgba(70,90,110,0.35);color:#46688a;padding:2px 5px;vertical-align:-2px;}
-.grx-draw--mk{border-color:rgba(70,104,138,0.35);color:#46688a;}
+.grx-seat-tag{display:inline-flex;align-items:center;background:#fdf9ef;border-color:rgba(211,188,134,0.7);color:#8a6516;padding:2px 5px;vertical-align:-2px;}
+.grx-draw--mk{border-color:rgba(70,104,138,0.28);background:rgba(70,104,138,0.07);color:#46688a;}
+.grx-draw--seat{grid-column:1 / -1;border-color:rgba(184,150,62,0.45);color:#7a5a10;background:linear-gradient(180deg,#f9efd8,#f3e4bd);box-shadow:0 1px 3px rgba(184,150,62,0.15);}
 .gmap-walk.on{background:linear-gradient(135deg,#d8b054,#b8903c);border-color:transparent;color:#2a1e10;}
 .gvx-mid{width:14px;height:14px;border-radius:50%;background:rgba(216,176,84,0.35);border:1.5px solid rgba(255,255,255,0.75);box-shadow:0 1px 3px rgba(0,0,0,0.4);box-sizing:border-box;}
 /* ── Grounds G5: measure tool ── */
@@ -3407,7 +3454,7 @@ body.in-select-mode .entries{padding-bottom:92px;}
    clear air above and below, so growing the control is honest and cheap;
    an overlay would only have borrowed that air back. */
 .grx-draw{min-height:44px;}
-.grx-btn{min-height:44px;}
+.grx-btn{min-height:40px;}
 .grx-io-btn{min-height:44px;}
 .grounds-add-btn{min-height:44px;}
 /* 43px, one pixel under, and the same argument as .ff input above: a missed
@@ -3419,7 +3466,7 @@ body.in-select-mode .entries{padding-bottom:92px;}
    so it gets the full box in BOTH directions, not just height. The 8px of
    width comes out of .grx-parcel-name, which is flex:1 with
    overflow-wrap:anywhere and simply wraps. */
-.grx-btn-x{min-width:44px;}
+.grx-btn-x{min-width:40px;}
 
 /* SYS75d - THE MODALS. All thirteen .di-modal-ov overlays were shown in
    turn and hit-tested; the five rules below are everything that came back

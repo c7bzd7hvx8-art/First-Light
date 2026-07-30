@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.76';
+const FL_JS_BUILD = '12.80';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -1321,7 +1321,13 @@ function initDiaryFlUi() {
       case 'grx-rename-start': groundsSheetRenaming = el.getAttribute('data-ground'); renderGroundsSheet(); break;
       case 'grx-rename-save': groundsSheetRenameSave(el.getAttribute('data-ground')); break;
       case 'grx-rename-cancel': groundsSheetRenaming = null; renderGroundsSheet(); break;
-      case 'grx-ground-delete': groundsSheetDeleteGround(el.getAttribute('data-ground')); break;
+      case 'grx-ground-delete': grxGroundDeleteArmed(el.getAttribute('data-ground')); break;
+      case 'grx-toggle': grxToggleCard(el.getAttribute('data-ground')); break;
+      case 'grx-map': grxOpenGroundOnMap(el.getAttribute('data-ground')); break;
+      case 'grx-export-ground': groundsExport('kml', el.getAttribute('data-ground')); break;
+      case 'grx-add-seat': grxAddSeatOnGround(el.getAttribute('data-ground')); break;
+      case 'grx-open-seat': grxOpenSeatDetail(el.getAttribute('data-stand-id')); break;
+      case 'grx-group-toggle': grxGroupToggle(el.getAttribute('data-ground'), el.getAttribute('data-kind')); break;
       case 'grounds-measure': openMeasureTool(); break; // G5
       // G6: the Ground canvas ＋ menu (one thumb from the map to everything)
       case 'ground-add-menu': gmbToggle(); break;
@@ -1674,6 +1680,8 @@ function initDiaryFlUi() {
   if (qso) qso.addEventListener('click', function(ev) { if (ev.target === qso) closeQuickEntry(); });
   var tso = document.getElementById('tsheet-ov');
   if (tso) tso.addEventListener('click', function(ev) { if (ev.target === tso) closeTargetsSheet(); });
+  var gvo = document.getElementById('grounds-ov');
+  if (gvo) gvo.addEventListener('click', function(ev) { if (ev.target === gvo) closeGroundsSheet(); });
   var syno = document.getElementById('syn-ov');
   if (syno) syno.addEventListener('click', function(ev) { if (ev.target === syno) closeSynModal(); });
   var synExp = document.getElementById('syndicate-export-modal');
@@ -11855,36 +11863,141 @@ function groundFeaturesNow() {
 // ── Manager sheet ─────────────────────────────────────────────
 
 /** PURE: the grounds list markup (vm-extracted by tests/grounds-render.test.mjs). */
+/** PURE (vm-extracted by tests): a ground's live thumbnail — its boundary
+ *  rings in the ground's own colour, zones dashed, seats as parchment dots,
+ *  all fitted into a 96×76 dark panel. The portfolio card's identity. */
+function grxThumbSvg(g, features, color, seatPts) {
+  var pts = [];
+  var rings = [], zoneRings = [];
+  (features || []).forEach(function(f) {
+    if (!f || f.ground !== g) return;
+    if (f.kind === 'boundary' || f.kind === 'no_shoot') {
+      var r = parseGeometry(f.geometry);
+      if (r && r.length >= 3) {
+        (f.kind === 'boundary' ? rings : zoneRings).push(r);
+        r.forEach(function(p) { pts.push(p); });
+      }
+    }
+  });
+  (seatPts || []).forEach(function(p) { pts.push(p); });
+  // 12.80 (owner: "better graphics"): the panel is a little estate map now —
+  // radial forest depth, faint contour lines, the boundary GLOWING in the
+  // ground's own colour (a blurred fat stroke under the crisp one). Gradient
+  // and filter ids are salted per ground because every card inlines its own
+  // defs and duplicate SVG ids would cross-wire the glow between cards.
+  var uid = 0;
+  String(g).split('').forEach(function(c) { uid = (uid * 31 + c.charCodeAt(0)) % 100000; });
+  var defs = '<defs><radialGradient id="grxg' + uid + '" cx="22%" cy="12%" r="120%">'
+    + '<stop offset="0%" stop-color="#2c3d1c"/><stop offset="55%" stop-color="#1a2611"/><stop offset="100%" stop-color="#11180a"/></radialGradient>'
+    + '<filter id="grxb' + uid + '" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.2"/></filter></defs>';
+  var head = '<svg class="grx-thumb" viewBox="0 0 96 76" aria-hidden="true">' + defs
+    + '<rect width="96" height="76" rx="12" fill="url(#grxg' + uid + ')"/>'
+    + '<g fill="none" stroke="rgba(240,228,192,0.09)" stroke-width="1">'
+    + '<path d="M2 58C18 50 26 58 44 52C66 45 74 52 94 44"/>'
+    + '<path d="M2 40C20 34 30 42 50 34C70 27 80 34 94 26"/>'
+    + '<path d="M2 22C22 18 34 26 56 18C74 12 84 18 94 12"/></g>';
+  if (pts.length < 2) {
+    return head + '<path d="M40 30 L56 30 M48 22 L48 38" stroke="rgba(240,228,192,0.35)" stroke-width="2.5" stroke-linecap="round"/></svg>';
+  }
+  var minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  pts.forEach(function(p) {
+    if (p[0] < minLat) minLat = p[0];
+    if (p[0] > maxLat) maxLat = p[0];
+    if (p[1] < minLng) minLng = p[1];
+    if (p[1] > maxLng) maxLng = p[1];
+  });
+  var midLat = (minLat + maxLat) / 2;
+  var kx = Math.cos(midLat * Math.PI / 180);
+  var spanX = Math.max((maxLng - minLng) * kx, 1e-9);
+  var spanY = Math.max(maxLat - minLat, 1e-9);
+  var sc = Math.min(76 / spanX, 56 / spanY);
+  var cLng = (minLng + maxLng) / 2;
+  function px(p) {
+    return [(48 + (p[1] - cLng) * kx * sc).toFixed(1), (38 + (midLat - p[0]) * sc).toFixed(1)];
+  }
+  function pathOf(r) {
+    var step = Math.max(1, Math.ceil(r.length / 30)), d = '';
+    for (var i = 0; i < r.length; i += step) {
+      var q = px(r[i]);
+      d += (d ? 'L' : 'M') + q[0] + ' ' + q[1];
+    }
+    return d + 'Z';
+  }
+  var h = head;
+  rings.forEach(function(r) {
+    var d = pathOf(r);
+    h += '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="4" opacity="0.35" filter="url(#grxb' + uid + ')" stroke-linejoin="round"/>';
+    h += '<path d="' + d + '" fill="' + color + '1a" stroke="' + color + '" stroke-width="1.8" stroke-linejoin="round"/>';
+  });
+  zoneRings.forEach(function(r) {
+    h += '<path d="' + pathOf(r) + '" fill="rgba(198,60,60,0.28)" stroke="#d47c7c" stroke-width="1.1" stroke-dasharray="3 2"/>';
+  });
+  (seatPts || []).forEach(function(p) {
+    var q = px(p);
+    h += '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="2.7" fill="#f5e8c8" stroke="rgba(10,15,6,0.8)" stroke-width="1"/>';
+  });
+  return h + '</svg>';
+}
+
 function groundsSheetListHtml(grounds, features, offline, opts) {
   grounds = grounds || [];
   features = features || [];
   opts = opts || {};
+  // Accordion: opts.expanded names the open card, null = all closed. Legacy
+  // callers (and the test suite's direct calls) omit it — they get the old
+  // everything-expanded behaviour, so no behaviour is silently lost.
+  var expandAll = !('expanded' in opts);
+  var expanded = expandAll ? null : opts.expanded;
+  var seatCounts = opts.seatCounts || {};
+  var seatPtsBy = opts.seatPts || {};
+  var seatRowsBy = opts.seatRows || {};
+  // 12.80 (owner, the 46-seat ground): groups longer than GRX_FOLD preview
+  // their first GRX_PEEK rows behind a Show-all toggle (opts.groupsOpen,
+  // keyed 'ground|kind'). Six, not the first-suggested three: a 4-row group
+  // costs the same space as 3 rows + the expander, so folding it saves
+  // nothing and adds a tap.
+  var groupsOpen = opts.groupsOpen || {};
+  var GRX_FOLD = 6, GRX_PEEK = 3;
   if (!grounds.length) {
-    return '<div class="grx-empty">No grounds yet — add your first ground below, then draw its boundary on the map.</div>';
+    return '<div class="grx-empty">No grounds yet — name your first ground above, then draw its boundary on the map.</div>';
   }
-  // Section 6 (2026-07-25): with more than one ground the sheet opens with the
-  // shape of the whole holding. Suppressed at one ground, where it would only
-  // repeat the card directly beneath it.
+  // One hue per feature kind, carried through the header dot, count pill,
+  // row tile, expander and draw chip — colour means the same thing
+  // everywhere on the card.
+  var K = { parcel: '#5a7a30', zone: '#b23a3a', line: '#3465a4', marker: '#46688a', seat: '#b8963e' };
+  var ICO = {
+    parcel: '<svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 10.5L2 4l5-2 5 2.5-1 7-5.5 1z" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>',
+    zone: '<svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 11.5v-8l4.5-1.5 4.5 2v7.5z" fill="currentColor" fill-opacity="0.12" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2.6 1.8" stroke-linejoin="round"/></svg>',
+    line: '<svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 11.5C5 10 5.5 5.5 12 2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="2" cy="11.5" r="1.6" fill="currentColor"/><circle cx="12" cy="2.5" r="1.6" fill="currentColor"/></svg>',
+    marker: '<svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true"><rect x="2.5" y="2.5" width="9" height="9" rx="2.6" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-width="1.4"/><circle cx="7" cy="7" r="1.5" fill="currentColor"/></svg>',
+    seat: '<svg width="15" height="15" viewBox="0 0 13 13" aria-hidden="true"><rect x="3.5" y="1.8" width="6" height="4.6" rx="1.2" fill="currentColor" fill-opacity="0.2" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 6.5V11.6M8.5 6.5V11.6M4.5 9.2h4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+    pencil: '<svg width="13" height="13" viewBox="0 0 13 13" aria-hidden="true"><path d="M2 11l.7-2.8 6-6L11.5 5l-6 6L2 11z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>'
+  };
+  function ghead(kind, title, count, meta) {
+    return '<div class="grx-group-head"><span class="grx-gh-dot" style="background:' + K[kind] + ';"></span>'
+      + '<span class="grx-gh-t" style="color:' + K[kind] + ';">' + title + '</span>'
+      + '<span class="grx-gh-n" style="color:' + K[kind] + ';background:' + K[kind] + '1f;">' + count + '</span>'
+      + '<span class="grx-gh-line"></span>'
+      + (meta ? '<span class="grx-gh-meta">' + meta + '</span>' : '')
+      + '</div>';
+  }
+  function rtag(kind, inner) {
+    return '<span class="grx-rtag' + (kind === 'marker' ? ' grx-mk-tag' : '') + '" style="color:' + K[kind] + ';background:' + K[kind] + '1a;">' + inner + '</span>';
+  }
+  // Fold long groups: >GRX_FOLD rows → first GRX_PEEK + a Show-all toggle.
+  function foldGroup(g, kind, items, word, renderRow) {
+    var open = !!groupsOpen[g + '|' + kind];
+    var fold = items.length > GRX_FOLD;
+    var shown = (fold && !open) ? items.slice(0, GRX_PEEK) : items;
+    var h = '';
+    shown.forEach(function(it, i) { h += renderRow(it, i); });
+    if (fold) {
+      h += '<button type="button" class="grx-more" style="color:' + K[kind] + ';background:' + K[kind] + '14;" data-fl-action="grx-group-toggle" data-ground="' + esc(g) + '" data-kind="' + kind + '">'
+        + (open ? 'Show fewer ' + word + ' \u2039' : 'Show all ' + items.length + ' ' + word + ' \u203a') + '</button>';
+    }
+    return h;
+  }
   var h = '';
-  if (grounds.length > 1) {
-    // AC: the summary adds the figures printed on the ground cards below it,
-    // not the raw metres. Rounding the true sum let "108 ha in total" sit over
-    // parcels reading 25 + 13 + 71 — arithmetic done in front of the reader
-    // has to survive the reader checking it.
-    var mappedN = 0, allM2 = 0, groundSums = [];
-    grounds.forEach(function(gg) {
-      var ga = 0, gp = [];
-      features.forEach(function(f) {
-        if (!f || f.kind !== 'boundary' || f.ground !== gg) return;
-        var m = geometryAreaM2(f.geometry);
-        if (m > 0) { ga += m; gp.push(landParts(m)); }
-      });
-      if (ga > 0) { mappedN++; allM2 += ga; groundSums.push(sumLandParts(gp)); }
-    });
-    h += '<div class="grx-sum">' + grounds.length + ' grounds · '
-      + (mappedN ? mappedN + ' mapped' : 'none mapped yet')
-      + (allM2 > 0 ? ' · ' + esc(formatAreaParts(sumLandParts(groundSums))) + ' in total' : '') + '</div>';
-  }
   grounds.forEach(function(g) {
     var rows = features.filter(function(f) { return f && f.kind === 'boundary' && f.ground === g; });
     var zones = features.filter(function(f) { return f && f.kind === 'no_shoot' && f.ground === g; });
@@ -11901,7 +12014,26 @@ function groundsSheetListHtml(grounds, features, offline, opts) {
     // AA: the card carries its own name so flRevealRow can find the one that
     // was just added — the list is rebuilt wholesale on every render, so a
     // reference held across the re-render would be to a detached node.
-    h += '<div class="grx-ground" data-ground-card="' + esc(g) + '">';
+    var isOpen = expandAll || (grounds.length === 1) || g === expanded;
+    var seatN = seatCounts[g] || 0;
+    var sumBits = [];
+    if (rows.length) sumBits.push(rows.length + (rows.length === 1 ? ' parcel' : ' parcels'));
+    if (zones.length) sumBits.push(zones.length + (zones.length === 1 ? ' zone' : ' zones'));
+    if (lines.length) sumBits.push(lines.length + (lines.length === 1 ? ' line' : ' lines'));
+    if (marks.length) sumBits.push(marks.length + (marks.length === 1 ? ' marker' : ' markers'));
+    if (seatN) sumBits.push(seatN + (seatN === 1 ? ' seat' : ' seats'));
+    // 12.80: the visible summary is colour-keyed dots + counts (the last part
+    // keeps its word); the full sentence rides on aria-label so a screen
+    // reader hears "1 parcel · 3 seats", not a run of bare numbers.
+    var sumKinds = [];
+    if (rows.length) sumKinds.push([K.parcel, rows.length, rows.length === 1 ? ' parcel' : ' parcels']);
+    if (zones.length) sumKinds.push([K.zone, zones.length, zones.length === 1 ? ' zone' : ' zones']);
+    if (lines.length) sumKinds.push([K.line, lines.length, lines.length === 1 ? ' line' : ' lines']);
+    if (marks.length) sumKinds.push([K.marker, marks.length, marks.length === 1 ? ' marker' : ' markers']);
+    if (seatN) sumKinds.push([K.seat, seatN, seatN === 1 ? ' seat' : ' seats']);
+    h += '<div class="grx-ground' + (isOpen ? ' grx-ground--open' : '') + '" data-ground-card="' + esc(g) + '">';
+    h += '<div class="grx-card-top">' + grxThumbSvg(g, features, groundColorFor(g), seatPtsBy[g] || []);
+    h += '<div class="grx-card-mid" data-fl-action="grx-toggle" data-ground="' + esc(g) + '" role="button" tabindex="0" aria-expanded="' + (isOpen ? 'true' : 'false') + '">';
     // Finding S: the sheet could ADD a ground but never rename or remove one.
     // The cascades already existed (G17) — they were simply unreachable from
     // here, so an empty ground lingered forever as "not mapped yet". Renaming
@@ -11914,84 +12046,131 @@ function groundsSheetListHtml(grounds, features, offline, opts) {
         + '<button type="button" class="grx-iconbtn ok" data-fl-action="grx-rename-save" data-ground="' + esc(g) + '" aria-label="Save name">' + GMB_CHECK_SVG + '</button>'
         + '</span></div>';
     } else {
-      h += '<div class="grx-head"><span class="grx-dot" style="background:' + groundColorFor(g) + ';"></span><div class="grx-name">' + esc(g) + '</div>'
-        + (total > 0 ? '<div class="grx-area">' + esc(formatAreaParts(sumLandParts(parcelParts))) + '</div>'
-                     : '<div class="grx-unmapped">not mapped yet</div>')
-        + '<span class="grx-head-acts">'
-        + '<button type="button" class="grx-iconbtn" data-fl-action="grx-rename-start" data-ground="' + esc(g) + '" aria-label="Rename ' + esc(g) + '"' + (offline ? ' disabled' : '') + '>' + GMB_PENCIL_SVG + '</button>'
-        + '<button type="button" class="grx-iconbtn del" data-fl-action="grx-ground-delete" data-ground="' + esc(g) + '" aria-label="Remove ' + esc(g) + ' from your grounds"' + (offline ? ' disabled' : '') + '>' + GMB_TRASH_SVG + '</button>'
-        + '</span></div>';
+      h += '<div class="grx-head"><span class="grx-dot" style="background:' + groundColorFor(g) + ';"></span><div class="grx-name">' + esc(g) + '</div></div>'
+        + (total > 0 ? '<span class="grx-area">' + esc(formatAreaParts(sumLandParts(parcelParts))) + '</span>'
+                     : '<span class="grx-unmapped">not mapped yet</span>');
     }
+    h += (sumKinds.length
+      ? '<div class="grx-feat-sum" aria-label="' + esc(sumBits.join(' · ')) + '">'
+        + sumKinds.map(function(p, i) {
+            return '<span class="grx-k" style="background:' + p[0] + ';"></span>' + p[1] + (i === sumKinds.length - 1 ? p[2] : '');
+          }).join('')
+        + '</div>'
+      : '<div class="grx-feat-sum grx-feat-sum--nudge">No boundary yet · Draw it ›</div>');
+    h += '</div>'; // grx-card-mid
+    h += '<div class="grx-card-side">'
+      + '<button type="button" class="grx-mapbtn" data-fl-action="grx-map" data-ground="' + esc(g) + '">Map ›</button>'
+      + '<span class="grx-chev' + (isOpen ? ' open' : '') + '" aria-hidden="true">›</span></div>';
+    h += '</div>'; // grx-card-top
+    h += '<div class="grx-detail"' + (isOpen ? '' : ' style="display:none;"') + '>';
+    // Grouped headers: totals do the arithmetic where the reader can check it.
+    var lineTotalM = 0;
+    lines.forEach(function(f) {
+      var lr = parseGeometry(f.geometry, 2);
+      if (lr) lineTotalM += pathLengthM(lr);
+    });
+    if (rows.length) h += ghead('parcel', 'PARCELS', rows.length, total > 0 ? esc(formatAreaParts(sumLandParts(parcelParts))).toUpperCase() : '');
     // Section 6: the ground's acreage is stated ONCE. A single-parcel ground
     // printed the identical figure in the head chip and in the parcel row one
     // line below it, which reads as two measurements that happen to agree.
     var showParcelArea = rows.length > 1;
-    rows.forEach(function(f, i) {
+    h += foldGroup(g, 'parcel', rows, 'parcels', function(f, i) {
       var nm = f.name ? f.name : ('Parcel ' + (i + 1));
       var a = geometryAreaM2(f.geometry);
-      h += '<div class="grx-parcel">'
-        + '<div class="grx-parcel-name">' + esc(nm)
-        + (showParcelArea && a > 0 ? ' <span class="grx-parcel-area">' + esc(formatAreaBoth(a)) + '</span>' : '')
+      return '<div class="grx-parcel">' + rtag('parcel', ICO.parcel)
+        + '<div class="grx-rbody"><div class="grx-rname">' + esc(nm) + '</div>'
+        + (showParcelArea && a > 0 ? '<div class="grx-rmeta"><span class="grx-parcel-area">' + esc(formatAreaBoth(a)) + '</span></div>' : '')
         + '</div>'
-        + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(f.id) + '"' + (offline ? ' disabled' : '') + '>Edit</button>'
+        + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(f.id) + '" aria-label="Edit this parcel"' + (offline ? ' disabled' : '') + '>' + ICO.pencil + '</button>'
         + '<button type="button" class="grx-btn grx-btn-x" data-fl-action="ground-parcel-delete" data-feature-id="' + esc(f.id) + '" aria-label="Remove this parcel" data-fl-name="' + esc(nm) + '" data-fl-kind="parcel"' + (offline ? ' disabled' : '') + '>✕</button>'
         + '</div>';
     });
     // G4: no-shoot zones listed under the parcels, tagged red.
-    zones.forEach(function(z, i) {
+    if (zones.length) h += ghead('zone', 'ZONES', zones.length, '');
+    h += foldGroup(g, 'zone', zones, 'zones', function(z, i) {
       var znm = z.name ? z.name : ('Zone ' + (i + 1));
       var za = geometryAreaM2(z.geometry);
-      h += '<div class="grx-parcel grx-parcel--zone">'
-        + '<div class="grx-parcel-name"><span class="grx-zone-tag">No-shoot</span>' + esc(znm)
+      return '<div class="grx-parcel grx-parcel--zone">' + rtag('zone', ICO.zone)
+        + '<div class="grx-rbody"><div class="grx-rname">' + esc(znm) + '</div>'
+        + '<div class="grx-rmeta"><span class="grx-zone-tag">No-shoot</span>'
         + (za > 0 ? ' <span class="grx-parcel-area">' + esc(formatAreaBoth(za)) + '</span>' : '')
-        + '</div>'
-        + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(z.id) + '"' + (offline ? ' disabled' : '') + '>Edit</button>'
+        + '</div></div>'
+        + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(z.id) + '" aria-label="Edit this zone"' + (offline ? ' disabled' : '') + '>' + ICO.pencil + '</button>'
         + '<button type="button" class="grx-btn grx-btn-x" data-fl-action="ground-parcel-delete" data-feature-id="' + esc(z.id) + '" aria-label="Remove this zone" data-fl-name="' + esc(znm) + '" data-fl-kind="no-shoot zone"' + (offline ? ' disabled' : '') + '>✕</button>'
         + '</div>';
     });
     // G9/G15: lines under the zones — LENGTH is their number, not area. The
-    // tag now names the SUBTYPE (Ride/Track/Footpath/Compartment/Line) and is
+    // tag names the SUBTYPE (Ride/Track/Footpath/Compartment/Line) and is
     // colour-cued to match the stroke on the map, so the list reads like the
     // map. Unnamed lines fall back to a numbered generic name.
-    lines.forEach(function(ln, i) {
+    if (lines.length) h += ghead('line', 'LINES', lines.length, lineTotalM > 0 ? esc(formatDistM(lineTotalM)).toUpperCase() : '');
+    h += foldGroup(g, 'line', lines, 'lines', function(ln, i) {
       var lt = lineSubtypeOf(ln.geometry);
       var lst = groundLineStyle(lt);
       var lnm = ln.name ? ln.name : ('Line ' + (i + 1));
       var lring = parseGeometry(ln.geometry, 2);
       var lm = lring ? pathLengthM(lring) : 0;
       var tagStyle = lst.color ? ' style="color:' + lst.color + ';border-color:' + lst.color + '66;background:' + lst.color + '1a;"' : '';
-      h += '<div class="grx-parcel grx-parcel--line">'
-        + '<div class="grx-parcel-name"><span class="grx-zone-tag grx-line-tag"' + tagStyle + '>' + esc(lineSubtypeChip(lt)) + '</span>' + esc(lnm)
+      return '<div class="grx-parcel grx-parcel--line">' + rtag('line', ICO.line)
+        + '<div class="grx-rbody"><div class="grx-rname">' + esc(lnm) + '</div>'
+        + '<div class="grx-rmeta"><span class="grx-zone-tag grx-line-tag"' + tagStyle + '>' + esc(lineSubtypeChip(lt)) + '</span>'
         + (lm > 0 ? ' <span class="grx-parcel-area">' + esc(formatDistM(lm)) + '</span>' : '')
-        + '</div>'
-        + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(ln.id) + '"' + (offline ? ' disabled' : '') + '>Edit</button>'
+        + '</div></div>'
+        + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(ln.id) + '" aria-label="Edit this line"' + (offline ? ' disabled' : '') + '>' + ICO.pencil + '</button>'
         + '<button type="button" class="grx-btn grx-btn-x" data-fl-action="ground-parcel-delete" data-feature-id="' + esc(ln.id) + '" aria-label="Remove this line" data-fl-name="' + esc(lnm) + '" data-fl-kind="line"' + (offline ? ' disabled' : '') + '>✕</button>'
         + '</div>';
     });
     // G10: markers under the lines — furniture rows, type glyph + name.
-    marks.forEach(function(mrow) {
+    if (marks.length) h += ghead('marker', 'MARKERS', marks.length, '');
+    h += foldGroup(g, 'marker', marks, 'markers', function(mrow) {
       var mk = markerFromGeometry(mrow.geometry);
-      if (!mk) return;
+      if (!mk) return '';
       // Finding E: the standalone noun names an unnamed marker ("Marker"),
       // but the trailing pill sits beside a name and must say what KIND it is
       // — "Water trough Marker" was the parent noun leaking into the chip.
       var mlabel = markerTypeLabel(mk.type);
-      h += '<div class="grx-parcel grx-parcel--mk">'
-        + '<div class="grx-parcel-name"><span class="grx-zone-tag grx-mk-tag">' + groundMarkerGlyph(mk.type) + '</span>'
-        + esc(mrow.name || mlabel)
-        + (mrow.name ? ' <span class="grx-parcel-area">' + esc(markerTypeChip(mk.type)) + '</span>' : '')
+      return '<div class="grx-parcel grx-parcel--mk">' + rtag('marker', groundMarkerGlyph(mk.type))
+        + '<div class="grx-rbody"><div class="grx-rname">' + esc(mrow.name || mlabel) + '</div>'
+        + (mrow.name ? '<div class="grx-rmeta"><span class="grx-parcel-area">' + esc(markerTypeChip(mk.type)) + '</span></div>' : '')
         + '</div>'
-        + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(mrow.id) + '"' + (offline ? ' disabled' : '') + '>Edit</button>'
+        + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(mrow.id) + '" aria-label="Edit this marker"' + (offline ? ' disabled' : '') + '>' + ICO.pencil + '</button>'
         + '<button type="button" class="grx-btn grx-btn-x" data-fl-action="ground-parcel-delete" data-feature-id="' + esc(mrow.id) + '" aria-label="Remove this marker" data-fl-name="' + esc(mrow.name || mlabel) + '" data-fl-kind="marker"' + (offline ? ' disabled' : '') + '>✕</button>'
         + '</div>';
     });
+    // Owner (2026-07-30): the card names its seats. Rows come from the stands
+    // list (seats are stands, not ground features), so the one verb is Open,
+    // onto the stand detail, and it stays live offline like Map/Export:
+    // reading your seats is what the offline cache is FOR.
+    var seatRows = seatRowsBy[g] || [];
+    if (seatRows.length) h += ghead('seat', 'SEATS', seatRows.length, '');
+    h += foldGroup(g, 'seat', seatRows, 'seats', function(sr) {
+      var bits = [];
+      if (sr.facingLabel) bits.push('looks ' + esc(sr.facingLabel));
+      if (sr.culls) bits.push(sr.culls + (sr.culls === 1 ? ' cull' : ' culls'));
+      if (!sr.hasPin) bits.push('no pin yet');
+      return '<div class="grx-parcel grx-parcel--seat">' + rtag('seat', ICO.seat)
+        + '<div class="grx-rbody"><div class="grx-rname">' + esc(sr.name) + '</div>'
+        + (bits.length ? '<div class="grx-rmeta">' + bits.join(' · ') + '</div>' : '')
+        + '</div>'
+        + '<button type="button" class="grx-open" data-fl-action="grx-open-seat" data-stand-id="' + esc(sr.id) + '">Open \u203a</button>'
+        + '</div>';
+    });
     h += '<div class="grx-draw-row">'
-      + '<button type="button" class="grx-draw" data-fl-action="ground-draw" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>'
+      + '<button type="button" class="grx-draw" data-fl-action="ground-draw" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>' + ICO.parcel + ' '
       + (rows.length ? '+ Add another parcel' : '+ Draw boundary') + '</button>'
-      + '<button type="button" class="grx-draw grx-draw--zone" data-fl-action="ground-draw-zone" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>+ No-shoot zone</button>'
-      + '<button type="button" class="grx-draw grx-draw--line" data-fl-action="ground-draw-line" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>+ Line</button>'
-      + '<button type="button" class="grx-draw grx-draw--mk" data-fl-action="ground-add-marker" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>+ Marker</button>'
+      + '<button type="button" class="grx-draw grx-draw--zone" data-fl-action="ground-draw-zone" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>' + ICO.zone + ' + No-shoot zone</button>'
+      + '<button type="button" class="grx-draw grx-draw--line" data-fl-action="ground-draw-line" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>' + ICO.line + ' + Line</button>'
+      + '<button type="button" class="grx-draw grx-draw--mk" data-fl-action="ground-add-marker" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>' + ICO.marker + ' + Marker</button>'
+      + '<button type="button" class="grx-draw grx-draw--seat" data-fl-action="grx-add-seat" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>' + ICO.seat + ' + High seat</button>'
       + '</div>';
+    h += '<div class="grx-gactions">'
+      + '<button type="button" class="grx-gact" data-fl-action="grx-export-ground" data-ground="' + esc(g) + '">Export ground</button>'
+      // While THIS ground's head is the rename field, a second Rename control
+      // would be a pencil pointing at a pencil — the field is the rename.
+      + (opts.renaming === g ? '' : '<button type="button" class="grx-gact" data-fl-action="grx-rename-start" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>Rename</button>')
+      + '<button type="button" class="grx-gact grx-gact--danger" data-fl-action="grx-ground-delete" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>Delete</button>'
+      + '</div>';
+    h += '</div>'; // grx-detail
     h += '</div>';
   });
   return h;
@@ -12029,10 +12208,169 @@ async function groundsSheetRenameSave(oldName) {
 
 /** Finding S: remove a ground from the sheet. deleteGround() asks first and
  *  names exactly what goes; seats and diary entries are always kept. */
+function grxToggleCard(g) {
+  groundsSheetExpanded = (groundsSheetExpanded === g) ? null : g;
+  renderGroundsSheet();
+}
+
+// Owner round (2026-07-29): the bin sat one tap from a ground holding eleven
+// hand-traced features. Armed like the boundary editor's discard: first tap
+// states the consequence, a second within 4s does it.
+var grxDeleteArm = { g: null, at: 0 };
+function grxGroundDeleteArmed(g) {
+  if (!g) return;
+  var now = Date.now();
+  if (grxDeleteArm.g === g && now - grxDeleteArm.at < 4000) {
+    grxDeleteArm = { g: null, at: 0 };
+    groundsSheetDeleteGround(g);
+    return;
+  }
+  grxDeleteArm = { g: g, at: now };
+  var n = groundFeaturesNow().filter(function(f) { return f && f.ground === g; }).length;
+  showToast('Tap Delete again to remove ' + g
+    + (n ? ' and its ' + n + ' feature' + (n === 1 ? '' : 's') : '')
+    + ' \u00b7 seats keep their pins');
+}
+
+/** Map › on a ground card: close the sheet, filter the stands map to this
+ *  ground, frame its land, and open fullscreen — "show me Wigmore" in one tap. */
+function grxOpenGroundOnMap(g) {
+  if (g == null) return;
+  closeGroundsSheet();
+  try { go('v-stands'); } catch (e) { /* already there */ }
+  var gStands = (flStandsState.list || []).filter(function(st) {
+    return st && (st.ground || '') === g && st.lat != null && st.lng != null;
+  });
+  // The map filter auto-heals to "all" when a ground has no pinned seat —
+  // only set it when it will stick.
+  flStandsMapFilter = gStands.length ? g : null;
+  renderStandsMap();
+  if (!standsMap) return;
+  var pts = [];
+  groundFeaturesNow().forEach(function(f) {
+    if (!f || f.ground !== g) return;
+    if (f.kind === 'marker') {
+      var mk = markerFromGeometry(f.geometry);
+      if (mk) pts.push([mk.lat, mk.lng]);
+      return;
+    }
+    var r = parseGeometry(f.geometry, 2);
+    if (r) r.forEach(function(p) { pts.push([p[0], p[1]]); });
+  });
+  gStands.forEach(function(st) { pts.push([st.lat, st.lng]); });
+  var wrap = document.getElementById('stands-map-wrap');
+  if (wrap && !wrap.classList.contains('fullscreen')) flToggleStandsMapFull();
+  // Fullscreen resizes the container — measure again, then frame the ground.
+  setTimeout(function() {
+    try {
+      standsMap.invalidateSize();
+      if (pts.length) standsMap.fitBounds(L.latLngBounds(pts), { padding: [30, 30], maxZoom: 16 });
+    } catch (e) { /* map not ready — the filter still applied */ }
+  }, 140);
+}
+
+/** + High seat on a ground card (owner, 2026-07-29): the one thing the card
+ *  couldn't add. Opens the stand sheet with THIS ground already chosen —
+ *  routed through standSheetGroundChanged so the centroid seed and the
+ *  "drag the pin onto the seat" toast behave exactly as a manual pick. */
+function grxAddSeatOnGround(g) {
+  if (g == null) return;
+  closeGroundsSheet();
+  openStandSheet(null, null);
+  var sel = document.getElementById('stand-ground');
+  if (sel) {
+    sel.value = g;
+    // The option must exist before the value sticks — populateStandGroundSelect
+    // ran inside openStandSheet with the full savedGrounds list.
+    if (sel.value === g) standSheetGroundChanged();
+  }
+}
+
+/** Seat row on a ground card (owner, 2026-07-30): Open goes to the stand's
+ *  detail — forecast, scent, history. The sheet is not an editor for seats;
+ *  Edit lives one tap further, on the detail itself. */
+function grxOpenSeatDetail(id) {
+  if (!id) return;
+  closeGroundsSheet();
+  openStandDetail(id);
+}
+
 async function groundsSheetDeleteGround(name) {
   groundsSheetRenaming = null;
   await deleteGround(name);
   renderGroundsSheet();
+}
+
+var groundsSheetExpanded = null;
+// 12.80: which long groups are unfolded, keyed 'ground|kind'. Session-lived,
+// same as the accordion — a fold state that outlived the sheet would greet
+// the next open with last week's expansion.
+var grxGroupsOpen = {};
+
+function grxGroupToggle(g, kind) {
+  if (g == null || !kind) return;
+  var key = g + '|' + kind;
+  grxGroupsOpen[key] = !grxGroupsOpen[key];
+  renderGroundsSheet();
+}
+
+/** PURE (vm-extracted by tests): the sheet header's totals chips — the old
+ *  in-list grx-sum grown up and moved onto the dark estate band (12.80).
+ *  Same arithmetic as the cards beneath: groundAreasHaFrom is the single
+ *  source every acreage surface reads. */
+function grxHeadChipsHtml(grounds, features, seatTotal) {
+  grounds = grounds || [];
+  if (!grounds.length) return '';
+  var areas = groundAreasHaFrom(features || []);
+  var mappedN = 0, totalHa = 0;
+  grounds.forEach(function(g) {
+    var ha = areas[g] || 0;
+    if (ha > 0) { mappedN++; totalHa += ha; }
+  });
+  var h = '<span class="grx-hd-chip"><b>' + grounds.length + '</b> ground' + (grounds.length === 1 ? '' : 's')
+    + (mappedN ? ' · <b>' + mappedN + '</b> mapped' : '') + '</span>';
+  if (totalHa > 0) h += '<span class="grx-hd-chip"><b>' + Math.round(totalHa * 2.47105).toLocaleString('en-GB') + '</b> acres</span>';
+  if (seatTotal > 0) h += '<span class="grx-hd-chip"><b>' + seatTotal + '</b> seat' + (seatTotal === 1 ? '' : 's') + '</span>';
+  return h;
+}
+
+function grxCullsNear(st) {
+  if (st.lat == null || st.lng == null) return 0;
+  var n = 0;
+  try {
+    flStandHistSource().rows.forEach(function(e) {
+      if (e.lat == null || e.lng == null || isBlankDayEntry(e)) return;
+      var dm = flDistMeters(st.lat, st.lng, e.lat, e.lng);
+      if (dm != null && dm <= STAND_HISTORY_RADIUS_M) n++;
+    });
+  } catch (_) { return 0; }
+  return n;
+}
+
+function grxSeatData() {
+  var counts = {}, pts = {}, rows = {};
+  (flStandsState.list || []).forEach(function(st) {
+    if (!st) return;
+    var g = st.ground || '';
+    counts[g] = (counts[g] || 0) + 1;
+    if (st.lat != null && st.lng != null) (pts[g] = pts[g] || []).push([st.lat, st.lng]);
+    // Owner (2026-07-30): the card counted seats but never NAMED them. The
+    // facing arrives pre-labelled ("NE") so the pure list builder stays free
+    // of the forecast module.
+    (rows[g] = rows[g] || []).push({
+      id: st.id, name: st.name || 'High seat',
+      facingLabel: Number.isFinite(st.facing) ? flWindDirLabel8(st.facing) : '',
+      hasPin: st.lat != null && st.lng != null,
+      culls: grxCullsNear(st)
+    });
+  });
+  // 12.80: most productive first — with 46 seats on a card, the three the
+  // preview surfaces should be the three you actually revisit. Names break
+  // the tie so the order is stable season to season.
+  Object.keys(rows).forEach(function(g) {
+    rows[g].sort(function(a, b) { return (b.culls - a.culls) || a.name.localeCompare(b.name); });
+  });
+  return { counts: counts, pts: pts, rows: rows };
 }
 
 function renderGroundsSheet() {
@@ -12040,7 +12378,23 @@ function renderGroundsSheet() {
   if (!list) return;
   if (groundsSheetRenaming != null && (savedGrounds || []).indexOf(groundsSheetRenaming) === -1) groundsSheetRenaming = null;
   var gOff = groundsOffline();
-  list.innerHTML = groundsSheetListHtml(savedGrounds, groundFeaturesNow(), gOff, { renaming: groundsSheetRenaming });
+  // Scroll memory: the list re-renders wholesale — put the reader back where
+  // they were rather than at the top (same principle as the diary round).
+  var grxScrollEl = document.querySelector('#grounds-ov .tsheet');
+  var grxScrollTop = grxScrollEl ? grxScrollEl.scrollTop : 0;
+  if (groundsSheetExpanded != null && (savedGrounds || []).indexOf(groundsSheetExpanded) === -1) groundsSheetExpanded = null;
+  var sd = grxSeatData();
+  var chipsEl = document.getElementById('grounds-head-chips');
+  if (chipsEl) {
+    var seatTotal = 0;
+    Object.keys(sd.counts).forEach(function(k) { seatTotal += sd.counts[k]; });
+    chipsEl.innerHTML = grxHeadChipsHtml(savedGrounds, groundFeaturesNow(), seatTotal);
+  }
+  list.innerHTML = groundsSheetListHtml(savedGrounds, groundFeaturesNow(), gOff, {
+    renaming: groundsSheetRenaming, expanded: groundsSheetExpanded,
+    seatCounts: sd.counts, seatPts: sd.pts, seatRows: sd.rows, groupsOpen: grxGroupsOpen
+  });
+  if (grxScrollEl) grxScrollEl.scrollTop = grxScrollTop;
   if (groundsSheetRenaming != null) {
     var ri = document.getElementById('grx-rename-inp');
     if (ri) {
@@ -13461,8 +13815,9 @@ function gmapCancel() {
 
 /** Download every saved shape as GeoJSON or GPX (your data is yours —
  *  HuntStand exports nothing; we export everything). */
-function groundsExport(format) {
+function groundsExport(format, groundOnly) {
   var feats = groundFeaturesNow();
+  if (groundOnly) feats = feats.filter(function(f) { return f && f.ground === groundOnly; });
   // G8: the high seats ride along — GPX waypoints load straight onto a
   // Garmin/handheld. Live list when the Stands tab has loaded, else the
   // localStorage snapshot (same source the score logger trusts).
@@ -13472,7 +13827,7 @@ function groundsExport(format) {
   var withSeats = flExportSeatsWanted();
   var standsSrc = flEffectiveStands();
   var seats = !withSeats ? [] : (standsSrc || []).filter(function(s) {
-    return s && s.lat != null && s.lng != null;
+    return s && s.lat != null && s.lng != null && (!groundOnly || (s.ground || '') === groundOnly);
   }).map(function(s) {
     // Finding L: facing and bad winds are the two things a stalker checks
     // before walking to a seat, and notes are where "gate is padlocked, park
@@ -13521,7 +13876,9 @@ function groundsExport(format) {
   var blob = new Blob([text], { type: spec.mime });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'first-light-grounds.' + spec.ext;
+  a.download = 'first-light-' + (groundOnly
+    ? groundOnly.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'ground'
+    : 'grounds') + '.' + spec.ext;
   a.click();
   setTimeout(function() { try { URL.revokeObjectURL(a.href); } catch (_) {} }, 1000);
   var bits = [];

@@ -1094,21 +1094,25 @@
      settings-ov in the DOM so it paints above it when both are open. -->
 <div class="tsheet-ov" id="grounds-ov">
   <div class="tsheet tsheet--scroll">
-    <div class="tsheet-handle"></div>
-    <div class="tsheet-hdr">
-      <div>
-        <div class="tsheet-title">My grounds</div>
-        <div class="tsheet-sub">Boundaries &amp; acreage</div>
-      </div>
-      <button class="tsheet-x" type="button" data-fl-action="close-grounds-sheet" aria-label="Close grounds">✕</button>
+    <!-- 12.80 (owner: "modernise… A1"): the dark estate band — forest radial,
+         gold eyebrow, Playfair title, live totals chips (grxHeadChipsHtml). -->
+    <div class="grx-hd">
+      <div class="grx-hd-grab"></div>
+      <div class="grx-hd-eyebrow">FIRST LIGHT · YOUR GROUNDS</div>
+      <div class="grx-hd-title">My grounds</div>
+      <button class="grx-hd-x" type="button" data-fl-action="close-grounds-sheet" aria-label="Close grounds">✕</button>
+      <div class="grx-hd-chips" id="grounds-head-chips"></div>
     </div>
     <div class="tsheet-body">
       <div id="grounds-sheet-offline" class="grounds-offline-note" style="display:none;">Offline — showing the last synced boundaries. Editing needs signal.</div>
-      <div id="grounds-sheet-list"><!-- groundsSheetListHtml (diary.js) --></div>
-      <div class="grounds-add-row">
-        <input id="grounds-add-name" type="text" maxlength="120" placeholder="New ground name…" aria-label="New ground name" autocomplete="off">
+      <!-- 2026-07-29 (owner): creating comes FIRST — the add row and import
+           live at the top, before the cards, not below three expanded grounds. -->
+      <div class="grounds-add-row grounds-add-row--top">
+        <input id="grounds-add-name" type="text" maxlength="120" placeholder="＋ New ground name…" aria-label="New ground name" autocomplete="off">
         <button type="button" class="grounds-add-btn" data-fl-action="grounds-add">Add</button>
+        <button type="button" class="grx-import-top" data-fl-action="grounds-import">Import ›</button>
       </div>
+      <div id="grounds-sheet-list"><!-- groundsSheetListHtml (diary.js) --></div>
       <!-- G4: your boundaries are portable — import from mapping files, export everything -->
       <!-- Findings 19/20 (2026-07-25): the export carries every high-seat
            position as a waypoint. That is the point when the file is going to
@@ -1119,9 +1123,6 @@
         <input type="checkbox" id="grounds-export-seats" checked>
         <span class="grx-seat-opt-t"><strong>Include high seats in exports</strong><small>Seat positions ride along as waypoints — handy on a Garmin, worth turning off before you share a boundary with anyone.</small></span>
       </label>
-      <div class="grx-io-row">
-        <button type="button" class="grx-io-btn" data-fl-action="grounds-import">Import map file</button>
-      </div>
       <!-- AM (2026-07-26): three exports will not sit on one line with the
            import button beside them at 10px, and grouping by verb is the better
            reading anyway. KML leads: it is the format Google Earth, OS Maps and
