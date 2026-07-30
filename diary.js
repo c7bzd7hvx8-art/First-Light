@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.82';
+const FL_JS_BUILD = '12.83';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -12776,7 +12776,7 @@ function initGmap() {
   gmap = L.map('gmap-div', { zoomControl: true, attributionControl: false }).setView([54.0, -2.0], 6);
   // 12.81: same metric scale as the stands map — you are judging paces while
   // you trace, this is where scale matters most.
-  L.control.scale({ metric: true, imperial: false, maxWidth: 110, position: 'bottomleft' }).addTo(gmap);
+  flAddScale(gmap); // 12.83: same end-of-gesture scale as the stands map
   gmap.on('zoomend', gmapApplyZoomClass);
   gmap.whenReady(gmapApplyZoomClass);
   var tiles = mapProviderTileUrls();
@@ -16282,6 +16282,50 @@ function syncStandsFilterButton() {
   }
 }
 
+// 12.83 (owner, red circle on the scale bar): three faults in one control.
+// It sat bottom-left where the map's own Grounds/+/Locate bar overlays it,
+// the rounded map corner clipped its chip, and Leaflet's L.Control.Scale
+// re-rounds on every 'move' FRAME, so a pinch made it flicker through
+// widths. Ours: bottom-right (nothing lives there — attribution is off),
+// a hairline with end ticks instead of a black band, updated only when the
+// gesture ENDS, and the width GLIDES there (CSS transition in diary.css).
+function flScaleNice(maxM) {
+  // PURE: largest 1/2/3/5 × 10^k that fits inside maxM metres.
+  var p = Math.pow(10, Math.floor(Math.log10(maxM)));
+  var m = maxM / p;
+  return (m >= 5 ? 5 : m >= 3 ? 3 : m >= 2 ? 2 : 1) * p;
+}
+
+var FLScaleControl = L.Control.extend({
+  options: { position: 'bottomright', maxWidth: 96 },
+  onAdd: function(map) {
+    this._map = map;
+    var el = L.DomUtil.create('div', 'fl-scale');
+    el.innerHTML = '<span class="fl-scale-t"></span><span class="fl-scale-bar"></span>';
+    this._el = el;
+    this._onEnd = this._refresh.bind(this);
+    map.on('zoomend moveend', this._onEnd);
+    var self = this;
+    setTimeout(function() { self._refresh(); }, 0); // after the first layout
+    return el;
+  },
+  onRemove: function(map) { map.off('zoomend moveend', this._onEnd); },
+  _refresh: function() {
+    var map = this._map, w = this.options.maxWidth;
+    if (!map || !this._el) return;
+    var y = map.getSize().y / 2;
+    var maxM = map.distance(map.containerPointToLatLng([0, y]), map.containerPointToLatLng([w, y]));
+    if (!(maxM > 0)) return;
+    var nice = flScaleNice(maxM);
+    var bar = this._el.querySelector('.fl-scale-bar');
+    var t = this._el.querySelector('.fl-scale-t');
+    if (bar) bar.style.width = Math.round(w * nice / maxM) + 'px';
+    if (t) t.textContent = nice >= 1000 ? (nice / 1000) + ' km' : nice + ' m';
+  }
+});
+
+function flAddScale(map) { map.addControl(new FLScaleControl()); }
+
 function initStandsMap() {
   if (standsMap) return;
   if (!document.getElementById('stands-map-div')) return;
@@ -16289,8 +16333,8 @@ function initStandsMap() {
     .setView([54.0, -2.0], 6); // UK overview until fitBounds
   // 12.81 (owner, HuntStand side-by-side): the one thing their map had that
   // ours didn't — a scale bar. Metric only; 1500 ft on a Norfolk farm helps
-  // nobody. Styled to the brand in diary.css.
-  L.control.scale({ metric: true, imperial: false, maxWidth: 110, position: 'bottomleft' }).addTo(standsMap);
+  // nobody. 12.83: our own control — see FLScaleControl above.
+  flAddScale(standsMap);
   // Round 24: badges ↔ dots follow the zoom level.
   standsMap.on('zoomend', function() { syncStandStepMarkers(); });
   // ST-3: the off-screen count is a function of the viewport, so it has to
