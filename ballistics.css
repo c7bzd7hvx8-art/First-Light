@@ -342,6 +342,13 @@ details[open] > .bx-rc-summary::after{content:'Hide \25B4';}
 .bx-still-sub{font-size:11px;color:rgba(255,255,255,0.62);font-family:'DM Mono',monospace;margin-top:4px;line-height:1.5;}
 .bx-mpbr-main{font-size:14px;color:#fff;}
 .bx-mpbr-main strong{color:var(--gold);}
+/* 12.91: the drawn arc — real trajectory in the vital band */
+.bx-pbr-arc{width:100%;display:block;margin:10px 0 4px;}
+
+/* 12.89: the PBR figures row — the four numbers the request named */
+.bx-pbr-strip{display:flex;gap:8px;margin:8px 0 6px;flex-wrap:wrap;}
+.bx-pbr-cell{flex:1;min-width:72px;background:rgba(240,228,192,0.05);border:1px solid rgba(216,176,84,0.22);border-radius:10px;padding:7px 6px;text-align:center;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.6px;color:#a99e7f;text-transform:uppercase;}
+.bx-pbr-cell b{display:block;font-size:13px;letter-spacing:0.2px;color:#e2bd60;font-weight:500;margin-bottom:2px;}
 .bx-mpbr-sub{font-size:11px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;margin-top:5px;line-height:1.5;}
 
 /* ── Drop chart ─────────────────────────────────────────────────── */

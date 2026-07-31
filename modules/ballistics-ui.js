@@ -19,7 +19,8 @@ import {
   solveShot, fpsToMs, msToFps, grainsToKg,
   inchesToCm, cmToInches, yardsToMetres, metresToYards,
   joulesToFtLbs, ftLbsToJoules,
-  airDensityRatio, ATM_STD, pointBlankForZero,
+  airDensityRatio, ATM_STD, pointBlankForZero, maxPointBlankRange,
+  findZeroAngle, solveTrajectory,
   trueMuzzleVelocity, cmToMoa, cmToMil, speedOfSound,
   gyroscopicStability, estimateBulletLengthIn, nearestReticleMark,
 } from '../lib/fl-ballistics.js';
@@ -1664,7 +1665,61 @@ function buildReticleSvg(ret, down, side) {
 const ETHICAL_RANGE_SAMPLE_STEP_M = 10;
 const ETHICAL_RANGE_MAX_PROBE_M = 500;
 
+/** 12.91 (owner, live test on the dev server: "presentation wise is this the
+ *  best way?"): the arc, drawn. Two flat sections asked the reader to
+ *  reconcile 174 m and 250 m in prose; the diagram shows it — the parchment
+ *  band is the vital zone, the gold curve is THIS load's real trajectory at
+ *  the best zero (solved, not sketched), it kisses the top at the peak,
+ *  falls out of the bottom at the far edge, and a dashed tick marks where
+ *  the CURRENT zero's dead-hold runs out mid-band. Label discipline for
+ *  phone width: 12px+ in a 640 viewBox, and the far-zero x-label yields when
+ *  it would collide with the bold max label (both live in the strip anyway). */
+function pbrArcSvg(opt, heldMaxM, vitalRadiusCm, traj) {
+  if (!opt || !traj || traj.length < 6) return '';
+  const W = 640, H = 150, PADL = 8, PADR = 52, PADT = 18, PADB = 28;
+  const xmax = Math.max(opt.maxRangeM + 18, 120);
+  let minRise = 0;
+  for (const r of traj) { const rise = -r.dropCm; if (rise < minRise) minRise = rise; }
+  const ymax = vitalRadiusCm * 1.35;
+  const ymin = Math.min(-vitalRadiusCm * 1.35, minRise - 0.8);
+  const X = (m) => PADL + (W - PADL - PADR) * m / xmax;
+  const Y = (cm) => PADT + (H - PADT - PADB) * (1 - (cm - ymin) / (ymax - ymin));
+  let d = '';
+  for (const r of traj) {
+    if (r.rangeM > xmax - 4) break;
+    d += (d ? 'L' : 'M') + X(r.rangeM).toFixed(1) + ' ' + Y(-r.dropCm).toFixed(1);
+  }
+  const bt = Y(vitalRadiusCm), bb = Y(-vitalRadiusCm), ly = Y(0);
+  const vLab = (vitalRadiusCm % 1 === 0) ? String(vitalRadiusCm) : vitalRadiusCm.toFixed(1);
+  const farLabelFits = (X(opt.maxRangeM) - X(opt.zeroRangeM)) >= 40;
+  const showYours = heldMaxM && (opt.maxRangeM - heldMaxM) >= 10;
+  return `<svg class="bx-pbr-arc" viewBox="0 0 ${W} ${H}" aria-hidden="true">
+    <rect x="${PADL}" y="${bt.toFixed(1)}" width="${W - PADL - PADR}" height="${(bb - bt).toFixed(1)}" fill="rgba(240,228,192,0.06)"/>
+    <line x1="${PADL}" x2="${W - PADR}" y1="${bt.toFixed(1)}" y2="${bt.toFixed(1)}" stroke="rgba(216,176,84,0.45)" stroke-width="1" stroke-dasharray="4 4"/>
+    <line x1="${PADL}" x2="${W - PADR}" y1="${bb.toFixed(1)}" y2="${bb.toFixed(1)}" stroke="rgba(216,176,84,0.45)" stroke-width="1" stroke-dasharray="4 4"/>
+    <line x1="${PADL}" x2="${W - PADR}" y1="${ly.toFixed(1)}" y2="${ly.toFixed(1)}" stroke="rgba(240,228,192,0.18)" stroke-width="1"/>
+    <rect x="${X(0).toFixed(1)}" y="${bt.toFixed(1)}" width="${(X(opt.maxRangeM) - X(0)).toFixed(1)}" height="${(bb - bt).toFixed(1)}" fill="rgba(226,189,96,0.07)"/>
+    <path d="${d}" fill="none" stroke="#e2bd60" stroke-width="2.4" stroke-linecap="round"/>
+    ${opt.riseRangeM != null ? `<circle cx="${X(opt.riseRangeM).toFixed(1)}" cy="${bt.toFixed(1)}" r="3.2" fill="#e2bd60"/>` : ''}
+    <line x1="${X(opt.maxRangeM).toFixed(1)}" x2="${X(opt.maxRangeM).toFixed(1)}" y1="${bt.toFixed(1)}" y2="${(bb + 6).toFixed(1)}" stroke="#e2bd60" stroke-width="1.8"/>
+    ${showYours ? `<line x1="${X(heldMaxM).toFixed(1)}" x2="${X(heldMaxM).toFixed(1)}" y1="${(bb - 14).toFixed(1)}" y2="${(bb + 6).toFixed(1)}" stroke="rgba(240,228,192,0.6)" stroke-width="1.4" stroke-dasharray="3 3"/>` : ''}
+    ${opt.nearZeroM != null ? `<circle cx="${X(opt.nearZeroM).toFixed(1)}" cy="${ly.toFixed(1)}" r="2.6" fill="none" stroke="#a99e7f" stroke-width="1.3"/>` : ''}
+    <circle cx="${X(opt.zeroRangeM).toFixed(1)}" cy="${ly.toFixed(1)}" r="2.6" fill="none" stroke="#a99e7f" stroke-width="1.3"/>
+    <g font-family="'DM Mono',monospace" font-size="12" fill="#a99e7f" letter-spacing="0.5">
+      <text x="${W - PADR + 6}" y="${(bt + 4).toFixed(1)}" font-size="11">+${vLab}</text>
+      <text x="${W - PADR + 6}" y="${(bb + 4).toFixed(1)}" font-size="11">\u2212${vLab}</text>
+      ${opt.riseRangeM != null ? `<text x="${(X(opt.riseRangeM) - 22).toFixed(1)}" y="${(bt - 6).toFixed(1)}" fill="#e2bd60" font-size="11.5">PEAK ${opt.riseRangeM}</text>` : ''}
+      <text x="${X(0).toFixed(1)}" y="${(bb + 19).toFixed(1)}">0</text>
+      ${farLabelFits ? `<text x="${(X(opt.zeroRangeM) - 14).toFixed(1)}" y="${(bb + 19).toFixed(1)}">${opt.zeroRangeM}</text>` : ''}
+      <text x="${(X(opt.maxRangeM) - 20).toFixed(1)}" y="${(bb + 19).toFixed(1)}" fill="#e2bd60" font-weight="600" font-size="13">${opt.maxRangeM} M</text>
+      ${showYours ? `<text x="${(X(heldMaxM) - 38).toFixed(1)}" y="${(bb - 19).toFixed(1)}" fill="rgba(240,228,192,0.75)" font-size="11">YOURS ${heldMaxM}</text>` : ''}
+    </g>
+  </svg>`;
+}
+
 let _mpbrCache = { key: null, val: null };
+let _pbrOptCache = { key: null, val: null }; // 12.88: the best-zero optimiser
+let _pbrArcCache = { key: null, val: null }; // 12.91: the drawn arc
 function renderMpbrSection(p) {
   if (!p) return '';
   const sp = SPECIES_BODY[state.settings.anatomySpecies];
@@ -1690,22 +1745,98 @@ function renderMpbrSection(p) {
     }, vitalRadius);
     _mpbrCache = { key, val: res };
   }
-  if (!res) return '';
-  const vitalCm = Math.round(res.vitalRadiusCm * 2);
+  // 12.88 (user email: "could I suggest a metric point blank range calculator")
+  // — the OPTIMISER beside the actual-zero answer. maxPointBlankRange finds
+  // the zero that makes this load's arc just kiss the top of the vital zone,
+  // and reports it the way a UK stalker sights in: cm high at 100 m. Metric
+  // throughout — the request was a stalker converting a US inch tool by hand.
+  let opt = null;
+  if (_pbrOptCache.key === key) opt = _pbrOptCache.val;
+  else {
+    opt = maxPointBlankRange({
+      muzzleVelocityMs: fpsToMs(mv),
+      bcG1: p.bcG1, bcG7: p.bcG7,
+      bulletMassKg: grainsToKg(p.weightGrains),
+      sightHeightCm: p.sightHeightCm,
+      tempC: c.tempC, pressureHpa: c.pressureHpa, humidityPct: c.humidityPct,
+    }, vitalRadius);
+    _pbrOptCache = { key, val: opt };
+  }
+  const vitalCm = Math.round(vitalRadius * 2);
+  let optHtml = '';
+  if (opt && opt.zeroRangeM && opt.sightIn100Cm != null) {
+    const sightLine = opt.sightIn100Cm >= 0.1
+      ? `<strong>${opt.sightIn100Cm.toFixed(1)} cm high at 100 m</strong>`
+      : '<strong>dead on at 100 m</strong>';
+    // The persuasive line: what the best zero BUYS over the one in the profile.
+    let deltaNote = '';
+    if (res && res.maxRangeM) {
+      const gain = opt.maxRangeM - res.maxRangeM;
+      deltaNote = gain >= 10
+        ? ` That buys you ${gain} m of dead-hold over your current ${res.zeroRangeM} m zero.`
+        : ` Your current ${res.zeroRangeM} m zero already gets within ${Math.max(0, gain)} m of it.`;
+    }
+    // 12.89 (owner: "What about the metrics") — the email asked for four
+    // numbers BY NAME: near zero, far zero, minimum and maximum point blank
+    // range. Print them as figures, not just prose; a shooter who lives in
+    // the US tool scans for the row. Min PBR is usually the muzzle, but with
+    // high mounts over a small vital zone it honestly is not — say which.
+    // 12.91: the arc is the REAL trajectory at the best zero — re-solved (and
+    // cached with the section) rather than sketched, so the curve, the peak
+    // dot and the exit all agree with the figures by construction.
+    let arc = '';
+    if (_pbrArcCache.key === key) arc = _pbrArcCache.val;
+    else {
+      try {
+        const b2 = {
+          muzzleVelocityMs: fpsToMs(mv), bcG1: p.bcG1, bcG7: p.bcG7,
+          bulletMassKg: grainsToKg(p.weightGrains), sightHeightCm: p.sightHeightCm,
+          densityRatio: airDensityRatio(c.tempC, c.pressureHpa, c.humidityPct), tempC: c.tempC,
+        };
+        const ang = findZeroAngle(b2, opt.zeroRangeM);
+        const traj = solveTrajectory({ ...b2, launchAngleRad: ang, maxRangeM: opt.maxRangeM + 25, stepM: 2 });
+        arc = pbrArcSvg(opt, res && res.maxRangeM, vitalRadius, traj);
+      } catch (_) { arc = ''; }
+      _pbrArcCache = { key, val: arc };
+    }
+    const holdSpan = opt.nearRangeM > 0 ? `${opt.nearRangeM}–${opt.maxRangeM} m` : `0–${opt.maxRangeM} m`;
+    const strip = `
+      <div class="bx-pbr-strip">
+        <span class="bx-pbr-cell"><b>${opt.nearZeroM != null ? opt.nearZeroM + ' m' : '—'}</b>near zero</span>
+        <span class="bx-pbr-cell"><b>${opt.zeroRangeM} m</b>far zero</span>
+        <span class="bx-pbr-cell"><b>${holdSpan}</b>point blank</span>
+        <span class="bx-pbr-cell"><b>${opt.maxRiseCm.toFixed(1)} cm</b>peak · ${opt.riseRangeM} m</span>
+      </div>`;
+    optHtml = `
+    <div class="bx-output-section">
+      <div class="bx-output-label">Best zero for this load · ${escapeHtml(sp.label || '')}</div>
+      <div class="bx-mpbr-main">Zero ${sightLine}</div>
+      ${strip}
+      ${arc}
+      <div class="bx-mpbr-sub">That is a ${opt.zeroRangeM} m zero — the flattest this load can shoot a ${vitalCm} cm vital zone: aim dead-centre ${opt.nearRangeM > 0 ? `from ${opt.nearRangeM} m` : 'from the muzzle'} to <strong>${opt.maxRangeM} m</strong>.${deltaNote} On the range: ${opt.sightIn100Cm >= 0.1 ? `set the group ${opt.sightIn100Cm.toFixed(1)} cm above point of aim at 100 m` : 'zero exactly at 100 m'}, then confirm.</div>
+    </div>
+  `;
+  }
+  if (!res) return optHtml;
   const riseNote = res.risesAbove
     ? ` It climbs ~${res.maxRiseCm.toFixed(0)} cm high around ${res.riseRangeM}m — above the vital centre, so hold a touch low there (a lower zero would flatten it).`
     : '';
   // If the mid-range arc climbs past the TOP of the vital zone (not merely above
   // the centre), "dead-hold, no hold-over needed" is an over-claim — the bullet
   // exits the vitals high at mid-range (audit §2). Tell the truth in that case.
-  if (res.risesAbove && res.maxRiseCm > res.vitalRadiusCm) {
+  // 12.90 (verification round): +0.35 cm tolerance, because the OPTIMAL zero
+  // puts the peak exactly ON the zone edge by construction — re-deriving that
+  // zero from the profile reads a rounding hair over (5.1 vs 5.0), and the
+  // card was scolding the very zero the section below recommends. A few
+  // millimetres of arithmetic is not an over-claim; 4+ mm of real climb is.
+  if (res.risesAbove && res.maxRiseCm > res.vitalRadiusCm + 0.35) {
     return `
     <div class="bx-output-section">
       <div class="bx-output-label">Dead-hold zone · ${res.zeroRangeM}m zero</div>
       <div class="bx-mpbr-main">Not a clean dead-hold at this zero</div>
       <div class="bx-mpbr-sub">With your ${res.zeroRangeM}m zero the bullet climbs ~${res.maxRiseCm.toFixed(0)} cm above your aim around ${res.riseRangeM}m — past the top of a ${vitalCm} cm vital zone (${escapeHtml(sp.label || '')}), so it isn't a true dead-hold. Hold a touch low near ${res.riseRangeM}m, or use a lower zero to flatten the arc; use the come-up above for longer shots.</div>
     </div>
-  `;
+  ` + optHtml;
   }
   return `
     <div class="bx-output-section">
@@ -1713,7 +1844,7 @@ function renderMpbrSection(p) {
       <div class="bx-mpbr-main">Hold dead-on to <strong>${res.maxRangeM}m</strong></div>
       <div class="bx-mpbr-sub">With your ${res.zeroRangeM}m zero, aim at the vital centre and the bullet stays inside a ${vitalCm} cm vital zone (${escapeHtml(sp.label || '')}) out to ${res.maxRangeM}m — no hold-over needed. Beyond that, use the come-up above.${riseNote}</div>
     </div>
-  `;
+  ` + optHtml;
 }
 
 // Subsonic / moderated-load mode. Shown when the muzzle velocity is already

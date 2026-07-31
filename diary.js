@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.84';
+const FL_JS_BUILD = '12.94';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -1310,6 +1310,8 @@ function initDiaryFlUi() {
       case 'ground-draw-line': openBoundaryEditor(el.getAttribute('data-ground'), null, 'line'); break; // G9
       case 'ground-add-marker': openBoundaryEditor(el.getAttribute('data-ground'), null, 'marker'); break; // G10
       case 'gmap-marker-type': gmapSetMarkerType(el.getAttribute('data-type')); break; // G10
+      case 'gmap-cam-facing': gmapSetCamFacing(el.getAttribute('data-deg')); break; // 12.85
+      case 'grx-cam-checked': grxCamCheckedToday(el.getAttribute('data-feature-id')); break; // 12.85
       case 'gmap-line-type': gmapSetLineType(el.getAttribute('data-type')); break; // G15
       case 'gmap-ground-new-toggle': gmapGroundNewToggle(); break; // G18
       case 'gmap-ground-new-create': gmapGroundNewCreate(); break; // G18
@@ -12145,10 +12147,24 @@ function groundsSheetListHtml(grounds, features, offline, opts) {
       // but the trailing pill sits beside a name and must say what KIND it is
       // — "Water trough Marker" was the parent noun leaking into the chip.
       var mlabel = markerTypeLabel(mk.type);
+      // 12.85: a trail cam's row says what it watches and when it was last
+      // disturbed. The compass label is inlined (deg is always one of the 8)
+      // so this builder stays free of the forecast module.
+      var mbits = [];
+      if (mrow.name) mbits.push('<span class="grx-parcel-area">' + esc(markerTypeChip(mk.type)) + '</span>');
+      if (mk.type === 'trail_cam' && mk.facing != null) {
+        mbits.push('looks ' + ['N','NE','E','SE','S','SW','W','NW'][Math.round(mk.facing / 45) % 8]);
+      }
+      if (mk.type === 'trail_cam' && mk.checked && opts.today) {
+        mbits.push('checked ' + flCheckedAgoText(mk.checked, opts.today));
+      }
       return '<div class="grx-parcel grx-parcel--mk">' + rtag('marker', groundMarkerGlyph(mk.type))
         + '<div class="grx-rbody"><div class="grx-rname">' + esc(mrow.name || mlabel) + '</div>'
-        + (mrow.name ? '<div class="grx-rmeta"><span class="grx-parcel-area">' + esc(markerTypeChip(mk.type)) + '</span></div>' : '')
+        + (mbits.length ? '<div class="grx-rmeta">' + mbits.join(' · ') + '</div>' : '')
         + '</div>'
+        + (mk.type === 'trail_cam'
+          ? '<button type="button" class="grx-btn grx-btn-ck" data-fl-action="grx-cam-checked" data-feature-id="' + esc(mrow.id) + '" aria-label="Card checked today" title="Checked today"' + (offline ? ' disabled' : '') + '>\u2713</button>'
+          : '')
         + '<button type="button" class="grx-btn" data-fl-action="ground-edit" data-ground="' + esc(g) + '" data-feature-id="' + esc(mrow.id) + '" aria-label="Edit this marker"' + (offline ? ' disabled' : '') + '>' + ICO.pencil + '</button>'
         + '<button type="button" class="grx-btn grx-btn-x" data-fl-action="ground-parcel-delete" data-feature-id="' + esc(mrow.id) + '" aria-label="Remove this marker" data-fl-name="' + esc(mrow.name || mlabel) + '" data-fl-kind="marker"' + (offline ? ' disabled' : '') + '>✕</button>'
         + '</div>';
@@ -12363,6 +12379,47 @@ function grxCullsNear(st) {
   return n;
 }
 
+/** PURE (12.85): "today" / "yesterday" / "5 days ago" / "3 wks ago" — the
+ *  one question onX answers with battery+SD dates and history: when did I
+ *  last walk scent through that site? */
+function flCheckedAgoText(ck, today) {
+  function ms(d) { var p = d.split('-'); return Date.UTC(+p[0], +p[1] - 1, +p[2]); }
+  var days = Math.round((ms(today) - ms(ck)) / 86400000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 14) return days + ' days ago';
+  return Math.round(days / 7) + ' wks ago';
+}
+
+function flTodayISO() {
+  var d = diaryNow();
+  return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+}
+
+/** 12.85: one tap on the cam row — stamps today into the blob and saves.
+ *  Preserves aim, name, notes; the row re-renders reading "checked today". */
+async function grxCamCheckedToday(featureId) {
+  if (!featureId || !sb || !currentUser) return;
+  if (!navigator.onLine) { showToast('⚠️ Still offline — marking a check needs signal'); return; }
+  var f = (groundFeaturesNow() || []).find(function(x) { return x && x.id === featureId; });
+  var mk = f && markerFromGeometry(f.geometry);
+  if (!mk) return;
+  try {
+    await saveGroundFeature(sb, currentUser.id, {
+      id: f.id, ground: f.ground, kind: 'marker',
+      geometry: makeMarkerGeometry(mk.lat, mk.lng, mk.type, { facing: mk.facing, checked: flTodayISO() }),
+      name: f.name || null, notes: f.notes || null
+    });
+  } catch (e) {
+    console.warn('grxCamCheckedToday error:', e);
+    showToast('⚠️ Could not save — check signal and try again');
+    return;
+  }
+  showToast('\ud83d\udcf7 ' + (f.name || 'Trail cam') + ' — checked today');
+  await refreshGroundsData();
+  renderGroundsSheet();
+}
+
 function grxSeatData() {
   var counts = {}, pts = {}, rows = {};
   (flStandsState.list || []).forEach(function(st) {
@@ -12408,7 +12465,8 @@ function renderGroundsSheet() {
   }
   list.innerHTML = groundsSheetListHtml(savedGrounds, groundFeaturesNow(), gOff, {
     renaming: groundsSheetRenaming, expanded: groundsSheetExpanded,
-    seatCounts: sd.counts, seatPts: sd.pts, seatRows: sd.rows, groupsOpen: grxGroupsOpen
+    seatCounts: sd.counts, seatPts: sd.pts, seatRows: sd.rows, groupsOpen: grxGroupsOpen,
+    today: flTodayISO()
   });
   if (grxScrollEl) grxScrollEl.scrollTop = grxScrollTop;
   if (groundsSheetRenaming != null) {
@@ -12595,6 +12653,12 @@ function groundMarkerGlyph(type) {
       return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 2.5v8.5M11 2.5v8.5M2 5h9M2 8.5h9"/></svg>';
     case 'larder': // G10b: rail + hook + hanging carcass
       return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5h10M6.5 1.5v1.6"/><path d="M6.5 3.1c1.1 0 1.1 1.2 0 1.2"/><path d="M6.5 4.3c-1.6 0.5-2.3 2-2 3.9 0.3 1.8 1 2.8 2 2.8s1.7-1 2-2.8c0.3-1.9-0.4-3.4-2-3.9z"/></svg>';
+    case 'feeder': // 12.85: hopper — funnel body on legs, feed at the spout
+      return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 1.8h8l-2.6 4.4h-2.8z"/><path d="M4.2 6.2L3 11.4M8.8 6.2l1.2 5.2"/><circle cx="6.5" cy="8.6" r="0.8" fill="currentColor" stroke="none"/></svg>';
+    case 'lick': // 12.86 (owner: "improve the lick block"): the licked-out
+      // HOLLOW is what makes a lick a lick — a concave-topped block on its
+      // post. The first draft read as a road sign.
+      return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 3.4C4 4.6 9 4.6 10.2 3.4V6.6a1.3 1.3 0 0 1-1.3 1.3H4.1A1.3 1.3 0 0 1 2.8 6.6z"/><path d="M6.5 7.9v3.4M4.5 11.3h4"/></svg>';
     case 'wallow': // G10b: churned pool — shallow bowl + ripples
       return '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M1.5 7c0 2.4 2.2 4 5 4s5-1.6 5-4"/><path d="M3.2 6.2c0.9-0.9 2.1-0.9 3 0s2.1 0.9 3 0"/><path d="M4.1 3.8c0.6-0.6 1.4-0.6 2 0s1.4 0.6 2 0"/></svg>';
     default:
@@ -12636,6 +12700,32 @@ function gmapMarkerTypeHtml(mtype) {
   GROUND_MARKER_TYPES.forEach(function(t) {
     h += '<button type="button" class="gmk-b gmk-b--mk' + (mtype === t.id ? ' on' : '') + '" data-fl-action="gmap-marker-type" data-type="' + t.id + '">' + groundMarkerGlyph(t.id) + '<span>' + esc(markerTypeChip(t.id)) + '</span></button>';
   });
+  return h;
+}
+
+/** PURE (12.85, Stalking Directory request): the trail-cam facing row — the
+ *  8-way aim the camera points, tap-again-to-clear, with the field-craft note
+ *  when the aim is southerly: a camera staring into the sun spends dawn and
+ *  dusk washed out and false-triggering on shadows. onX stores this as text;
+ *  we draw the wedge on the map too (renderGroundBoundaries). */
+function gmapCamFacingHtml(fc) {
+  // 12.94 (owner: "should the direction points not be like a compass?") —
+  // yes, and the app already invented it: the SEAT sheet's 3\u00d73 facing
+  // grid, directions sitting where they point, centre glyph saying what is
+  // being aimed. Same shape here, camera in the middle. Tap the lit cell to
+  // clear, exactly like the seat grid.
+  var CAM = '<svg width="16" height="16" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="2.5" y="1.5" width="8" height="10" rx="1.4"/><rect x="4.4" y="3.2" width="4.2" height="2.6" rx="0.6"/><circle cx="6.5" cy="8" r="1" fill="currentColor" stroke="none"/></svg>';
+  var cells = [['NW',315],['N',0],['NE',45],['W',270],null,['E',90],['SW',225],['S',180],['SE',135]];
+  var h = '<div class="gmap-fc-wrap"><span class="gmap-fc-lab">POINTS</span>'
+    + '<div class="gmap-fc-grid" role="group" aria-label="Direction the camera points">';
+  cells.forEach(function(d) {
+    if (!d) { h += '<div class="gmap-fc-center" aria-hidden="true">' + CAM + '</div>'; return; }
+    h += '<button type="button" class="gmk-b gmk-b--fc' + (fc === d[1] ? ' on' : '') + '" data-fl-action="gmap-cam-facing" data-deg="' + d[1] + '">' + d[0] + '</button>';
+  });
+  h += '</div></div>';
+  if (fc === 135 || fc === 180 || fc === 225) {
+    h += '<div class="gmap-fc-hint">The low UK sun sits in a south-facing camera\u2019s view for most of the day in the stalking seasons \u2014 expect glare and false triggers. North-facing is the quiet aim.</div>';
+  }
   return h;
 }
 
@@ -12718,6 +12808,7 @@ function gmapPersistDraft() {
     var gSel = document.getElementById('gmap-ground');
     localStorage.setItem(GMAP_DRAFT_KEY, JSON.stringify({
       v: 1, ring: ed.ring, closed: !!ed.closed, kind: ed.kind, mtype: ed.mtype,
+      mfacing: ed.mfacing != null ? ed.mfacing : null, mchecked: ed.mchecked || null, // 12.87
       ltype: ed.ltype, featureId: ed.featureId || null,
       ground: (gSel && gSel.value) || ed.ground || null, at: Date.now()
     }));
@@ -13064,6 +13155,7 @@ function openBoundaryEditor(ground, featureId, kindOpt, seedLatLng) {
   if (groundFeaturesUnavailable()) { showToast('⚠️ Boundary storage is not available yet on this account'); return; }
   var feats = groundFeaturesNow();
   var ring = [], closed = false, mtype = 'trail_cam', ltype = 'ride';
+  var mfacing = null, mchecked = null; // 12.85: trail-cam extras
   var featName = '', featNotes = ''; // G15: name + note on every kind, not just markers
   var kind = (kindOpt === 'no_shoot' || kindOpt === 'line' || kindOpt === 'marker') ? kindOpt : 'boundary'; // G9+G10
   if (featureId) {
@@ -13074,6 +13166,8 @@ function openBoundaryEditor(ground, featureId, kindOpt, seedLatLng) {
       if (!mk) { showToast('⚠️ Could not read that marker'); return; }
       ring = [[mk.lat, mk.lng]];
       mtype = mk.type;
+      mfacing = mk.facing; // 12.85: keep the camera's aim + check date through
+      mchecked = mk.checked; // an edit — rebuilding the blob must not wipe them
     } else {
       var parsed = f && parseGeometry(f.geometry, kind === 'line' ? 2 : undefined);
       if (!parsed) { showToast('⚠️ Could not read that boundary'); return; }
@@ -13096,7 +13190,11 @@ function openBoundaryEditor(ground, featureId, kindOpt, seedLatLng) {
     if (gmapDraft && !gmapDraft.featureId && gmapDraft.kind === kind) {
       ring = gmapDraft.ring;
       closed = !!gmapDraft.closed;
-      if (kind === 'marker') mtype = gmapDraft.mtype || mtype;
+      if (kind === 'marker') {
+        mtype = gmapDraft.mtype || mtype;
+        if (gmapDraft.mfacing != null) mfacing = gmapDraft.mfacing; // 12.87
+        if (gmapDraft.mchecked) mchecked = gmapDraft.mchecked;
+      }
       if (kind === 'line') ltype = gmapDraft.ltype || ltype;
       if (!ground && gmapDraft.ground) ground = gmapDraft.ground;
       gmapRestored = ring.length;
@@ -13105,7 +13203,7 @@ function openBoundaryEditor(ground, featureId, kindOpt, seedLatLng) {
   flGroundsState.editor = {
     ground: ground, featureId: featureId || null, ring: ring, closed: closed,
     kind: kind, mtype: mtype, ltype: ltype, undo: [], armedVertexIdx: -1, armedVertexAt: 0, armedCancelAt: 0,
-    adjusting: false
+    adjusting: false, mfacing: mfacing, mchecked: mchecked
   };
   if (gmapRestored) showToast('\u21a9 Restored your unsaved work \u00b7 ' + gmapRestored + (gmapRestored === 1 ? ' point' : ' points'));
   var ov = document.getElementById('gmap-overlay');
@@ -13434,6 +13532,13 @@ function gmapRefresh() {
       ? L.polygon(pts, { color: clr, weight: 2, opacity: 0.95, dashArray: isZone ? '4 4' : null, fillColor: clr, fillOpacity: isZone ? 0.12 : 0.16, interactive: false })
       : L.polyline(pts, { color: clr, weight: isLine ? 2.6 : 2, opacity: 0.95, dashArray: isLine ? null : '6 5', interactive: false });
     gmapPreviewLayer.addTo(gmap);
+  } else if (isMarker && ed.mtype === 'trail_cam' && ed.mfacing != null && pts.length) {
+    // 12.87: aim the camera and SEE it — the same 70 m wedge the live maps
+    // draw, repainted on every facing tap so the cone swings as you choose.
+    gmapPreviewLayer = L.polygon(flFacingConePolygon(pts[0][0], pts[0][1], ed.mfacing, 70), {
+      color: '#e2bd60', weight: 1.2, opacity: 0.8, dashArray: '4 3',
+      fillColor: '#e2bd60', fillOpacity: 0.12, interactive: false });
+    gmapPreviewLayer.addTo(gmap);
   }
   // 2026-07-29 (forum: "once drawn, I'd just like to see a line boundary not
   // a series of blobs"): a closed ring rests CALM — line + small quiet dots,
@@ -13478,7 +13583,7 @@ function gmapRefresh() {
     // else gets the row, being edited or not.
     var showKind = !isMeasure;
     kd.innerHTML = showKind
-      ? (isMarker ? gmapMarkerTypeHtml(ed.mtype)
+      ? (isMarker ? gmapMarkerTypeHtml(ed.mtype) + (ed.mtype === 'trail_cam' ? gmapCamFacingHtml(ed.mfacing) : '')
                   : gmapKindHtml(ed.kind, ed.ring.length >= 3) + (isLine ? gmapLineTypeHtml(ed.ltype) : ''))
       : '';
     kd.style.display = showKind ? 'flex' : 'none';
@@ -13606,6 +13711,39 @@ function gmapSetMarkerType(t) {
   if (!ed || ed.kind !== 'marker') return;
   var known = GROUND_MARKER_TYPES.some(function(td) { return td.id === t; });
   ed.mtype = known ? t : 'other';
+  gmapRefresh();
+}
+
+/** 12.85: aim the camera — tap the same direction again to clear it. */
+function gmapSetCamFacing(degStr) {
+  var ed = flGroundsState.editor;
+  if (!ed || ed.kind !== 'marker') return;
+  var deg = parseInt(degStr, 10);
+  if (!Number.isFinite(deg)) return;
+  ed.mfacing = (ed.mfacing === deg) ? null : deg;
+  // 12.92 (live walkthrough): at whole-ground zoom the 70 m wedge is a
+  // smudge behind the crosshair — you aimed and NOTHING visibly happened.
+  // First aim on a placed cam glides the map in close enough to see the
+  // cone swing (only when zoomed wider than z15 — never fight a user who
+  // framed the view deliberately, and never on clearing).
+  // 12.93 (same walkthrough, one step later): setView centred the cam at the
+  // map's TRUE centre — which sits UNDER the form panel, because the editor
+  // map runs the full viewport. The AE fix already named the honest centre
+  // (gmapCrossPoint); land the cam THERE, so the wedge swings in the part of
+  // the map you can actually see.
+  if (ed.mfacing != null && ed.ring.length && gmap && gmap.getZoom() < 15) {
+    try {
+      var camPt = L.latLng(ed.ring[0][0], ed.ring[0][1]);
+      var cp = gmapCrossPoint();
+      if (cp) {
+        var size = gmap.getSize();
+        var proj = gmap.project(camPt, 16).add(L.point(size.x / 2 - cp.x, size.y / 2 - cp.y));
+        gmap.setView(gmap.unproject(proj, 16), 16);
+      } else {
+        gmap.setView(camPt, 16);
+      }
+    } catch (_) {}
+  }
   gmapRefresh();
 }
 
@@ -13779,7 +13917,7 @@ async function gmapSave() {
     }
   }
   var geometry = isMarker
-    ? makeMarkerGeometry(ed.ring[0][0], ed.ring[0][1], ed.mtype)
+    ? makeMarkerGeometry(ed.ring[0][0], ed.ring[0][1], ed.mtype, { facing: ed.mtype === 'trail_cam' ? ed.mfacing : null, checked: ed.mchecked })
     : isLine
       ? makeLineGeometry(ed.ring, ed.ltype) // G15: subtype rides in the blob
       : makeGeometry(ed.ring);
@@ -14058,7 +14196,10 @@ async function groundsImportFile(file) {
       if (!pt || !isFinite(pt[0]) || !isFinite(pt[1])
         || pt[0] < -90 || pt[0] > 90 || pt[1] < -180 || pt[1] > 180) { skipped++; return; }
       sub = f.markerType || 'other';
-      geom = makeMarkerGeometry(pt[0], pt[1], sub);
+      // 12.87: a re-imported cam keeps its aim + last check (the exporters
+      // write both; 'facing' shares the seats' import key).
+      geom = makeMarkerGeometry(pt[0], pt[1], sub,
+        sub === 'trail_cam' ? { facing: f.facing, checked: f.checked } : null);
     } else if (f.kind === 'line') {
       if (!validateLinePath(ring).ok) { skipped++; return; }
       sub = f.lineType || 'other';
@@ -15071,6 +15212,17 @@ function renderGroundBoundaries(map, opts) {
       var mk = markerFromGeometry(f.geometry);
       if (!mk) return;
       if (hiddenMk && hiddenMk[mk.type]) return; // G8b: this type toggled off on the stands map
+      // 12.85: a camera with an aim draws its view — a short gold wedge, the
+      // same cone maths the seats use, 70 m because that is what a PIR
+      // watches. Nobody else draws this; onX stores the direction as text.
+      if (mk.type === 'trail_cam' && mk.facing != null) {
+        var camWedge = L.polygon(flFacingConePolygon(mk.lat, mk.lng, mk.facing, 70), {
+          color: '#e2bd60', weight: 1.2, opacity: 0.75, dashArray: '4 3',
+          fillColor: '#e2bd60', fillOpacity: 0.1, interactive: false
+        });
+        camWedge.addTo(map);
+        entry.layers.push(camWedge);
+      }
       var badge = L.marker([mk.lat, mk.lng], {
         icon: L.divIcon({ html: groundMarkerBadgeHtml(mk.type, mkNamesOn ? (f.name || '') : ''), iconSize: [24, 24], iconAnchor: [12, 12], className: '' }),
         interactive: false, keyboard: false
