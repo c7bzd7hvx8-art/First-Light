@@ -342,6 +342,16 @@ details[open] > .bx-rc-summary::after{content:'Hide \25B4';}
 .bx-still-sub{font-size:11px;color:rgba(255,255,255,0.62);font-family:'DM Mono',monospace;margin-top:4px;line-height:1.5;}
 .bx-mpbr-main{font-size:14px;color:#fff;}
 .bx-mpbr-main strong{color:var(--gold);}
+/* 12.95: the zone bar — species default + field sizes (neck 5, fox 7, hare 4) */
+.bx-pbr-zonebar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:2px 0 10px;}
+.bx-pbr-zlab{font-family:'DM Mono',monospace;font-size:9.5px;letter-spacing:1.6px;color:#a99e7f;margin-right:2px;}
+.bx-pbr-zcm{font-family:'DM Mono',monospace;font-size:10px;color:#a99e7f;}
+.bx-pbr-zbtn{border:1px solid rgba(216,176,84,0.3);background:rgba(240,228,192,0.05);color:#cfc4a0;border-radius:999px;padding:6px 12px;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.4px;cursor:pointer;min-height:32px;}
+.bx-pbr-zbtn.on{background:#e2bd60;border-color:#e2bd60;color:#1a1208;font-weight:600;}
+.bx-pbr-zonewrap{margin:2px 0 10px;}
+.bx-pbr-zonewrap .bx-pbr-zonebar{margin:0 0 5px;}
+.bx-pbr-zhelp{font-size:10.5px;line-height:1.45;color:#8f8568;}
+
 /* 12.91: the drawn arc — real trajectory in the vital band */
 .bx-pbr-arc{width:100%;display:block;margin:10px 0 4px;}
 

@@ -136,6 +136,10 @@ const state = {
     anatomySex: 'buck',             // 'buck' | 'doe' | 'juvenile'
     anatomyPresentation: DEFAULT_PRESENTATION,  // 'broadside' | 'quartering_away' | 'quartering_to'
     nightMode: false,               // red low-light field mode (protects dark adaptation)
+    // 12.95 (Ian, by email): a user-set vital zone for the PBR sections —
+    // 5 cm for neck/brain shooters, 7 for foxes, 4 for hares. null = follow
+    // the selected species, which stays the honest default.
+    pbrZoneCm: null,
   },
 };
 
@@ -215,6 +219,7 @@ function saveSettingsToStorage() {
       anatomySex: state.settings.anatomySex,
       anatomyPresentation: state.settings.anatomyPresentation,
       nightMode: state.settings.nightMode,
+      pbrZoneCm: state.settings.pbrZoneCm, // 12.95
       // Field state — persisted so the calculator survives backgrounding
       // and reloads. A stalker who has dialled in 285m, 4 m/s wind, 8 °C,
       // 980 hPa from being on a hill should not lose all that when the
@@ -1724,7 +1729,11 @@ function renderMpbrSection(p) {
   if (!p) return '';
   const sp = SPECIES_BODY[state.settings.anatomySpecies];
   const sx = sp && sp[state.settings.anatomySex];
-  const vital = sx && sx.vitalZoneCm;
+  const speciesVital = sx && sx.vitalZoneCm;
+  // 12.95 (Ian): the zone is YOURS to set — a neck/brain shooter runs 5 cm,
+  // a fox shooter 7 — with the selected species as the labelled default.
+  const zoneOverride = Number.isFinite(state.settings.pbrZoneCm) ? state.settings.pbrZoneCm : null;
+  const vital = zoneOverride || speciesVital;
   if (!(vital > 0)) return '';
   const vitalRadius = vital / 2;
   const c = state.conditions;
@@ -1732,6 +1741,27 @@ function renderMpbrSection(p) {
   // Keyed on the ACTUAL zero — this is the dead-hold you get from the zero you
   // really use (100 m, 200 m…), not a theoretical optimal zero.
   const key = [p.id, mv, p.bcG1, p.bcG7, p.weightGrains, p.sightHeightCm, p.zeroRangeM, c.tempC, c.pressureHpa, c.humidityPct, vitalRadius].join('|');
+  // 12.95: the zone bar — species default plus the sizes the field actually
+  // uses (neck/brain 5, fox 7, hare 4). Presets that duplicate the species
+  // figure are dropped rather than shown twice.
+  // 12.97 (owner, second pass on the wording): plain sizes, no quarry or
+  // shot-placement names — "Fox 7" and "Neck 5" read as the app endorsing
+  // choices that are the stalker's own. The explainer line carries the
+  // meaning instead, in plain words: the size of the target being shot to
+  // kill. Label speaks Ian's tool's language (Target Size). No preset below
+  // 4 cm: \u00b12 cm is already a good rifle's whole GROUP at 100 m, and a
+  // tighter promise would be a lie in field conditions — that end of the
+  // game belongs to the come-up card.
+  const ZONE_PRESETS = [10, 7, 5, 4];
+  const zoneChips = [['species', (sp.label || '') + ' ' + speciesVital]]
+    .concat(ZONE_PRESETS.filter(v => v !== speciesVital).map(v => [v, String(v)]))
+    .map(([val, lab]) => {
+      const on = (val === 'species') ? zoneOverride == null : zoneOverride === val;
+      return `<button type="button" class="bx-pbr-zbtn${on ? ' on' : ''}" data-bx-zone="${val}">${escapeHtml(lab)}</button>`;
+    }).join('');
+  const zoneBar = `<div class="bx-pbr-zonewrap"><div class="bx-pbr-zonebar" role="group" aria-label="Target size"><span class="bx-pbr-zlab">TARGET SIZE</span>${zoneChips}<span class="bx-pbr-zcm">cm</span></div>`
+    + `<div class="bx-pbr-zhelp">The size of the target you are aiming for — your bullet must stay inside it for a dead-centre hold to work. The species figure is the deer's heart-and-lung area; pick a smaller number for a smaller mark.</div></div>`;
+  const zoneNoun = zoneOverride ? `${Math.round(vital)} cm zone (your setting)` : `${Math.round(vital)} cm vital zone (${escapeHtml(sp.label || '')})`;
   let res;
   if (_mpbrCache.key === key) res = _mpbrCache.val;
   else {
@@ -1763,6 +1793,7 @@ function renderMpbrSection(p) {
     _pbrOptCache = { key, val: opt };
   }
   const vitalCm = Math.round(vitalRadius * 2);
+  const optLabelTail = zoneOverride ? `${vitalCm} cm zone` : escapeHtml(sp.label || '');
   let optHtml = '';
   if (opt && opt.zeroRangeM && opt.sightIn100Cm != null) {
     const sightLine = opt.sightIn100Cm >= 0.1
@@ -1809,15 +1840,15 @@ function renderMpbrSection(p) {
       </div>`;
     optHtml = `
     <div class="bx-output-section">
-      <div class="bx-output-label">Best zero for this load · ${escapeHtml(sp.label || '')}</div>
+      <div class="bx-output-label">Best zero for this load · ${optLabelTail}</div>
       <div class="bx-mpbr-main">Zero ${sightLine}</div>
       ${strip}
       ${arc}
-      <div class="bx-mpbr-sub">That is a ${opt.zeroRangeM} m zero — the flattest this load can shoot a ${vitalCm} cm vital zone: aim dead-centre ${opt.nearRangeM > 0 ? `from ${opt.nearRangeM} m` : 'from the muzzle'} to <strong>${opt.maxRangeM} m</strong>.${deltaNote} On the range: ${opt.sightIn100Cm >= 0.1 ? `set the group ${opt.sightIn100Cm.toFixed(1)} cm above point of aim at 100 m` : 'zero exactly at 100 m'}, then confirm.</div>
+      <div class="bx-mpbr-sub">That is a ${opt.zeroRangeM} m zero — the flattest this load can shoot a ${zoneNoun}: aim dead-centre ${opt.nearRangeM > 0 ? `from ${opt.nearRangeM} m` : 'from the muzzle'} to <strong>${opt.maxRangeM} m</strong>.${deltaNote} On the range: ${opt.sightIn100Cm >= 0.1 ? `set the group ${opt.sightIn100Cm.toFixed(1)} cm above point of aim at 100 m` : 'zero exactly at 100 m'}, then confirm.</div>
     </div>
   `;
   }
-  if (!res) return optHtml;
+  if (!res) return optHtml ? zoneBar + optHtml : '';
   const riseNote = res.risesAbove
     ? ` It climbs ~${res.maxRiseCm.toFixed(0)} cm high around ${res.riseRangeM}m — above the vital centre, so hold a touch low there (a lower zero would flatten it).`
     : '';
@@ -1830,19 +1861,19 @@ function renderMpbrSection(p) {
   // card was scolding the very zero the section below recommends. A few
   // millimetres of arithmetic is not an over-claim; 4+ mm of real climb is.
   if (res.risesAbove && res.maxRiseCm > res.vitalRadiusCm + 0.35) {
-    return `
+    return zoneBar + `
     <div class="bx-output-section">
       <div class="bx-output-label">Dead-hold zone · ${res.zeroRangeM}m zero</div>
       <div class="bx-mpbr-main">Not a clean dead-hold at this zero</div>
-      <div class="bx-mpbr-sub">With your ${res.zeroRangeM}m zero the bullet climbs ~${res.maxRiseCm.toFixed(0)} cm above your aim around ${res.riseRangeM}m — past the top of a ${vitalCm} cm vital zone (${escapeHtml(sp.label || '')}), so it isn't a true dead-hold. Hold a touch low near ${res.riseRangeM}m, or use a lower zero to flatten the arc; use the come-up above for longer shots.</div>
+      <div class="bx-mpbr-sub">With your ${res.zeroRangeM}m zero the bullet climbs ~${res.maxRiseCm.toFixed(0)} cm above your aim around ${res.riseRangeM}m — past the top of a ${zoneNoun}, so it isn't a true dead-hold. Hold a touch low near ${res.riseRangeM}m, or use a lower zero to flatten the arc; use the come-up above for longer shots.</div>
     </div>
   ` + optHtml;
   }
-  return `
+  return zoneBar + `
     <div class="bx-output-section">
       <div class="bx-output-label">Dead-hold zone · ${res.zeroRangeM}m zero</div>
       <div class="bx-mpbr-main">Hold dead-on to <strong>${res.maxRangeM}m</strong></div>
-      <div class="bx-mpbr-sub">With your ${res.zeroRangeM}m zero, aim at the vital centre and the bullet stays inside a ${vitalCm} cm vital zone (${escapeHtml(sp.label || '')}) out to ${res.maxRangeM}m — no hold-over needed. Beyond that, use the come-up above.${riseNote}</div>
+      <div class="bx-mpbr-sub">With your ${res.zeroRangeM}m zero, aim at the vital centre and the bullet stays inside a ${zoneNoun} out to ${res.maxRangeM}m — no hold-over needed. Beyond that, use the come-up above.${riseNote}</div>
     </div>
   ` + optHtml;
 }
@@ -4379,6 +4410,9 @@ export async function initBallisticsUi() {
     if (settings.anatomySpecies && SPECIES_BODY[settings.anatomySpecies]) {
       state.settings.anatomySpecies = settings.anatomySpecies;
     }
+    if (Number.isFinite(settings.pbrZoneCm) && settings.pbrZoneCm >= 3 && settings.pbrZoneCm <= 40) {
+      state.settings.pbrZoneCm = settings.pbrZoneCm; // 12.95
+    }
     if (settings.anatomySex === 'buck' || settings.anatomySex === 'doe' || settings.anatomySex === 'juvenile') {
       state.settings.anatomySex = settings.anatomySex;
     }
@@ -4569,6 +4603,18 @@ export async function initBallisticsUi() {
   // <details> open/closed state survives the per-tick renderOutput (which only
   // rewrites #bx-output's own innerHTML). renderReticleHold fills the body.
   const outEl = $('bx-output');
+  // 12.95: zone chips are re-rendered with every tick — one delegated
+  // listener on the container survives that, exactly why it's not per-button.
+  if (outEl) {
+    outEl.addEventListener('click', (e) => {
+      const b = e.target && e.target.closest && e.target.closest('[data-bx-zone]');
+      if (!b) return;
+      const v = b.getAttribute('data-bx-zone');
+      state.settings.pbrZoneCm = v === 'species' ? null : Number(v);
+      saveSettingsToStorage();
+      renderOutput();
+    });
+  }
   if (outEl && !$('bx-reticle-details')) {
     const det = document.createElement('details');
     det.id = 'bx-reticle-details';
