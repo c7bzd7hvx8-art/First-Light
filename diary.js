@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '13.03';
+const FL_JS_BUILD = '13.05';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -4340,11 +4340,25 @@ function numOrNull(v) {
 function getEmptyListHtml() {
   var hasAny = allEntries.length > 0;
   var filtered = currentFilter !== 'all';
+  // 13.04 (1 Aug season-rollover panic): allEntries is scoped to the selected
+  // season, so at the season boundary every long-standing diary "empties"
+  // overnight — and the new-user onboarding copy ("Start your cull diary")
+  // reads like data loss. The season-dropdown probe already knows whether
+  // this user has entries at all (cachedEarliestEntryDate — no extra query),
+  // so an established stalker gets reassurance instead of onboarding.
+  var hasOtherSeasons = !!(!hasAny && currentUser &&
+    cachedEarliestEntryDateForUserId === currentUser.id &&
+    cachedEarliestEntryDate && currentSeason !== '__all__');
   var title;
   var sub;
   if (filtered && hasAny) {
     title = 'No entries for ' + esc(currentFilter);
     sub = 'Tap <strong>All</strong> to see every species, or <strong>+</strong> to log a cull.';
+  } else if (hasOtherSeasons) {
+    title = 'A new season begins';
+    sub = 'No culls have been recorded in the ' + esc(seasonLabel(currentSeason, personalSeasonStartMonth()))
+      + ' yet. Records from previous seasons are unchanged — select a season above to view them, '
+      + 'or tap <strong>+</strong> to log the first entry of the new season.';
   } else {
     title = 'Start your cull diary';
     sub = 'Tap <strong>+</strong> for a full entry or <strong>Quick</strong> for a fast log. Your records sync when you\'re online.';
