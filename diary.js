@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '13.01';
+const FL_JS_BUILD = '13.03';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -334,7 +334,7 @@ var PLAN_SPECIES = [
 // third-tier fallback. SUPABASE_URL / SUPABASE_KEY are imported from
 // ./modules/supabase.mjs at the top of this file.
 async function syncDiaryTrustedUkClock() {
-  return flClockSync({ supabaseUrl: SUPABASE_URL, supabaseKey: SUPABASE_KEY });
+  return flClockSync();
 }
 
 /** Match PLAN_SPECIES row for syndicate / plan UIs; unknown names get a neutral dot. */

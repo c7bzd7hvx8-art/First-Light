@@ -3,8 +3,8 @@
 // Trusted UK clock. The Cull Diary uses British deer-season boundaries, so the
 // difference between "local device clock" (untrustworthy — users can set it
 // to any date) and "real UK time" matters. This module holds the device-to-UK
-// offset (in milliseconds), refreshes it from two public time APIs plus an
-// optional Supabase `Date` header fallback, and exposes `diaryNow()` as a
+// offset (in milliseconds), refreshes it from a consensus of independent
+// time sources (see the 13.02 note below), and exposes `diaryNow()` as a
 // `new Date()` that's offset to the trusted time.
 //
 // Public API
@@ -16,21 +16,22 @@
 //                                           at load time or a just-synced one).
 //
 // Extracted from diary.js 2026-04-16 as the first Tier 1 module in the
-// modularisation plan. Behaviour is byte-for-byte identical to the inline
-// version — the only intentional change is that the Supabase fallback now
-// receives its URL / anon key as a function argument instead of reading
-// globals. diary.js wraps this with a zero-arg shim so call sites are
-// unchanged.
+// modularisation plan. diary.js wraps the sync with a zero-arg shim so call
+// sites are unchanged.
 
-// ── Endpoint list ──────────────────────────────────────────────
-// Ordered by observed reliability. timeapi.io is tried first because
-// worldtimeapi.org has been intermittently returning ERR_CONNECTION_RESET
-// (noisy red console errors). worldtimeapi is kept as a secondary fallback,
-// then Supabase Date header (added later, optional).
-const DIARY_UK_CLOCK_ENDPOINTS = [
-  'https://timeapi.io/api/Time/current/zone?timeZone=Europe%2FLondon',
-  'https://worldtimeapi.org/api/timezone/Europe/London'
-];
+// ── Time sources ───────────────────────────────────────────────
+// 13.02: timeapi.io's own server clock was measured 17.8 minutes slow on
+// 2 Aug 2026 while worldtimeapi.org was down — the old first-success-wins
+// chain trusted a lying server with no second opinion. Sync now samples
+// several independent sources in parallel (this site's own CDN Date header,
+// jsdelivr's CDN Date header, timeapi.io, worldtimeapi.org) and takes the
+// consensus: the largest cluster agreeing within 90 s wins, and sources are
+// probed in trust order so a 1-vs-1 split resolves to the site's own CDN.
+// timeapi.io is asked for UTC now — its Europe/London form returned a
+// zoneless string that Date.parse read as device-LOCAL time, a latent bug
+// whenever the device sat in a non-UK timezone. Each sample keeps the 13.01
+// protections: 8 s round-trip guard and NTP-style midpoint anchoring.
+const DIARY_UK_CLOCK_TOL_MS = 90 * 1000;
 
 // ── Persistence keys (localStorage) ────────────────────────────
 // Unchanged from the classic-script version — a user upgrading will keep
@@ -93,78 +94,95 @@ export function isDiaryUkClockReady() {
   return ready;
 }
 
+// One JSON time-API sample → offset vs the request midpoint, or null.
+async function diaryClockSampleJson(url) {
+  const t0 = Date.now();
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) return null;
+  const d = await r.json();
+  const t1 = Date.now();
+  if (t1 - t0 > 8000) return null; // 13.01: a suspension hid inside this sample
+  let iso = String((d && (d.utc_datetime || d.datetime || d.dateTime)) || '');
+  // Zoneless strings (timeapi.io) are UTC because we request UTC.
+  if (iso && !/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(iso)) iso += 'Z';
+  const serverMs = Date.parse(iso);
+  if (!Number.isFinite(serverMs)) return null;
+  return serverMs - Math.round((t0 + t1) / 2); // 13.01: NTP midpoint
+}
+
+// One response-Date-header sample. Any response carries a Date header (even
+// a 404), so no r.ok check. Headers are whole-second; +500 ms centres the
+// truncation error.
+async function diaryClockSampleDateHeader(url, opts) {
+  const t0 = Date.now();
+  const r = await fetch(url, opts);
+  const t1 = Date.now();
+  if (t1 - t0 > 8000) return null; // 13.01
+  const h = r && r.headers && r.headers.get ? r.headers.get('date') : '';
+  const serverMs = Date.parse(String(h || ''));
+  if (!Number.isFinite(serverMs)) return null;
+  return serverMs + 500 - Math.round((t0 + t1) / 2);
+}
+
+// Race a probe against a 7 s timer (just under the 8 s per-sample guard) so
+// one hung endpoint cannot stall the whole consensus. Errors become null.
+function diaryClockProbe(p) {
+  let tid = null;
+  return Promise.race([
+    p.then(v => v, () => null),
+    new Promise(res => { tid = setTimeout(() => res(null), 7000); })
+  ]).then(v => { if (tid !== null) clearTimeout(tid); return v; });
+}
+
 /**
- * Refresh the offset from a remote source.
+ * Refresh the offset from a consensus of remote sources (see header note).
  *
- * @param {object} [supabaseFallback]
- *     Optional third-tier source. Pass `{ supabaseUrl, supabaseKey }` (the
- *     project's public anon config) to enable the Supabase Date-header
- *     fallback if both public time APIs fail. Omit to skip that fallback.
+ * Takes no arguments. (The pre-13.02 signature accepted a Supabase config
+ * for a Date-header fallback — removed because Supabase does not CORS-expose
+ * its Date header, so that source could never actually work in a browser;
+ * jsdelivr, which exposes Date, replaced it. Legacy callers passing the old
+ * argument are harmless.)
+ *
  * @returns {Promise<boolean>} `true` if any source succeeded, otherwise the
  *     previous `ready` flag (a persisted offset still counts as success).
  *
  * Concurrent callers share one in-flight promise so a spike of simultaneous
- * "do I need to sync?" checks in the UI only issues one network fetch.
+ * "do I need to sync?" checks in the UI only issues one round of fetches.
  */
-export async function syncDiaryTrustedUkClock(supabaseFallback) {
+export async function syncDiaryTrustedUkClock() {
   if (syncInFlight) return syncInFlight;
   syncInFlight = (async function() {
     try {
-      for (let i = 0; i < DIARY_UK_CLOCK_ENDPOINTS.length; i++) {
-        try {
-          // 13.01: a fetch that starts just before the OS suspends the page
-          // completes on resume with a minutes-old server timestamp — and one
-          // poisoned offset persists for 24 h (this is the countdown-17-min-
-          // behind screenshot). Time the round trip, refuse slow samples, and
-          // anchor at the request midpoint, NTP-style.
-          const t0 = Date.now();
-          const r = await fetch(DIARY_UK_CLOCK_ENDPOINTS[i], { cache: 'no-store' });
-          if (!r.ok) continue;
-          const d = await r.json();
-          const t1 = Date.now();
-          if (t1 - t0 > 8000) continue; // suspension hid inside this sample
-          const iso = d && (d.utc_datetime || d.datetime || d.dateTime);
-          const serverMs = Date.parse(String(iso || ''));
-          if (!Number.isFinite(serverMs)) continue;
-          offsetMs = serverMs - Math.round((t0 + t1) / 2);
-          ready = true;
-          try {
-            localStorage.setItem(DIARY_UK_CLOCK_OFFSET_KEY, String(offsetMs));
-            localStorage.setItem(DIARY_UK_CLOCK_SYNCED_AT_KEY, String(Date.now()));
-          } catch (_) {}
-          return true;
-        } catch (_) {}
+      // All probes launch in parallel. Trust order matters: on a 1-vs-1
+      // split the earlier source's cluster wins.
+      const probes = [
+        diaryClockProbe(diaryClockSampleDateHeader('sw.js', { method: 'HEAD', cache: 'no-store' })),
+        diaryClockProbe(diaryClockSampleDateHeader('https://cdn.jsdelivr.net/npm/leaflet@1.9.4/package.json', { method: 'HEAD', cache: 'no-store' })),
+        diaryClockProbe(diaryClockSampleJson('https://timeapi.io/api/Time/current/zone?timeZone=UTC')),
+        diaryClockProbe(diaryClockSampleJson('https://worldtimeapi.org/api/timezone/Etc/UTC'))
+      ];
+      const samples = [];
+      for (let i = 0; i < probes.length; i++) {
+        const v = await probes[i];
+        if (v !== null && Number.isFinite(v)) samples.push(v);
       }
-      // Third fallback: Supabase edge Date header (UTC). Only used if the
-      // caller opted in by passing config — this keeps the module portable
-      // for any future reuse.
-      const supaUrl = supabaseFallback && supabaseFallback.supabaseUrl;
-      const supaKey = supabaseFallback && supabaseFallback.supabaseKey;
-      if (supaUrl && supaKey) {
-        try {
-          const st0 = Date.now(); // 13.01
-          const sr = await fetch(supaUrl.replace(/\/+$/, '') + '/rest/v1/', {
-            cache: 'no-store',
-            headers: {
-              apikey: supaKey,
-              Authorization: 'Bearer ' + supaKey
-            }
-          });
-          const hDate = sr && sr.headers && sr.headers.get ? sr.headers.get('date') : '';
-          const supaMs = Date.parse(String(hDate || ''));
-          if (Number.isFinite(supaMs)) {
-            if (Date.now() - st0 > 8000) throw new Error('slow time sample'); // 13.01
-            offsetMs = supaMs - Math.round((st0 + Date.now()) / 2);
-            ready = true;
-            try {
-              localStorage.setItem(DIARY_UK_CLOCK_OFFSET_KEY, String(offsetMs));
-              localStorage.setItem(DIARY_UK_CLOCK_SYNCED_AT_KEY, String(Date.now()));
-            } catch (_) {}
-            return true;
-          }
-        } catch (_) {}
+      if (!samples.length) return !!ready;
+      // Largest cluster of samples agreeing within the tolerance wins.
+      let best = null;
+      for (let j = 0; j < samples.length; j++) {
+        const anchor = samples[j];
+        const mates = samples.filter(x => Math.abs(x - anchor) <= DIARY_UK_CLOCK_TOL_MS);
+        if (!best || mates.length > best.length) best = mates;
       }
-      return !!ready;
+      let sum = 0;
+      for (let k = 0; k < best.length; k++) sum += best[k];
+      offsetMs = Math.round(sum / best.length);
+      ready = true;
+      try {
+        localStorage.setItem(DIARY_UK_CLOCK_OFFSET_KEY, String(offsetMs));
+        localStorage.setItem(DIARY_UK_CLOCK_SYNCED_AT_KEY, String(Date.now()));
+      } catch (_) {}
+      return true;
     } finally {
       syncInFlight = null;
     }

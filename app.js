@@ -36,14 +36,30 @@ window.bannerState = {
 };
 
 // ── Trusted UK clock (server-synced) ──────────────────────────
-// Ordered by observed reliability. timeapi.io is tried first because worldtimeapi.org
-// has been intermittently returning ERR_CONNECTION_RESET (noisy red console errors).
-var FL_UK_CLOCK_ENDPOINTS = [
-  'https://timeapi.io/api/Time/current/zone?timeZone=Europe%2FLondon',
-  'https://worldtimeapi.org/api/timezone/Europe/London'
-];
-var FL_SUPABASE_TIME_URL = 'https://sjaasuqeknvvmdpydfsz.supabase.co/rest/v1/';
-var FL_SUPABASE_TIME_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqYWFzdXFla252dm1kcHlkZnN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2NjMzMzIsImV4cCI6MjA5MDIzOTMzMn0.aiJaKoLCI3jUkOgifqMLuhp8NnAFK0T24Va6r2CLzgw';
+// 13.02 (owner's second screenshot, one day after 13.01): the countdown was
+// STILL ~18 minutes behind — and this time the fault was not on the phone.
+// timeapi.io's own server clock had drifted 17.8 minutes slow (measured live
+// on 2 Aug 2026: two probes, RTT < 250 ms, both −17.81 min against this
+// site's CDN Date header, which matched the device clock to 0.3 s) while
+// worldtimeapi.org was unreachable — so the old first-success-wins chain
+// trusted a lying server with no second opinion. A clock only one source can
+// vouch for is not a trusted clock. Sync now samples several independent
+// sources in parallel and takes the consensus:
+//   1. this site's own CDN response Date header (HEAD sw.js — the service
+//      worker ignores non-GET requests, so this can never come from cache)
+//   2. jsdelivr's CDN Date header (already in connect-src; it CORS-exposes
+//      Date. Supabase does NOT — its Date header is invisible cross-origin,
+//      so the old third-tier Supabase fallback was dead code that could
+//      never have worked in a browser. Measured live, then removed.)
+//   3. timeapi.io (asked for UTC now — the old Europe/London form returned
+//      a zoneless string that Date.parse read as device-LOCAL time, a latent
+//      bug whenever the phone was set to any non-UK timezone)
+//   4. worldtimeapi.org
+// The largest cluster of samples agreeing within 90 s wins; sources are
+// listed in trust order, so a 1-vs-1 split resolves to the site's own CDN.
+// Every sample keeps the 13.01 protections: round-trip guard (an OS
+// suspension hides inside a slow sample) and NTP-style midpoint anchoring.
+var FL_UK_CLOCK_TOL_MS = 90 * 1000;
 var FL_UK_CLOCK_OFFSET_KEY = 'fl_uk_clock_offset_ms';
 var FL_UK_CLOCK_SYNCED_AT_KEY = 'fl_uk_clock_synced_at_ms';
 var flUkClockOffsetMs = 0;
@@ -65,62 +81,81 @@ function flNow() {
   return new Date(Date.now() + flUkClockOffsetMs);
 }
 
+// One JSON time-API sample → offset vs the request midpoint, or null.
+async function flClockSampleJson(url) {
+  var t0 = Date.now();
+  var r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) return null;
+  var d = await r.json();
+  var t1 = Date.now();
+  if (t1 - t0 > 8000) return null; // 13.01: a suspension hid inside this sample
+  var iso = String((d && (d.utc_datetime || d.datetime || d.dateTime)) || '');
+  // timeapi.io returns a bare "2026-08-02T08:00:27.97" with no zone marker.
+  // We ask it for UTC, so pin the parse to UTC rather than device-local.
+  if (iso && !/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(iso)) iso += 'Z';
+  var serverMs = Date.parse(iso);
+  if (!Number.isFinite(serverMs)) return null;
+  return serverMs - Math.round((t0 + t1) / 2); // 13.01: NTP midpoint
+}
+
+// One response-Date-header sample. Any response carries a Date header (even
+// a 404), so no r.ok check. Headers are whole-second; +500 ms centres the
+// truncation error.
+async function flClockSampleDateHeader(url, opts) {
+  var t0 = Date.now();
+  var r = await fetch(url, opts);
+  var t1 = Date.now();
+  if (t1 - t0 > 8000) return null; // 13.01
+  var h = r && r.headers && r.headers.get ? r.headers.get('date') : '';
+  var serverMs = Date.parse(String(h || ''));
+  if (!Number.isFinite(serverMs)) return null;
+  return serverMs + 500 - Math.round((t0 + t1) / 2);
+}
+
+// Race a probe against a 7 s timer (just under the 8 s per-sample guard) so
+// one hung endpoint cannot stall the whole consensus. Errors become null.
+function flClockProbe(p) {
+  var tid = null;
+  return Promise.race([
+    p.then(function(v) { return v; }, function() { return null; }),
+    new Promise(function(res) { tid = setTimeout(function() { res(null); }, 7000); })
+  ]).then(function(v) { if (tid !== null) clearTimeout(tid); return v; });
+}
+
 async function syncTrustedUkClock() {
   if (flUkClockSyncInFlight) return flUkClockSyncInFlight;
   flUkClockSyncInFlight = (async function() {
     try {
-      for (var i = 0; i < FL_UK_CLOCK_ENDPOINTS.length; i++) {
-        try {
-          // 13.01 (owner's screenshot: countdown 17 min behind the phone):
-          // a sync fetch that STARTS just before iOS suspends the page
-          // completes on resume — the server timestamp is minutes old by the
-          // time the offset is computed, and one poisoned offset persists
-          // for up to 24 h. Guard: time the round trip, refuse any sample
-          // that took suspiciously long (a suspension hides inside it), and
-          // anchor the offset at the request's midpoint, NTP-style.
-          var t0 = Date.now();
-          var r = await fetch(FL_UK_CLOCK_ENDPOINTS[i], { cache: 'no-store' });
-          if (!r.ok) continue;
-          var d = await r.json();
-          var t1 = Date.now();
-          if (t1 - t0 > 8000) continue; // suspension mid-flight — stale sample
-          var iso = d && (d.utc_datetime || d.datetime || d.dateTime);
-          var serverMs = Date.parse(String(iso || ''));
-          if (!Number.isFinite(serverMs)) continue;
-          flUkClockOffsetMs = serverMs - Math.round((t0 + t1) / 2);
-          flUkClockReady = true;
-          try {
-            localStorage.setItem(FL_UK_CLOCK_OFFSET_KEY, String(flUkClockOffsetMs));
-            localStorage.setItem(FL_UK_CLOCK_SYNCED_AT_KEY, String(Date.now()));
-          } catch (_) {}
-          return true;
-        } catch (_) {}
+      // All probes launch in parallel. Trust order matters: on a 1-vs-1
+      // split the earlier source's cluster wins.
+      var probes = [
+        flClockProbe(flClockSampleDateHeader('sw.js', { method: 'HEAD', cache: 'no-store' })),
+        flClockProbe(flClockSampleDateHeader('https://cdn.jsdelivr.net/npm/leaflet@1.9.4/package.json', { method: 'HEAD', cache: 'no-store' })),
+        flClockProbe(flClockSampleJson('https://timeapi.io/api/Time/current/zone?timeZone=UTC')),
+        flClockProbe(flClockSampleJson('https://worldtimeapi.org/api/timezone/Etc/UTC'))
+      ];
+      var samples = [];
+      for (var i = 0; i < probes.length; i++) {
+        var v = await probes[i];
+        if (v !== null && Number.isFinite(v)) samples.push(v);
       }
-      // Third fallback: Supabase edge Date header (UTC). Convert via Date.parse().
+      if (!samples.length) return !!flUkClockReady;
+      // Largest cluster of samples agreeing within the tolerance wins.
+      var best = null;
+      for (var j = 0; j < samples.length; j++) {
+        var anchor = samples[j];
+        var mates = samples.filter(function(x) { return Math.abs(x - anchor) <= FL_UK_CLOCK_TOL_MS; });
+        if (!best || mates.length > best.length) best = mates;
+      }
+      var sum = 0;
+      for (var k = 0; k < best.length; k++) sum += best[k];
+      flUkClockOffsetMs = Math.round(sum / best.length);
+      flUkClockReady = true;
       try {
-        var st0 = Date.now();
-        var sr = await fetch(FL_SUPABASE_TIME_URL, {
-          cache: 'no-store',
-          headers: {
-            apikey: FL_SUPABASE_TIME_KEY,
-            Authorization: 'Bearer ' + FL_SUPABASE_TIME_KEY
-          }
-        });
-        var st1 = Date.now();
-        if (st1 - st0 > 8000) throw new Error('slow time sample'); // 13.01
-        var hDate = sr && sr.headers && sr.headers.get ? sr.headers.get('date') : '';
-        var supaMs = Date.parse(String(hDate || ''));
-        if (Number.isFinite(supaMs)) {
-          flUkClockOffsetMs = supaMs - Date.now();
-          flUkClockReady = true;
-          try {
-            localStorage.setItem(FL_UK_CLOCK_OFFSET_KEY, String(flUkClockOffsetMs));
-            localStorage.setItem(FL_UK_CLOCK_SYNCED_AT_KEY, String(Date.now()));
-          } catch (_) {}
-          return true;
-        }
+        localStorage.setItem(FL_UK_CLOCK_OFFSET_KEY, String(flUkClockOffsetMs));
+        localStorage.setItem(FL_UK_CLOCK_SYNCED_AT_KEY, String(Date.now()));
       } catch (_) {}
-      return !!flUkClockReady;
+      return true;
     } finally {
       flUkClockSyncInFlight = null;
     }
