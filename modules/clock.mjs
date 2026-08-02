@@ -48,6 +48,18 @@ let offsetMs = 0;
 let ready = false;
 let syncInFlight = null;
 
+// 13.01: a resumed page re-syncs (throttled to 5 min) — diaryNow() readers
+// recompute from the offset continuously, so the fix lands within a tick.
+if (typeof document !== 'undefined' && document.addEventListener) {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    try {
+      const syncedAt = parseInt(localStorage.getItem(DIARY_UK_CLOCK_SYNCED_AT_KEY) || '0', 10) || 0;
+      if (Date.now() - syncedAt > 5 * 60 * 1000) syncDiaryTrustedUkClock();
+    } catch (_) { syncDiaryTrustedUkClock(); }
+  });
+}
+
 // ── Hydrate from localStorage at module init ───────────────────
 // Synchronous top-level. Any caller that happens to run before their first
 // sync (e.g. opening the diary offline) sees the last-known offset if it's
@@ -100,13 +112,21 @@ export async function syncDiaryTrustedUkClock(supabaseFallback) {
     try {
       for (let i = 0; i < DIARY_UK_CLOCK_ENDPOINTS.length; i++) {
         try {
+          // 13.01: a fetch that starts just before the OS suspends the page
+          // completes on resume with a minutes-old server timestamp — and one
+          // poisoned offset persists for 24 h (this is the countdown-17-min-
+          // behind screenshot). Time the round trip, refuse slow samples, and
+          // anchor at the request midpoint, NTP-style.
+          const t0 = Date.now();
           const r = await fetch(DIARY_UK_CLOCK_ENDPOINTS[i], { cache: 'no-store' });
           if (!r.ok) continue;
           const d = await r.json();
+          const t1 = Date.now();
+          if (t1 - t0 > 8000) continue; // suspension hid inside this sample
           const iso = d && (d.utc_datetime || d.datetime || d.dateTime);
           const serverMs = Date.parse(String(iso || ''));
           if (!Number.isFinite(serverMs)) continue;
-          offsetMs = serverMs - Date.now();
+          offsetMs = serverMs - Math.round((t0 + t1) / 2);
           ready = true;
           try {
             localStorage.setItem(DIARY_UK_CLOCK_OFFSET_KEY, String(offsetMs));
@@ -122,6 +142,7 @@ export async function syncDiaryTrustedUkClock(supabaseFallback) {
       const supaKey = supabaseFallback && supabaseFallback.supabaseKey;
       if (supaUrl && supaKey) {
         try {
+          const st0 = Date.now(); // 13.01
           const sr = await fetch(supaUrl.replace(/\/+$/, '') + '/rest/v1/', {
             cache: 'no-store',
             headers: {
@@ -132,7 +153,8 @@ export async function syncDiaryTrustedUkClock(supabaseFallback) {
           const hDate = sr && sr.headers && sr.headers.get ? sr.headers.get('date') : '';
           const supaMs = Date.parse(String(hDate || ''));
           if (Number.isFinite(supaMs)) {
-            offsetMs = supaMs - Date.now();
+            if (Date.now() - st0 > 8000) throw new Error('slow time sample'); // 13.01
+            offsetMs = supaMs - Math.round((st0 + Date.now()) / 2);
             ready = true;
             try {
               localStorage.setItem(DIARY_UK_CLOCK_OFFSET_KEY, String(offsetMs));

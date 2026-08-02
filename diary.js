@@ -85,7 +85,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '12.98';
+const FL_JS_BUILD = '13.01';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -1257,6 +1257,7 @@ function initDiaryFlUi() {
     var act = el.getAttribute('data-fl-action');
     switch (act) {
       case 'auth-tab': authTab(el.getAttribute('data-tab')); break;
+      case 'auth-resend-confirm': authResendConfirmation(); break; // 13.00
       case 'handle-auth': handleAuth(); break;
       case 'open-forgot-password': openForgotPasswordModal(); break;
       case 'close-forgot-password-modal': closeForgotPasswordModal(); break;
@@ -3323,12 +3324,53 @@ async function handleAuth() {
       onSignedIn();
     }
   } catch(e) {
-    errEl.textContent = e.message || 'Authentication failed.';
+    // 13.00 (Steven, by email: "Keeps coming up email invalid" — a custom-
+    // domain address): the app's own validation and Supabase's both ACCEPT
+    // these addresses (probed live); what actually happens is the
+    // confirmation email dies in a corporate spam filter, the account never
+    // activates, and every sign-in then fails "Invalid login credentials" —
+    // which reads as "email invalid" to the person who typed their address
+    // correctly. Catch that moment and hand them the way out. Static HTML
+    // only — no user input is ever interpolated here.
+    var authMsg = String(e && e.message || '').toLowerCase();
+    if (authMode === 'signin' && authMsg.indexOf('invalid login credentials') >= 0) {
+      errEl.innerHTML = 'Email or password doesn\u2019t match an account. If you created an account but never received the confirmation email \u2014 common with work addresses, check the spam folder \u2014 '
+        + '<button type="button" class="auth-resend" data-fl-action="auth-resend-confirm">resend the confirmation</button>, or use Forgot password below.';
+    } else if (authMsg.indexOf('not confirmed') >= 0) {
+      errEl.innerHTML = 'Your email hasn\u2019t been confirmed yet \u2014 the email sometimes lands in spam, especially work addresses. '
+        + '<button type="button" class="auth-resend" data-fl-action="auth-resend-confirm">Resend the confirmation</button>';
+    } else {
+      errEl.textContent = e.message || 'Authentication failed.';
+    }
     errEl.style.display = 'block';
     flHapticError();
   }
   btn.disabled = false;
   btn.textContent = authMode === 'signin' ? 'Sign In →' : 'Create Account →';
+}
+
+/** 13.00: re-send the signup confirmation to the address in the email field.
+ *  The escape hatch for the stuck cohort above — their account exists,
+ *  unconfirmed, and this is the only self-service way back in. */
+async function authResendConfirmation() {
+  if (!sb) { showToast('\u26a0\ufe0f Not connected \u2014 try again with signal'); return; }
+  var emEl = document.getElementById('auth-email');
+  var email = emEl && emEl.value ? emEl.value.trim() : '';
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    showToast('\u26a0\ufe0f Type your email in the box above first');
+    return;
+  }
+  try {
+    var res = await sb.auth.resend({ type: 'signup', email: email });
+    if (res && res.error) throw res.error;
+    showToast('\ud83d\udce7 Confirmation sent to ' + email + ' \u2014 check spam too', 5000);
+  } catch (e) {
+    // Already-confirmed accounts get a GoTrue error here — that means the
+    // password is the problem, so say so instead of parroting the error.
+    var m = String(e && e.message || '').toLowerCase();
+    if (m.indexOf('already confirmed') >= 0) showToast('\u2139\ufe0f That account is already confirmed \u2014 use Forgot password instead', 5000);
+    else showToast('\u26a0\ufe0f Could not resend \u2014 ' + (e.message || 'try again shortly'));
+  }
 }
 
 function destroyCullMapLeaflet() {

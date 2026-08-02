@@ -207,7 +207,9 @@ option:checked{background-color:#e8f2dc;color:#15370a;}
 .auth-field input:focus{border-color:var(--moss);}
 .auth-submit{width:100%;padding:14px;background:linear-gradient(135deg,var(--moss),var(--deep));color:white;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:4px;}
 .auth-submit:disabled{opacity:0.6;cursor:not-allowed;}
-.auth-err{font-size:12px;color:var(--red);margin-top:10px;text-align:center;display:none;}
+.auth-err{font-size:12px;color:var(--red);margin-top:10px;text-align:center;display:none;line-height:1.5;}
+/* 13.00: the resend-confirmation escape hatch inside the error line */
+.auth-resend{background:none;border:none;padding:0;color:var(--moss);font:inherit;font-weight:700;text-decoration:underline;cursor:pointer;}
 .auth-note{text-align:center;font-size:11px;color:#6d6d6d;line-height:1.6;margin-top:14px;}/* audit D1: #aaa→#6d6d6d for WCAG AA 1.4.3 */
 .auth-forgot-row{text-align:right;margin:-6px 0 10px;}
 .auth-forgot-link{background:none;border:none;padding:0;font-size:11px;font-weight:600;color:var(--moss);cursor:pointer;text-decoration:underline;font-family:'DM Sans',sans-serif;}

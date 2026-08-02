@@ -20,7 +20,7 @@ import {
   inchesToCm, cmToInches, yardsToMetres, metresToYards,
   joulesToFtLbs, ftLbsToJoules,
   airDensityRatio, ATM_STD, pointBlankForZero, maxPointBlankRange,
-  findZeroAngle, solveTrajectory,
+  findZeroAngle, solveTrajectory, maxCarryRangeM,
   trueMuzzleVelocity, cmToMoa, cmToMil, speedOfSound,
   gyroscopicStability, estimateBulletLengthIn, nearestReticleMark,
 } from '../lib/fl-ballistics.js';
@@ -1320,7 +1320,30 @@ function renderOutput() {
   // rifle/zero/conditions — they collapse behind a disclosure so the live shot
   // data stays up top. Compute a worst-case legal status for the collapsed
   // summary so the stalker still gets an at-a-glance ✓ / ⚠ without expanding.
-  const refHtml = `${renderComplianceSection(p, { state, checkLegalCompliance, checkAbsoluteFloor, escapeHtml })}
+  // 12.99 (Ian: "something that will make beginners think about backstops").
+  // The maximum carry of THIS load, computed not quoted, opening the Legal &
+  // ethical panel — doctrine, deliberately NOT part of any firing solution.
+  let carryM = null;
+  const carryKey = [p.id, effectiveMvFps(p), p.bcG1, p.bcG7, p.weightGrains, state.conditions.tempC, state.conditions.pressureHpa, state.conditions.humidityPct].join('|');
+  if (_carryCache.key === carryKey) carryM = _carryCache.val;
+  else {
+    try {
+      carryM = maxCarryRangeM({
+        muzzleVelocityMs: fpsToMs(effectiveMvFps(p)), bcG1: p.bcG1, bcG7: p.bcG7,
+        bulletMassKg: grainsToKg(p.weightGrains), sightHeightCm: p.sightHeightCm,
+        tempC: state.conditions.tempC, pressureHpa: state.conditions.pressureHpa,
+        humidityPct: state.conditions.humidityPct,
+      });
+    } catch (e) { carryM = null; }
+    _carryCache = { key: carryKey, val: carryM };
+  }
+  const carryKm = carryM ? (Math.round(carryM / 100) / 10).toFixed(1) : null;
+  const backstopHtml = carryKm ? `
+      <div class="bx-backstop">
+        <div class="bx-backstop-head">No backstop, no shot</div>
+        <div class="bx-backstop-body">With nothing to stop it, this bullet can carry roughly <strong>${carryKm} km</strong> and is dangerous the whole way. The only safe backstop is solid ground you can see behind the deer — never shoot at a skylined animal.</div>
+      </div>` : '';
+  const refHtml = `${backstopHtml}${renderComplianceSection(p, { state, checkLegalCompliance, checkAbsoluteFloor, escapeHtml })}
       ${renderEthicalRangeSection(p)}`;
   const legalStatus = (() => {
     const filter = state.settings.speciesFilter || [];
@@ -1725,6 +1748,7 @@ function pbrArcSvg(opt, heldMaxM, vitalRadiusCm, traj) {
 let _mpbrCache = { key: null, val: null };
 let _pbrOptCache = { key: null, val: null }; // 12.88: the best-zero optimiser
 let _pbrArcCache = { key: null, val: null }; // 12.91: the drawn arc
+let _carryCache = { key: null, val: null }; // 12.99: max carry of the load
 function renderMpbrSection(p) {
   if (!p) return '';
   const sp = SPECIES_BODY[state.settings.anatomySpecies];

@@ -71,13 +71,23 @@ async function syncTrustedUkClock() {
     try {
       for (var i = 0; i < FL_UK_CLOCK_ENDPOINTS.length; i++) {
         try {
+          // 13.01 (owner's screenshot: countdown 17 min behind the phone):
+          // a sync fetch that STARTS just before iOS suspends the page
+          // completes on resume — the server timestamp is minutes old by the
+          // time the offset is computed, and one poisoned offset persists
+          // for up to 24 h. Guard: time the round trip, refuse any sample
+          // that took suspiciously long (a suspension hides inside it), and
+          // anchor the offset at the request's midpoint, NTP-style.
+          var t0 = Date.now();
           var r = await fetch(FL_UK_CLOCK_ENDPOINTS[i], { cache: 'no-store' });
           if (!r.ok) continue;
           var d = await r.json();
+          var t1 = Date.now();
+          if (t1 - t0 > 8000) continue; // suspension mid-flight — stale sample
           var iso = d && (d.utc_datetime || d.datetime || d.dateTime);
           var serverMs = Date.parse(String(iso || ''));
           if (!Number.isFinite(serverMs)) continue;
-          flUkClockOffsetMs = serverMs - Date.now();
+          flUkClockOffsetMs = serverMs - Math.round((t0 + t1) / 2);
           flUkClockReady = true;
           try {
             localStorage.setItem(FL_UK_CLOCK_OFFSET_KEY, String(flUkClockOffsetMs));
@@ -88,6 +98,7 @@ async function syncTrustedUkClock() {
       }
       // Third fallback: Supabase edge Date header (UTC). Convert via Date.parse().
       try {
+        var st0 = Date.now();
         var sr = await fetch(FL_SUPABASE_TIME_URL, {
           cache: 'no-store',
           headers: {
@@ -95,6 +106,8 @@ async function syncTrustedUkClock() {
             Authorization: 'Bearer ' + FL_SUPABASE_TIME_KEY
           }
         });
+        var st1 = Date.now();
+        if (st1 - st0 > 8000) throw new Error('slow time sample'); // 13.01
         var hDate = sr && sr.headers && sr.headers.get ? sr.headers.get('date') : '';
         var supaMs = Date.parse(String(hDate || ''));
         if (Number.isFinite(supaMs)) {
@@ -4261,6 +4274,13 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.getRegistration().then(function(reg) {
       if (reg) reg.update().catch(function() {});
     }).catch(function() {});
+    // 13.01: a resumed page re-syncs the trusted clock (throttled) — even if
+    // an earlier sample was poisoned by a mid-flight suspension, the display
+    // heals within a tick of the fresh offset landing.
+    try {
+      var syncedAt = parseInt(localStorage.getItem(FL_UK_CLOCK_SYNCED_AT_KEY) || '0', 10) || 0;
+      if (Date.now() - syncedAt > 5 * 60 * 1000) syncTrustedUkClock();
+    } catch (_) { syncTrustedUkClock(); }
   });
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('./sw.js').then(function(reg) {

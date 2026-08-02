@@ -342,6 +342,12 @@ details[open] > .bx-rc-summary::after{content:'Hide \25B4';}
 .bx-still-sub{font-size:11px;color:rgba(255,255,255,0.62);font-family:'DM Mono',monospace;margin-top:4px;line-height:1.5;}
 .bx-mpbr-main{font-size:14px;color:#fff;}
 .bx-mpbr-main strong{color:var(--gold);}
+/* 12.99: the backstop warning — doctrine at the top of Legal & ethical */
+.bx-backstop{background:rgba(216,140,60,0.09);border:1px solid rgba(216,140,60,0.4);border-radius:12px;padding:10px 12px;margin-bottom:12px;}
+.bx-backstop-head{font-family:'DM Mono',monospace;font-size:10.5px;letter-spacing:1.6px;color:#d89a54;text-transform:uppercase;margin-bottom:4px;}
+.bx-backstop-body{font-size:12px;line-height:1.55;color:#cfc4a0;}
+.bx-backstop-body strong{color:#e8b06a;}
+
 /* 12.95: the zone bar — species default + field sizes (neck 5, fox 7, hare 4) */
 .bx-pbr-zonebar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:2px 0 10px;}
 .bx-pbr-zlab{font-family:'DM Mono',monospace;font-size:9.5px;letter-spacing:1.6px;color:#a99e7f;margin-right:2px;}
