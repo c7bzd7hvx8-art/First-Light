@@ -5,7 +5,7 @@
 // the cache strings (`v7.34`) because they were three separate literals.
 // Bumping triggers the `activate` step to sweep old caches and reload clients
 // via the `controllerchange` path in diary.js.
-const SW_VERSION = '13.12';
+const SW_VERSION = '13.23';
 const STATIC_CACHE  = 'first-light-static-v'  + SW_VERSION;
 const RUNTIME_CACHE = 'first-light-runtime-v' + SW_VERSION;
 
@@ -73,6 +73,10 @@ const PRECACHE_URLS = [
   // Grounds boundary geometry (GROUNDS-PLAN.md G1) — precached ahead of the
   // G2 client that imports it, exactly like fl-forecast was at Stands S2.
   './lib/fl-geo.mjs',
+  // Satellite-PDF map maths (statically imported by diary.js for the
+  // "Export ground as PDF" feature) — must be precached or an offline diary
+  // load fails at the import.
+  './lib/fl-mapexport.mjs',
   // Photo EXIF reader — statically imported by modules/photos.mjs, which is
   // in diary.js's module graph, so the same import-abort rule applies.
   './lib/fl-exif.mjs',

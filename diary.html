@@ -1133,6 +1133,13 @@
         <button type="button" class="grx-io-btn" data-fl-action="grounds-export" data-format="gpx">Export GPX</button>
         <button type="button" class="grx-io-btn" data-fl-action="grounds-export" data-format="geojson">Export GeoJSON</button>
       </div>
+      <!-- Owner (2026-08): a shareable satellite PDF is per-ground (each is a
+           different place), so this opens a picker rather than exporting all
+           grounds onto one impossible sheet. -->
+      <div class="grx-io-row">
+        <button type="button" class="grx-io-btn grx-io-btn--pdf" data-fl-action="grounds-pdf-pick"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/><path d="M14 2v6h6"/></svg> Export PDF map</button>
+      </div>
+      <div id="grounds-pdf-picker" class="grx-pdf-picker" hidden></div>
       <!-- G5: the tape measure — no save, works offline -->
       <div class="grx-io-row">
         <button type="button" class="grx-io-btn grx-io-btn--measure" data-fl-action="grounds-measure"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 2.3l7 7a1 1 0 010 1.4l-10 10a1 1 0 01-1.4 0l-7-7a1 1 0 010-1.4l10-10a1 1 0 011.4 0z"/><path d="M7 11l2 2M10 8l2 2M13 5l2 2"/></svg> Measure distance &amp; area</button>

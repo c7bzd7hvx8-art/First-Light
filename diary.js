@@ -74,6 +74,7 @@ import {
   kmzToKmlText, looksLikeZip, lineTypeFromName, markerTypeFromName,
   latLngToOsGrid, formatLatLngDegrees, formatPlaceRef
 } from './lib/fl-geo.mjs';
+import * as flMapExport from './lib/fl-mapexport.mjs';
 
 // Tag that the client-side error logger writes into
 // public.app_errors.app_version. Bumped in lock-step with SW_VERSION in
@@ -85,7 +86,7 @@ const FL_APP_VERSION = '7.402';
 // Payload build tag - proves which diary.js actually reached the device (the
 // SW version alone cannot: sw.js is always fetched fresh while the precache
 // could be CDN-stale until the cache:'reload' fix). Bump with SW_VERSION.
-const FL_JS_BUILD = '13.12';
+const FL_JS_BUILD = '13.23';
 import {
   wxCodeLabel,
   windDirLabel,
@@ -1319,6 +1320,7 @@ function initDiaryFlUi() {
       case 'gmap-kind': gmapSetKind(el.getAttribute('data-kind')); break;
       case 'gmap-walk': gmapWalkToggle(); break;
       case 'grounds-export': groundsExport(el.getAttribute('data-format')); break;
+      case 'grounds-pdf-pick': grxPdfPickToggle(); break;
       case 'grounds-import': groundsImportClick(); break;
       // Finding S: rename / remove a ground from the My grounds sheet itself
       case 'grx-rename-start': groundsSheetRenaming = el.getAttribute('data-ground'); renderGroundsSheet(); break;
@@ -1328,6 +1330,7 @@ function initDiaryFlUi() {
       case 'grx-toggle': grxToggleCard(el.getAttribute('data-ground')); break;
       case 'grx-map': grxOpenGroundOnMap(el.getAttribute('data-ground')); break;
       case 'grx-export-ground': groundsExport('kml', el.getAttribute('data-ground')); break;
+      case 'grx-ground-pdf': exportGroundPdf(el.getAttribute('data-ground')); break;
       case 'grx-add-seat': grxAddSeatOnGround(el.getAttribute('data-ground')); break;
       case 'grx-open-seat': grxOpenSeatDetail(el.getAttribute('data-stand-id')); break;
       case 'grx-group-toggle': grxGroupToggle(el.getAttribute('data-ground'), el.getAttribute('data-kind')); break;
@@ -12253,7 +12256,8 @@ function groundsSheetListHtml(grounds, features, offline, opts) {
       + '</div>';
     h += '<div class="grx-gactions">'
       + '<button type="button" class="grx-gact" data-fl-action="grx-export-ground" data-ground="' + esc(g) + '">Export ground</button>'
-      // While THIS ground's head is the rename field, a second Rename control
+      + '<button type="button" class="grx-gact" data-fl-action="grx-ground-pdf" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>PDF map</button>'
+            // While THIS ground's head is the rename field, a second Rename control
       // would be a pencil pointing at a pencil — the field is the rename.
       + (opts.renaming === g ? '' : '<button type="button" class="grx-gact" data-fl-action="grx-rename-start" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>Rename</button>')
       + '<button type="button" class="grx-gact grx-gact--danger" data-fl-action="grx-ground-delete" data-ground="' + esc(g) + '"' + (offline ? ' disabled' : '') + '>Delete</button>'
@@ -14035,6 +14039,513 @@ function gmapCancel() {
 
 // ── G4: import / export ───────────────────────────────────────
 
+/**
+ * Export one ground as a shareable A4 satellite PDF (2026-08 owner request).
+ * Renders the real satellite imagery + every overlay (boundary, no-shoot
+ * zones, lines, markers, high seats) to a canvas, then lays it onto an
+ * auto-fitted A4 page with a header, legend, scale bar, north arrow, centre
+ * grid reference, imagery attribution and a guidance note. Online-only: it
+ * downloads fresh imagery at print resolution.
+ */
+var FL_PDF_TILE_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+var FL_PDF_TILE_ATTR = 'Imagery © Esri, Maxar, Earthstar Geographics';
+// Mapbox is the app's on-screen satellite; the PDF uses it too so the sheet
+// matches what the stalker sees. 256-size tiles keep the z/x/y maths identical
+// to the Esri fallback; @2x fetches a 512-px image for crisp print. Esri is
+// the per-tile fallback wherever a Mapbox tile fails.
+function flPdfMapboxUrl(z, x, y) {
+  return MAPBOX_TOKEN
+    ? ('https://api.mapbox.com/styles/v1/' + MAPBOX_STYLE_SAT + '/tiles/256/' + z + '/' + x + '/' + y + '@2x?access_token=' + encodeURIComponent(MAPBOX_TOKEN))
+    : '';
+}
+
+/** Load one satellite tile as a CORS image, or null on any failure/timeout. */
+function flPdfLoadTile(url) {
+  return new Promise(function (resolve) {
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    var done = false;
+    var t = setTimeout(function () { if (!done) { done = true; resolve(null); } }, 12000);
+    img.onload = function () { if (!done) { done = true; clearTimeout(t); resolve(img); } };
+    img.onerror = function () { if (!done) { done = true; clearTimeout(t); resolve(null); } };
+    img.src = url;
+  });
+}
+
+/** Rounded rect on a 2D context (roundRect where supported, else square). */
+function flPdfRoundRect(ctx, x, y, w, h, r) {
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+  else { ctx.beginPath(); ctx.rect(x, y, w, h); }
+}
+
+/** Draw a marker-type glyph in a 13×13 unit space; caller has set the origin,
+ *  scale and `col`. Native canvas paths only — no SVG image, so the canvas
+ *  never taints (Safari/Chrome both export it cleanly). Mirrors the on-screen
+ *  groundMarkerGlyph shapes closely enough to read at map size. */
+function flPdfMarkerGlyph(ctx, type, col) {
+  ctx.save();
+  ctx.strokeStyle = col; ctx.fillStyle = col;
+  ctx.lineWidth = 1.4; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  var TAU = Math.PI * 2;
+  function pth(d) { return new Path2D(d); }
+  switch (type) {
+    case 'parking':
+      ctx.fill(pth('M1.3 9.3V6.1h3.9V4.2h3l1.9 1.9h1.6v3.2h-1.2a1.5 1.5 0 0 0-2.9 0H5.6a1.5 1.5 0 0 0-2.9 0z'));
+      ctx.beginPath(); ctx.arc(4.1, 9.4, 1.1, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(9.2, 9.4, 1.1, 0, TAU); ctx.fill();
+      break;
+    case 'gate':
+      ctx.lineWidth = 1.5; ctx.stroke(pth('M2 2.5v8.5M11 2.5v8.5M2 5h9M2 8.5h9')); break;
+    case 'larder':
+      ctx.stroke(pth('M1.5 1.5h10M6.5 1.5v1.6'));
+      ctx.stroke(pth('M6.5 3.1c1.1 0 1.1 1.2 0 1.2'));
+      ctx.stroke(pth('M6.5 4.3c-1.6 0.5-2.3 2-2 3.9 0.3 1.8 1 2.8 2 2.8s1.7-1 2-2.8c0.3-1.9-0.4-3.4-2-3.9z'));
+      break;
+    case 'trail_cam':
+      ctx.strokeRect(2.5, 1.5, 8, 10); ctx.strokeRect(4.4, 3.2, 4.2, 2.6);
+      ctx.beginPath(); ctx.arc(6.5, 8, 1, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(6.5, 10.2, 0.7, 0, TAU); ctx.fill();
+      break;
+    case 'feeder':
+      ctx.stroke(pth('M2.5 1.8h8l-2.6 4.4h-2.8z'));
+      ctx.stroke(pth('M4.2 6.2L3 11.4M8.8 6.2l1.2 5.2'));
+      ctx.beginPath(); ctx.arc(6.5, 8.6, 0.8, 0, TAU); ctx.fill();
+      break;
+    case 'lick':
+      ctx.stroke(pth('M2.8 3.4C4 4.6 9 4.6 10.2 3.4V6.6a1.3 1.3 0 0 1-1.3 1.3H4.1A1.3 1.3 0 0 1 2.8 6.6z'));
+      ctx.stroke(pth('M6.5 7.9v3.4M4.5 11.3h4'));
+      break;
+    case 'structure':
+      ctx.stroke(pth('M1.5 6L6.5 2l5 4')); ctx.stroke(pth('M3 6v5.5h7V6')); ctx.strokeRect(5.2, 7.2, 2.6, 2.6); break;
+    case 'wallow':
+      ctx.stroke(pth('M1.5 7c0 2.4 2.2 4 5 4s5-1.6 5-4'));
+      ctx.stroke(pth('M3.2 6.2c0.9-0.9 2.1-0.9 3 0s2.1 0.9 3 0'));
+      ctx.stroke(pth('M4.1 3.8c0.6-0.6 1.4-0.6 2 0s1.4 0.6 2 0'));
+      break;
+    default:
+      ctx.fill(pth('M3 11.5V2l7 2.4-7 2.4')); break;
+  }
+  ctx.restore();
+}
+
+/** A marker badge (chip + glyph + index letter) centred at canvas px (x,y). */
+function flPdfDrawMarker(ctx, x, y, type, indexLabel) {
+  var inv = type === 'parking'; // access livery: gold chip, dark glyph
+  var size = 26, half = size / 2;
+  flPdfRoundRect(ctx, x - half, y - half, size, size, 7);
+  ctx.fillStyle = inv ? '#e2bd60' : 'rgba(22,16,7,0.94)'; ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = inv ? 'rgba(22,16,7,0.85)' : 'rgba(216,176,84,0.85)'; ctx.stroke();
+  var gs = 15 / 13;
+  ctx.save();
+  ctx.translate(x - (13 * gs) / 2, y - (13 * gs) / 2); ctx.scale(gs, gs);
+  flPdfMarkerGlyph(ctx, type, inv ? '#1a1208' : '#e8dfc0');
+  ctx.restore();
+  if (indexLabel) {
+    ctx.beginPath(); ctx.arc(x + half - 1, y - half + 1, 6, 0, Math.PI * 2);
+    ctx.fillStyle = '#f0e6c6'; ctx.fill();
+    ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(22,16,7,0.85)'; ctx.stroke();
+    ctx.fillStyle = '#1a1208'; ctx.font = '700 8px "DM Sans", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(indexLabel, x + half - 1, y - half + 1.4);
+  }
+}
+
+var FL_SEAT_COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+/**
+ * "Export PDF map" on the all-grounds export row: a satellite PDF is
+ * per-ground, so this opens a small picker of the grounds and hands the chosen
+ * one to exportGroundPdf (a single ground → straight to export). Reuses the
+ * grx-ground-pdf action, so the per-card button and this share one code path.
+ */
+function grxPdfPickToggle() {
+  var box = document.getElementById('grounds-pdf-picker');
+  if (!box) return;
+  var grounds = (savedGrounds || []).slice().filter(Boolean);
+  if (!grounds.length) { showToast('\u26a0\ufe0f No grounds yet \u2014 add one first'); return; }
+  if (grounds.length === 1) { box.hidden = true; box.dataset.open = '0'; exportGroundPdf(grounds[0]); return; }
+  if (box.dataset.open === '1') { box.hidden = true; box.dataset.open = '0'; box.innerHTML = ''; return; }
+  var h = '<div class="grx-pdf-pick-lbl">Which ground?</div>';
+  grounds.forEach(function (g) {
+    h += '<button type="button" class="grx-io-btn grx-pdf-pick-btn" data-fl-action="grx-ground-pdf" data-ground="' + esc(g) + '">' + esc(g) + '</button>';
+  });
+  box.innerHTML = h; box.hidden = false; box.dataset.open = '1';
+}
+
+async function exportGroundPdf(ground) {
+  if (!navigator.onLine) { showToast('⚠️ A PDF map needs signal — it downloads fresh satellite imagery'); return; }
+  var ns = window.jspdf;
+  if (!ns || !ns.jsPDF) { showToast('⚠️ PDF tools not loaded yet — try again in a moment'); return; }
+
+  // ── Gather geometry (carry the feature names — a marker's name lives on the
+  //    feature row, not the geometry blob). ──
+  var feats = groundFeaturesNow().filter(function (f) { return f && f.ground === ground; });
+  var boundaries = [], zones = [], lines = [], markers = [];
+  feats.forEach(function (f) {
+    if (f.kind === 'boundary') { var r = parseGeometry(f.geometry); if (r && r.length >= 3) boundaries.push({ ring: r, name: f.name || '', area: geometryAreaM2(f.geometry) }); }
+    else if (f.kind === 'no_shoot') { var r2 = parseGeometry(f.geometry); if (r2 && r2.length >= 3) zones.push({ ring: r2, name: f.name || '', area: geometryAreaM2(f.geometry) }); }
+    else if (f.kind === 'line') { var r3 = parseGeometry(f.geometry, 2); if (r3 && r3.length >= 2) lines.push({ ring: r3, name: f.name || '', sub: lineSubtypeOf(f.geometry) }); }
+    else if (f.kind === 'marker') { var m = markerFromGeometry(f.geometry); if (m) markers.push({ lat: m.lat, lng: m.lng, type: m.type, name: f.name || '' }); }
+  });
+  var seats = (flEffectiveStands() || []).filter(function (s) {
+    return s && s.lat != null && s.lng != null && (s.ground || '') === ground;
+  });
+  // Seat numbering: number the seats a compact 1..N, but FIRST sort them into
+  // the stalker's own order. A trailing number in each name (HS1, HS2, HS16
+  // -> 1, 2, 16) sorts them naturally, so the key reads HS1=1, HS2=2, HS16=3
+  // (its POSITION, not the literal 16), never a list-order jumble. Seats with
+  // no number in the name keep their existing order. The badge/pin label is
+  // always the position; the key row shows the full name beside it.
+  var flSeatNum = seats.map(function (s) {
+    var m = /(\d{1,6})\s*$/.exec((s.name == null ? '' : String(s.name)).trim());
+    return m ? parseInt(m[1], 10) : null;
+  });
+  if (seats.length > 0 && flSeatNum.every(function (n) { return n != null; })) {
+    var flPairs = seats.map(function (s, i) { return { s: s, n: flSeatNum[i] }; });
+    flPairs.sort(function (a, b) { return a.n - b.n; });
+    seats = flPairs.map(function (p) { return p.s; });
+  }
+  var flSeatLabels = seats.map(function (s, i) { return String(i + 1); });
+  // Access furniture first in the marker list (parking, gate, larder) so their
+  // index letters lead and they read as the "how to get on" set.
+  var accessOrder = { parking: 0, gate: 1, larder: 2 };
+  markers.sort(function (a, b) {
+    var ao = accessOrder[a.type] != null ? accessOrder[a.type] : 9;
+    var bo = accessOrder[b.type] != null ? accessOrder[b.type] : 9;
+    return ao - bo;
+  });
+
+  // ── Bounds ──
+  var pts = [];
+  boundaries.forEach(function (o) { o.ring.forEach(function (p) { pts.push(p); }); });
+  zones.forEach(function (o) { o.ring.forEach(function (p) { pts.push(p); }); });
+  lines.forEach(function (o) { o.ring.forEach(function (p) { pts.push(p); }); });
+  markers.forEach(function (m) { pts.push([m.lat, m.lng]); });
+  seats.forEach(function (s) { pts.push([s.lat, s.lng]); });
+  var rawBounds = flMapExport.boundsOfPoints(pts);
+  if (!rawBounds) { showToast('⚠️ Nothing to map yet — draw a boundary or pin a seat first'); return; }
+  var bounds = flMapExport.padBounds(rawBounds, 0.05);
+  var orientation = flMapExport.chooseOrientation(bounds);
+  showToast('⏳ Building your satellite map…');
+
+  // ── Page + layout (mm): header band, map on the left, key panel on the right ──
+  var page = orientation === 'landscape' ? { W: 297, H: 210 } : { W: 210, H: 297 };
+  var M = 8, headerH = 19, footerH = 10, gap = 5;
+  var panelW = orientation === 'landscape' ? 84 : 60;
+  var mapX = M, mapY = M + headerH;
+  var mapW = page.W - 2 * M - gap - panelW;
+  var mapH = page.H - mapY - footerH;
+  var panelX = mapX + mapW + gap, panelY = mapY, panelH = mapH;
+
+  // ── Canvas (~150 dpi, capped) ──
+  var pxPerMm = 150 / 25.4;
+  var cw = Math.min(Math.round(mapW * pxPerMm), 1600);
+  var ch = Math.round(cw * (mapH / mapW));
+  var z = flMapExport.fitZoom(bounds, cw, ch, { maxZoom: 19 });
+  var plan = flMapExport.planTiles(bounds, cw, ch, z);
+  // Integer tile zoom leaves the ground filling only part of the frame (it
+  // looked sparse). Scale the whole scene about the canvas centre so the
+  // ground fills ~96% — tiles upscale <2× (still crisp), overlays stay vector.
+  var _cx = cw / 2, _cy = ch / 2;
+  var _spanX = Math.abs(flMapExport.lngToWorldX(bounds.maxLng, z) - flMapExport.lngToWorldX(bounds.minLng, z));
+  var _spanY = Math.abs(flMapExport.latToWorldY(bounds.maxLat, z) - flMapExport.latToWorldY(bounds.minLat, z));
+  var _k = Math.max(1, Math.min(cw / _spanX, ch / _spanY) * 0.96);
+  function PS(lat, lng) { var u = plan.project(lat, lng); return [_cx + (u[0] - _cx) * _k, _cy + (u[1] - _cy) * _k]; }
+  var canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
+  var ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#1a2411'; ctx.fillRect(0, 0, cw, ch);
+
+  // ── Tiles: Mapbox first (matches the app's on-screen satellite), Esri as a
+  //    per-tile fallback. Repainted from Esri only if Mapbox ever taints the
+  //    canvas, so the export can never break on toDataURL. ──
+  var loaded = 0, failed = 0, mbUsed = 0, esriUsed = 0;
+  async function paintTiles(forceEsri) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#1a2411'; ctx.fillRect(0, 0, cw, ch);
+    loaded = 0; failed = 0; mbUsed = 0; esriUsed = 0;
+    var queue = plan.tiles.slice();
+    async function worker() {
+      while (queue.length) {
+        var t = queue.shift();
+        var img = null, viaEsri = false;
+        if (!forceEsri && MAPBOX_TOKEN) img = await flPdfLoadTile(flPdfMapboxUrl(t.z, t.x, t.y));
+        if (!img) { img = await flPdfLoadTile(FL_PDF_TILE_URL.replace('{z}', t.z).replace('{y}', t.y).replace('{x}', t.x)); if (img) viaEsri = true; }
+        if (img) {
+          try {
+            ctx.save(); ctx.setTransform(_k, 0, 0, _k, _cx - _cx * _k, _cy - _cy * _k);
+            ctx.drawImage(img, Math.round(t.dx), Math.round(t.dy), plan.tileSize, plan.tileSize); ctx.restore();
+            loaded++; if (viaEsri) esriUsed++; else mbUsed++;
+          } catch (_) { failed++; }
+        } else failed++;
+      }
+    }
+    await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
+  }
+  await paintTiles(false);
+  if (loaded === 0) { showToast('⚠️ Could not fetch satellite imagery — check your signal and try again'); return; }
+  // Taint guard: if Mapbox unexpectedly tainted the canvas, repaint from Esri
+  // (known CORS-clean) so the final toDataURL cannot throw.
+  var flCanExport = true; try { canvas.toDataURL('image/jpeg', 0.1); } catch (_) { flCanExport = false; }
+  if (!flCanExport && mbUsed) { await paintTiles(true); }
+  // Colour grade to match the app's on-screen satellite (.fl-sat-tiles filter).
+  try {
+    if (typeof ctx.filter === 'string') {
+      var tmp = document.createElement('canvas'); tmp.width = cw; tmp.height = ch;
+      tmp.getContext('2d').drawImage(canvas, 0, 0);
+      ctx.filter = 'saturate(1.18) brightness(1.06) contrast(1.05)';
+      ctx.drawImage(tmp, 0, 0);
+      ctx.filter = 'none';
+    } else {
+      ctx.save(); ctx.globalCompositeOperation = 'overlay'; ctx.fillStyle = 'rgba(120,110,70,0.10)'; ctx.fillRect(0, 0, cw, ch); ctx.restore();
+    }
+  } catch (_) {}
+  // Imagery attribution reflects what actually rendered.
+  var flImageryAttr = mbUsed
+    ? ('Imagery © Mapbox, © Maxar, © OpenStreetMap' + (esriUsed ? ' · Esri (fallback)' : ''))
+    : FL_PDF_TILE_ATTR;
+
+  // ── Overlays ──
+  var P = PS;
+  function ringPath(r) { ctx.beginPath(); for (var i = 0; i < r.length; i++) { var q = P(r[i][0], r[i][1]); if (i === 0) ctx.moveTo(q[0], q[1]); else ctx.lineTo(q[0], q[1]); } }
+  function chipLabel(cx, cy, text, color, size) {
+    ctx.font = '700 ' + (size || 20) + 'px "DM Sans", sans-serif';
+    var tw = ctx.measureText(text).width, padX = 6, padY = 4, bw = tw + padX * 2, bh = (size || 20) + padY * 2;
+    var bx = cx - bw / 2, by = cy - bh / 2;
+    flPdfRoundRect(ctx, bx, by, bw, bh, 5); ctx.fillStyle = 'rgba(12,18,8,0.72)'; ctx.fill();
+    ctx.fillStyle = color || '#f3ecd6'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, cx, cy + 0.5);
+  }
+
+  zones.forEach(function (o) {
+    ringPath(o.ring); ctx.closePath();
+    ctx.fillStyle = 'rgba(198,40,40,0.18)'; ctx.fill();
+    ctx.setLineDash([10, 7]); ctx.lineWidth = 3; ctx.strokeStyle = '#e06a6a'; ctx.stroke(); ctx.setLineDash([]);
+  });
+  boundaries.forEach(function (o) {
+    ringPath(o.ring); ctx.closePath();
+    ctx.fillStyle = 'rgba(120,180,70,0.10)'; ctx.fill();
+    ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(20,30,12,0.55)'; ctx.stroke();
+    ctx.lineWidth = 3.4; ctx.strokeStyle = '#a6e063'; ctx.stroke();
+  });
+  lines.forEach(function (o) {
+    ringPath(o.ring);
+    ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(20,30,12,0.5)'; ctx.stroke();
+    ctx.lineWidth = 2.6; ctx.strokeStyle = '#6fb0f0'; ctx.stroke();
+  });
+  // parcel name + acreage on the map (only when there is more than one)
+  if (boundaries.length > 1) {
+    boundaries.forEach(function (o, i) {
+      var c = ringCentroid(o.ring); if (!c) return; var q = P(c[0], c[1]);
+      var nm = o.name || ('Parcel ' + (i + 1));
+      var lbl = o.area > 0 ? nm + '  ·  ' + formatAreaBoth(o.area) : nm;
+      chipLabel(q[0], q[1], lbl, '#dcefc4', 18);
+    });
+  }
+  // markers with real glyphs + index letters
+  markers.forEach(function (m, i) {
+    var q = P(m.lat, m.lng);
+    flPdfDrawMarker(ctx, q[0], q[1], m.type, markers.length > 1 ? String.fromCharCode(65 + (i % 26)) : '');
+  });
+  // seats: numbered gold pins. Where they crowd (tight seat clusters), a
+  // spring repulsion nudges the overlapping pins apart and a leader line ties
+  // each moved pin back to its true spot — so none overlap and none lie.
+  var seatPix = seats.map(function (s) { return P(s.lat, s.lng); });
+  var placed = seatPix.map(function (p) { return [p[0], p[1]]; });
+  var R = 11, MIND = 2 * R + 3;
+  for (var it = 0; it < 90; it++) {
+    var moved = false;
+    for (var a = 0; a < placed.length; a++) {
+      for (var b = a + 1; b < placed.length; b++) {
+        var dx = placed[b][0] - placed[a][0], dy = placed[b][1] - placed[a][1];
+        var dd = Math.hypot(dx, dy) || 0.01;
+        if (dd < MIND) {
+          var push = (MIND - dd) / 2, ux = dx / dd, uy = dy / dd;
+          placed[a][0] -= ux * push; placed[a][1] -= uy * push;
+          placed[b][0] += ux * push; placed[b][1] += uy * push;
+          moved = true;
+        }
+      }
+    }
+    for (var c2 = 0; c2 < placed.length; c2++) {
+      placed[c2][0] = Math.max(R + 2, Math.min(cw - R - 2, placed[c2][0]));
+      placed[c2][1] = Math.max(R + 2, Math.min(ch - R - 2, placed[c2][1]));
+    }
+    if (!moved) break;
+  }
+  // leaders + true-location dots for pins that had to move
+  seats.forEach(function (s, i) {
+    var t = seatPix[i], pl = placed[i];
+    if (Math.hypot(pl[0] - t[0], pl[1] - t[1]) > R * 0.7) {
+      ctx.beginPath(); ctx.moveTo(t[0], t[1]); ctx.lineTo(pl[0], pl[1]);
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(20,30,12,0.6)'; ctx.stroke();
+      ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(226,189,96,0.95)'; ctx.stroke();
+      ctx.beginPath(); ctx.arc(t[0], t[1], 3.2, 0, Math.PI * 2);
+      ctx.fillStyle = '#e2bd60'; ctx.fill();
+      ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(22,16,7,0.9)'; ctx.stroke();
+    }
+  });
+  seats.forEach(function (s, i) {
+    var q = placed[i];
+    ctx.beginPath(); ctx.arc(q[0], q[1], R, 0, Math.PI * 2);
+    ctx.fillStyle = '#e2bd60'; ctx.fill();
+    ctx.lineWidth = 2.6; ctx.strokeStyle = 'rgba(22,16,7,0.92)'; ctx.stroke();
+    var lbl = flSeatLabels[i];
+    ctx.fillStyle = '#1a1208';
+    ctx.font = '700 ' + (lbl.length >= 3 ? 9 : lbl.length === 2 ? 11 : 13) + 'px "DM Sans", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(lbl, q[0], q[1] + 0.5);
+  });
+
+  // ═══ PDF ═══
+  var doc = new ns.jsPDF({ orientation: orientation, unit: 'mm', format: 'a4' });
+  var ink = [43, 36, 22], gold = [138, 106, 44], goldA = [184, 150, 62], estate = [44, 61, 28], muted = [120, 112, 90];
+  var totalArea = 0; boundaries.forEach(function (o) { totalArea += o.area; });
+
+  // Header — serif title (echoes the app's Playfair) with a gold accent tick
+  doc.setFillColor(goldA[0], goldA[1], goldA[2]);
+  doc.rect(M, M - 1, 1.6, 9, 'F');
+  doc.setTextColor(estate[0], estate[1], estate[2]); doc.setFont('times', 'bold'); doc.setFontSize(21);
+  doc.text(String(ground), M + 4, M + 7);
+  var sub = [];
+  if (totalArea > 0) sub.push(formatAreaBoth(totalArea));
+  if (boundaries.length > 1) sub.push(boundaries.length + ' parcels');
+  sub.push(seats.length + ' seat' + (seats.length === 1 ? '' : 's'));
+  if (markers.length) sub.push(markers.length + ' marker' + (markers.length === 1 ? '' : 's'));
+  var now = (typeof diaryNow === 'function') ? diaryNow() : new Date();
+  sub.push(now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }));
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(muted[0], muted[1], muted[2]);
+  doc.text(sub.join('   ·   '), M + 4, M + 13);
+  doc.setFont('times', 'bold'); doc.setFontSize(13); doc.setTextColor(goldA[0], goldA[1], goldA[2]);
+  doc.text('First Light', page.W - M, M + 6, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(muted[0], muted[1], muted[2]);
+  doc.text('firstlightdeer.co.uk', page.W - M, M + 11, { align: 'right' });
+  doc.setDrawColor(goldA[0], goldA[1], goldA[2]); doc.setLineWidth(0.5); doc.line(M, M + headerH - 3, page.W - M, M + headerH - 3);
+
+  // Map image + frame
+  doc.addImage(canvas.toDataURL('image/jpeg', 0.9), 'JPEG', mapX, mapY, mapW, mapH);
+  doc.setDrawColor(120, 112, 90); doc.setLineWidth(0.4); doc.rect(mapX, mapY, mapW, mapH);
+
+  // Scale bar (bottom-left over the map)
+  var mpp = flMapExport.metresPerPixel((bounds.minLat + bounds.maxLat) / 2, z) / _k;
+  var mmPerPx = mapW / cw;
+  var barM = flMapExport.niceScaleMeters((mapW * 0.28) / mmPerPx * mpp);
+  var barMm = barM / mpp * mmPerPx;
+  var sbx = mapX + 4, sby = mapY + mapH - 5;
+  doc.setFillColor(255, 255, 255); doc.setDrawColor(120, 112, 90); doc.setLineWidth(0.2); doc.roundedRect(sbx - 3, sby - 7, barMm + 6, 10, 1.2, 1.2, 'FD');
+  doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.6);
+  doc.line(sbx, sby, sbx + barMm, sby); doc.line(sbx, sby - 1.5, sbx, sby + 0.5); doc.line(sbx + barMm, sby - 1.5, sbx + barMm, sby + 0.5);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(20, 20, 20);
+  doc.text(flMapExport.formatScaleLabel(barM), sbx + barMm / 2, sby - 2.5, { align: 'center' });
+  // North arrow (bottom-right over the map)
+  var nx = mapX + mapW - 8, ny = mapY + mapH - 12;
+  doc.setFillColor(255, 255, 255); doc.circle(nx, ny + 2, 6, 'F');
+  doc.setFillColor(30, 30, 30); doc.triangle(nx, ny - 3.5, nx - 2.4, ny + 2.5, nx + 2.4, ny + 2.5, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(20, 20, 20); doc.text('N', nx, ny + 6.5, { align: 'center' });
+
+  // ═══ Key panel ═══
+  doc.setFillColor(247, 242, 232); doc.setDrawColor(210, 200, 182); doc.setLineWidth(0.3);
+  doc.roundedRect(panelX, panelY, panelW, panelH, 2.5, 2.5, 'FD');
+  // estate-green title band
+  doc.setFillColor(estate[0], estate[1], estate[2]);
+  doc.roundedRect(panelX, panelY, panelW, 8, 2.5, 2.5, 'F');
+  doc.rect(panelX, panelY + 4, panelW, 4, 'F');
+  doc.setFont('times', 'bold'); doc.setFontSize(10); doc.setTextColor(232, 223, 192);
+  doc.text('Ground key', panelX + 5, panelY + 5.6);
+  var px = panelX + 5, pw = panelW - 10, cy = panelY + 14;
+  var bottom = panelY + panelH - 4;
+  function heading(txt) {
+    if (cy > bottom - 6) return false;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(gold[0], gold[1], gold[2]);
+    doc.text(txt.toUpperCase(), px, cy);
+    doc.setDrawColor(224, 216, 200); doc.setLineWidth(0.2); doc.line(px, cy + 1.4, px + pw, cy + 1.4);
+    cy += 5; return true;
+  }
+  function badge(n, kind) { // gold index chip at the row start (pill if multi-char)
+    n = String(n);
+    doc.setFillColor(226, 189, 96); doc.setDrawColor(120, 96, 40); doc.setLineWidth(0.2);
+    var yc = kind === 'seat' ? cy - 1 : cy - 0.9;
+    if (n.length <= 1) { doc.circle(px + 2, yc, 2.2, 'FD'); }
+    else { var w = 2.6 + n.length * 1.5; doc.roundedRect(px + 2 - w / 2, yc - 2.2, w, 4.4, 2, 2, 'FD'); }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(26, 18, 8);
+    doc.text(n, px + 2, yc + 1.1, { align: 'center' });
+  }
+  function truncate(s, max) { s = String(s || ''); return s.length > max ? s.slice(0, max - 1) + '…' : s; }
+
+  var overflow = 0;
+  // Seats. The badge shows the seat's own number; the row shows its full name
+  // (unless the name IS just that number, e.g. a seat literally called "16",
+  // in which case we lead with facing/notes rather than repeat it).
+  if (seats.length && heading('High seats (' + seats.length + ')')) {
+    for (var i = 0; i < seats.length; i++) {
+      if (cy > bottom - 4) { overflow += (seats.length - i); break; }
+      var s = seats[i];
+      var lbl = flSeatLabels[i];
+      var nameStr = (s.name == null ? '' : String(s.name)).trim();
+      var redundant = nameStr.toLowerCase() === lbl.toLowerCase();
+      badge(lbl, 'seat');
+      var meta = [];
+      if (Number.isFinite(s.facing)) meta.push('looks ' + FL_SEAT_COMPASS[Math.round(s.facing / 45) % 8]);
+      if (s.notes) meta.push(truncate(s.notes, 34));
+      var primary = redundant ? (meta.join(' · ') || '\u2014') : truncate(nameStr || ('Seat ' + (i + 1)), 26);
+      doc.setFont('helvetica', redundant ? 'normal' : 'bold'); doc.setFontSize(redundant ? 7.2 : 8);
+      doc.setTextColor(redundant ? muted[0] : ink[0], redundant ? muted[1] : ink[1], redundant ? muted[2] : ink[2]);
+      doc.text(primary, px + 7, cy);
+      cy += 3.6;
+      if (!redundant && meta.length && cy <= bottom - 2) {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.8); doc.setTextColor(muted[0], muted[1], muted[2]);
+        doc.text(truncate(meta.join(' · '), 46), px + 7, cy); cy += 3.4;
+      } else { cy += 0.8; }
+    }
+    cy += 2;
+  }
+  // Markers
+  if (markers.length && heading('Markers (' + markers.length + ')')) {
+    for (var j = 0; j < markers.length; j++) {
+      if (cy > bottom - 4) { overflow += (markers.length - j); break; }
+      var mk = markers[j];
+      if (markers.length > 1) badge(String.fromCharCode(65 + (j % 26)), 'marker');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(ink[0], ink[1], ink[2]);
+      var mnm = mk.name || markerTypeLabel(mk.type);
+      doc.text(truncate(mnm, 24), px + 7, cy);
+      // only show a type subtitle when it adds something (not "Marker" under a
+      // named 'other', not a name that already equals its type)
+      var mtype = mk.type === 'other' ? '' : markerTypeLabel(mk.type);
+      if (mtype && mtype.toLowerCase() !== String(mnm).toLowerCase()) {
+        cy += 3.4;
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(6.8); doc.setTextColor(muted[0], muted[1], muted[2]);
+        doc.text(mtype, px + 7, cy); cy += 3.8;
+      } else { cy += 4.4; }
+    }
+    cy += 2;
+  }
+  // Parcels
+  if (boundaries.length > 1 && heading('Parcels (' + boundaries.length + ')')) {
+    for (var k = 0; k < boundaries.length; k++) {
+      if (cy > bottom - 3) { overflow += (boundaries.length - k); break; }
+      var b = boundaries[k];
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(ink[0], ink[1], ink[2]);
+      doc.text(truncate(b.name || ('Parcel ' + (k + 1)), 20), px, cy);
+      if (b.area > 0) { doc.setTextColor(muted[0], muted[1], muted[2]); doc.text(formatAreaBoth(b.area), px + pw, cy, { align: 'right' }); }
+      cy += 4.2;
+    }
+  }
+  if (overflow > 0 && cy <= bottom) {
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(6.8); doc.setTextColor(muted[0], muted[1], muted[2]);
+    doc.text('+ ' + overflow + ' more not shown', px, cy);
+  }
+
+  // Footer
+  var c = flMapExport.boundsCenter(rawBounds);
+  var fy = page.H - footerH + 3.5;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(ink[0], ink[1], ink[2]);
+  doc.text('Centre: ' + formatPlaceRef(c.lat, c.lng, 6), M, fy);
+  doc.setTextColor(muted[0], muted[1], muted[2]); doc.text(flImageryAttr, page.W - M, fy, { align: 'right' });
+  doc.setFontSize(6.8);
+  doc.text('For guidance and planning, not a legal record of boundaries. Seat positions are approximate — handle with care: this sheet shows where you sit.', M, page.H - footerH + 7.5);
+
+  var fname = 'first-light-' + (String(ground).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'ground') + '-map.pdf';
+  doc.save(fname);
+  showToast('✓ Satellite map exported' + (failed ? ' (' + failed + ' tile' + (failed === 1 ? '' : 's') + ' missing)' : ''));
+}
 /** Download every saved shape as GeoJSON or GPX (your data is yours —
  *  HuntStand exports nothing; we export everything). */
 function groundsExport(format, groundOnly) {

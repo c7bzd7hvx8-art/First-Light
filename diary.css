@@ -3883,3 +3883,11 @@ body::after{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-
 #stands-map-wrap.ctl-pinned .layer-tog{position:fixed !important;top:calc(8px + env(safe-area-inset-top,0px)) !important;right:24px !important;z-index:250;}
 #stands-map-wrap.ctl-pinned .stnd-map-fs{position:fixed;top:calc(54px + env(safe-area-inset-top,0px));right:24px;z-index:250;}
 #stands-map-wrap.ctl-pinned .stnd-map-filter{top:calc(100px + env(safe-area-inset-top,0px));}
+
+
+/* Grounds: "Export PDF map" picker (2026-08) — a column of ground choices
+   under the export row, since a satellite PDF is per-ground. */
+.grx-pdf-picker { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.grx-pdf-pick-lbl { font-size: 12px; font-weight: 700; color: var(--muted, #7a7057); margin: 2px 0 1px; }
+.grx-pdf-pick-btn { width: 100%; text-align: left; }
+.grx-io-btn--pdf { width: 100%; }
