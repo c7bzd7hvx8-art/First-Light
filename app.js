@@ -1549,7 +1549,29 @@ function updateTonightOutlook() {
   else if (cur <= ssM + 45) { winLabel = 'Dusk'; peakMin = ssM; }
   else { winLabel = 'Dawn tomorrow'; peakMin = srM; }
   var winEl = document.getElementById('to-window');
-  if (winEl) winEl.innerHTML = winLabel + ' · peak <b style="color:#d8b054;">~' + fmtMinutes(peakMin) + '</b>';
+  var flWinDayOffset = (winLabel === 'Dawn tomorrow') ? 1 : 0;
+  function flSetWindowLine(pct) {
+    if (!winEl) return;
+    var pctHtml = '';
+    if (pct != null) {
+      var pc = pct >= 65 ? '#7aef7a' : pct >= 45 ? '#e0c050' : '#e09040';
+      pctHtml = ' · <b style="color:' + pc + ';">' + pct + '%</b>';
+    }
+    winEl.innerHTML = winLabel + ' · peak <b style="color:#d8b054;">~' + fmtMinutes(peakMin) + '</b>' + pctHtml;
+  }
+  flSetWindowLine(null);
+  if (bannerState.lat != null) {
+    var flWxFull = (_wfWeatherCache && _wfWeatherCache.data && _wfWeatherCache.lat === bannerState.lat && _wfWeatherCache.lng === bannerState.lng) ? _wfWeatherCache.data : null;
+    if (flWxFull && flWxFull.hourly) {
+      flSetWindowLine(flWindowActivityPct(flWxFull, peakMin, flWinDayOffset));
+    } else if (!_flTonightFetching) {
+      _flTonightFetching = true;
+      fetch7DayWeather(bannerState.lat, bannerState.lng, function (err, wf) {
+        _flTonightFetching = false;
+        if (!err && wf && wf.hourly) flSetWindowLine(flWindowActivityPct(wf, peakMin, flWinDayOffset));
+      });
+    }
+  }
 
   // Why — the top one or two positive drivers (falls back to whatever exists).
   var good = (r.factors || []).filter(function(f) { return f.good === true; });
@@ -2627,6 +2649,7 @@ function buildForecast() {
 // ════════════════════════════════════════════════════════════════
 
 var _wfWeatherCache = { data: null, ts: 0, lat: null, lng: null };
+var _flTonightFetching = false;
 
 function fetch7DayWeather(lat, lng, cb) {
   var now = Date.now();
@@ -2851,6 +2874,56 @@ function hourlyActivityScore(hour, date, wxHour) {
   return Math.min(100, Math.max(0, score));
 }
 
+/**
+ * Build one hour's weather object from the 7-day Open-Meteo payload. Factored
+ * out of buildHourlyPanel so the home card's "next best window" score uses the
+ * IDENTICAL inputs as the daily breakdown — the two can never disagree again.
+ */
+function flExtractWxHour(wxData, dayIdx, h) {
+  if (!wxData || !wxData.hourly) return null;
+  var hIdx = dayIdx * 24 + h;
+  var temps = wxData.hourly.temperature_2m;
+  if (!temps || hIdx < 0 || hIdx >= temps.length) return null;
+  var winds = wxData.hourly.wind_speed_10m;
+  var dirs = wxData.hourly.wind_direction_10m;
+  var precips = wxData.hourly.precipitation_probability;
+  var codes = wxData.hourly.weather_code;
+  var hPrecipArr = wxData.hourly.precipitation;
+  var gusts = wxData.hourly.windgusts_10m;
+  var hPrecipNow = hPrecipArr ? (hPrecipArr[hIdx] || 0) : 0;
+  var hPrecip1ago = hPrecipArr ? (hPrecipArr[Math.max(0, hIdx - 1)] || 0) : 0;
+  var hPrecip2ago = hPrecipArr ? (hPrecipArr[Math.max(0, hIdx - 2)] || 0) : 0;
+  var hWind = winds ? winds[hIdx] : null;
+  var hGust = gusts ? gusts[hIdx] : null;
+  var hGustRatio = (hWind > 2 && hGust) ? (hGust - hWind) / hWind : 0;
+  return {
+    temp: Math.round(temps[hIdx]),
+    wind: hWind,
+    gust: hGust,
+    gustRatio: hGustRatio,
+    dir: dirs ? dirs[hIdx] : null,
+    precipP: precips ? precips[hIdx] : null,
+    precip: hPrecipNow,
+    postRain: (hPrecipNow < 0.1) && (Math.max(hPrecip1ago, hPrecip2ago) > 0.5),
+    code: codes ? codes[hIdx] : null
+  };
+}
+
+/**
+ * The activity % for a dawn/dusk window's peak hour, scored EXACTLY as the
+ * daily breakdown scores that hour (same hourlyActivityScore + same wx). So
+ * the home card's "Next best window · 51%" always equals the breakdown row.
+ * dayOffset: 0 = today, 1 = tomorrow (for "Dawn tomorrow").
+ */
+function flWindowActivityPct(wxData, peakMin, dayOffset) {
+  var h = Math.round(peakMin / 60);
+  if (h < 0) h = 0; else if (h > 23) h = 23;
+  var d = new Date(flNow());
+  d.setDate(d.getDate() + (dayOffset || 0));
+  d.setHours(0, 0, 0, 0);
+  return hourlyActivityScore(h, d, flExtractWxHour(wxData, dayOffset || 0, h));
+}
+
 function buildHourlyPanel(dayIdx, date, wxData, legalStartMin, legalEndMin) {
   var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   var dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -2891,38 +2964,8 @@ function buildHourlyPanel(dayIdx, date, wxData, legalStartMin, legalEndMin) {
     var isDusk = (hourMin >= duskStart && hourMin <= duskEnd);
     var isLegal = (hourMin >= legalStartMin && hourMin <= legalEndMin);
 
-    // Get hourly wx data
-    var wxHour = null;
-    if (wxData && wxData.hourly) {
-      // Open-Meteo hourly index: dayIdx*24 + hour
-      var hIdx = dayIdx * 24 + h;
-      var temps  = wxData.hourly.temperature_2m;
-      var winds  = wxData.hourly.wind_speed_10m;
-      var dirs   = wxData.hourly.wind_direction_10m;
-      var precips= wxData.hourly.precipitation_probability;
-      var codes  = wxData.hourly.weather_code;
-      if (temps && hIdx < temps.length) {
-        var hPrecipArr = wxData.hourly.precipitation;
-        var gusts      = wxData.hourly.windgusts_10m;
-        var hPrecipNow  = hPrecipArr ? (hPrecipArr[hIdx] || 0) : 0;
-        var hPrecip1ago = hPrecipArr ? (hPrecipArr[Math.max(0, hIdx-1)] || 0) : 0;
-        var hPrecip2ago = hPrecipArr ? (hPrecipArr[Math.max(0, hIdx-2)] || 0) : 0;
-        var hWind       = winds ? winds[hIdx] : null;
-        var hGust       = gusts ? gusts[hIdx] : null;
-        var hGustRatio  = (hWind > 2 && hGust) ? (hGust - hWind) / hWind : 0;
-        wxHour = {
-          temp:      Math.round(temps[hIdx]),
-          wind:      hWind,
-          gust:      hGust,
-          gustRatio: hGustRatio,
-          dir:       dirs  ? dirs[hIdx]  : null,
-          precipP:   precips ? precips[hIdx] : null,
-          precip:    hPrecipNow,
-          postRain:  (hPrecipNow < 0.1) && (Math.max(hPrecip1ago, hPrecip2ago) > 0.5),
-          code:      codes ? codes[hIdx] : null
-        };
-      }
-    }
+    // Get hourly wx data (shared with the home card's window score so they match)
+    var wxHour = flExtractWxHour(wxData, dayIdx, h);
 
     var actScore = hourlyActivityScore(h, date, wxHour);
     var barClr = actScore >= 65 ? 'linear-gradient(90deg,#3abf3a,#7aef7a)'
